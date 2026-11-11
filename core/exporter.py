@@ -220,6 +220,15 @@ def export_to_docx(notes: Union[Dict[str, Any], List[Dict[str, Any]]], output_pa
                 num_content = re.sub(r'^\d+\.\s+', '', line_str)
                 _add_styled_runs_to_paragraph(p, num_content)
 
+            elif line_str.startswith("> "):
+                p = doc.add_paragraph()
+                p.paragraph_format.left_indent = Inches(0.25)
+                p.paragraph_format.space_before = Pt(3)
+                p.paragraph_format.space_after = Pt(3)
+                p.paragraph_format.line_spacing = 1.2
+                quote_text = line_str[2:].strip()
+                _add_styled_runs_to_paragraph(p, quote_text, default_size=10.0)
+
             else:
                 p = doc.add_paragraph()
                 p.paragraph_format.space_after = Pt(6)
@@ -355,6 +364,18 @@ def _markdown_to_html_body(notes: List[Dict[str, Any]]) -> str:
                     in_number_list = True
                 n_text = re.sub(r'^\d+\.\s+', '', escaped)
                 html_parts.append(f"<li style='{STYLE_LI}'>{n_text}</li>")
+
+            elif line_str.startswith("> "):
+                if in_bullet_list:
+                    html_parts.append("</ul>")
+                    in_bullet_list = False
+                if in_number_list:
+                    html_parts.append("</ol>")
+                    in_number_list = False
+                quote_text = escaped[2:].strip()
+                html_parts.append(
+                    f"<div class='quote-box' style='background-color: #F8FAFC; border-left: 4px solid #2563EB; padding: 5pt 10pt; margin: 4pt 0; border-radius: 4px; font-size: 10pt; color: #334155;'>{quote_text}</div>"
+                )
 
             else:
                 if in_bullet_list:

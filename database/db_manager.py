@@ -77,9 +77,31 @@ class DatabaseManager:
                 content_markdown TEXT NOT NULL,
                 note_type TEXT DEFAULT 'Note', -- 'Note', 'Flashcard', 'Meeting', 'LaTeX'
                 tags TEXT DEFAULT '',
+                parent_note_id INTEGER DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+
+        # Migrazione schema: parent_note_id per collegare le flashcard alla sbobina madre
+        try:
+            cursor.execute("ALTER TABLE study_notes ADD COLUMN parent_note_id INTEGER DEFAULT NULL;")
+        except sqlite3.OperationalError:
+            pass
+
+        # Collegamento retroattivo flashcard esistenti alla sbobina sorgente tramite tags
+        try:
+            cursor.execute("""
+                UPDATE study_notes
+                SET parent_note_id = (
+                    SELECT p.id FROM study_notes p
+                    WHERE p.note_type != 'Flashcard'
+                      AND (study_notes.tags LIKE '%' || p.title || '%' OR p.tags LIKE '%' || REPLACE(study_notes.tags, 'Esame, ', '') || '%')
+                    ORDER BY p.id DESC LIMIT 1
+                )
+                WHERE note_type = 'Flashcard' AND parent_note_id IS NULL;
+            """)
+        except Exception:
+            pass
 
         # 5. Tabella Cronologia Trascrizioni & Telemetria
         cursor.execute("""
@@ -96,6 +118,22 @@ class DatabaseManager:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
+
+        # 6. Tabella Relazioni e Grafo della Conoscenza (Note Links)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS note_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                reason TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(source_id, target_id),
+                FOREIGN KEY (source_id) REFERENCES study_notes(id) ON DELETE CASCADE,
+                FOREIGN KEY (target_id) REFERENCES study_notes(id) ON DELETE CASCADE
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_note_links_source ON note_links(source_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links(target_id);")
 
         conn.commit()
         self._seed_default_data()
@@ -440,6 +478,8 @@ class DatabaseManager:
             ("push to torque", "Push-to-Talk"),
             ("pushtotalk", "Push-to-Talk"),
             ("alt gr", "Alt Gr"),
+            ("sbobbina", "sbobina"),
+            ("sbobbine", "sbobine"),
             ("sbobbinare", "sbobinare"),
         ]
         for alias, term in default_mappings:
@@ -451,8 +491,16 @@ class DatabaseManager:
 
         result = text
         for alias, term in mappings:
+            def _sub_case(m):
+                matched = m.group(0)
+                if matched.isupper():
+                    return term.upper()
+                elif matched[0].isupper():
+                    return term[0].upper() + term[1:]
+                return term
+
             pattern = re.compile(rf'\b{re.escape(alias)}\b', re.IGNORECASE)
-            result = pattern.sub(term, result)
+            result = pattern.sub(_sub_case, result)
         return result
 
     # --- SNIPPET VOCALI ---
@@ -536,13 +584,13 @@ class DatabaseManager:
         }
 
     # --- NOTE DI STUDIO & FLASHCARD ---
-    def add_study_note(self, title: str, content_markdown: str, note_type: str = "Note", tags: str = "") -> int:
+    def add_study_note(self, title: str, content_markdown: str, note_type: str = "Note", tags: str = "", parent_note_id: Optional[int] = None) -> int:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO study_notes (title, content_markdown, note_type, tags)
-            VALUES (?, ?, ?, ?)
-        """, (title.strip(), content_markdown.strip(), note_type, tags))
+            INSERT INTO study_notes (title, content_markdown, note_type, tags, parent_note_id)
+            VALUES (?, ?, ?, ?, ?)
+        """, (title.strip(), content_markdown.strip(), note_type, tags, parent_note_id))
         conn.commit()
         return cursor.lastrowid
 
@@ -550,14 +598,35 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
         if note_type:
-            cursor.execute("SELECT id, title, content_markdown, note_type, tags, created_at FROM study_notes WHERE note_type = ? ORDER BY id DESC", (note_type,))
+            cursor.execute("SELECT id, title, content_markdown, note_type, tags, parent_note_id, created_at FROM study_notes WHERE note_type = ? ORDER BY id DESC", (note_type,))
         else:
-            cursor.execute("SELECT id, title, content_markdown, note_type, tags, created_at FROM study_notes ORDER BY id DESC")
+            cursor.execute("SELECT id, title, content_markdown, note_type, tags, parent_note_id, created_at FROM study_notes ORDER BY id DESC")
         return [dict(row) for row in cursor.fetchall()]
 
     def get_notes(self) -> List[Dict[str, Any]]:
-        """Alias usato dal FlowLocalHub: restituisce tutte le note salvate (più recenti prima)."""
-        return self.get_all_study_notes()
+        """Restituisce le note principali e le sbobine per la lista dell'Hub (esclude le singole flashcard figlie)."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, created_at
+            FROM study_notes
+            WHERE (parent_note_id IS NULL AND note_type != 'Flashcard')
+            ORDER BY id DESC
+        """)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_flashcards_for_note(self, parent_note_id: int, note_title: str = "") -> List[Dict[str, Any]]:
+        """Restituisce tutte le flashcard collegate a una specifica sbobina o nota madre."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, created_at
+            FROM study_notes
+            WHERE parent_note_id = ?
+               OR (note_type = 'Flashcard' AND (? != '' AND tags LIKE '%' || ? || '%'))
+            ORDER BY id ASC
+        """, (parent_note_id, note_title, note_title))
+        return [dict(row) for row in cursor.fetchall()]
 
     def get_style_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         conn = self._get_connection()
@@ -566,11 +635,119 @@ class DatabaseManager:
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def delete_study_note(self, item_id: int):
+    def get_study_note_by_id(self, note_id: int) -> Optional[Dict[str, Any]]:
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM study_notes WHERE id = ?", (item_id,))
+        cursor.execute("""
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, created_at
+            FROM study_notes
+            WHERE id = ?
+        """, (note_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def delete_study_note(self, item_id: int):
+        """Elimina una nota o sbobina, tutte le eventuali flashcard collegate e i collegamenti associati."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM note_links WHERE source_id = ? OR target_id = ?", (item_id, item_id))
+        cursor.execute("DELETE FROM study_notes WHERE id = ? OR parent_note_id = ?", (item_id, item_id))
         conn.commit()
+
+    # --- GRAFO DELLA CONOSCENZA & NOTE COLLEGATE (OBSIDIAN STYLE) ---
+    def add_note_link(self, source_id: int, target_id: int, reason: str = "") -> Optional[int]:
+        """Aggiunge o aggiorna una connessione tra due note. Non ammette auto-connessioni."""
+        if not source_id or not target_id or source_id == target_id:
+            return None
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        clean_reason = (reason or "").strip()
+        try:
+            cursor.execute("""
+                INSERT INTO note_links (source_id, target_id, reason)
+                VALUES (?, ?, ?)
+                ON CONFLICT(source_id, target_id) DO UPDATE SET reason = excluded.reason
+            """, (source_id, target_id, clean_reason))
+            conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            print(f"[FlowLocal DB] Errore inserimento note_link: {e}")
+            return None
+
+    def delete_note_link(self, link_id: int) -> bool:
+        """Rimuove un collegamento tramite il suo ID univoco."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM note_links WHERE id = ?", (link_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def remove_note_link(self, source_id: int, target_id: int) -> bool:
+        """Rimuove il collegamento tra due note specificate (in entrambe le direzioni se presente)."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM note_links
+            WHERE (source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?)
+        """, (source_id, target_id, target_id, source_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def get_linked_notes(self, note_id: int) -> List[Dict[str, Any]]:
+        """Restituisce sia i link in uscita (source -> target) che i backlink in entrata (target -> source)."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 
+                l.id AS link_id,
+                l.source_id,
+                l.target_id,
+                l.reason,
+                l.created_at,
+                CASE WHEN l.source_id = ? THEN 'outgoing' ELSE 'incoming' END AS direction,
+                CASE WHEN l.source_id = ? THEN t.id ELSE s.id END AS note_id,
+                CASE WHEN l.source_id = ? THEN t.title ELSE s.title END AS title,
+                CASE WHEN l.source_id = ? THEN t.note_type ELSE s.note_type END AS note_type,
+                CASE WHEN l.source_id = ? THEN t.tags ELSE s.tags END AS tags
+            FROM note_links l
+            JOIN study_notes s ON l.source_id = s.id
+            JOIN study_notes t ON l.target_id = t.id
+            WHERE l.source_id = ? OR l.target_id = ?
+            ORDER BY l.id DESC
+        """, (note_id, note_id, note_id, note_id, note_id, note_id, note_id))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_all_graph_data(self) -> Dict[str, Any]:
+        """Restituisce nodi e archi per il rendering del grafo stile Obsidian."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        # Seleziona le note principali (esclude flashcard figlie)
+        cursor.execute("""
+            SELECT id, title, note_type, tags, created_at,
+                   SUBSTR(content_markdown, 1, 260) AS preview
+            FROM study_notes
+            WHERE (parent_note_id IS NULL AND note_type != 'Flashcard')
+            ORDER BY id ASC
+        """)
+        nodes = [dict(row) for row in cursor.fetchall()]
+        valid_ids = {n["id"] for n in nodes}
+
+        cursor.execute("""
+            SELECT id, source_id, target_id, reason, created_at
+            FROM note_links
+            ORDER BY id ASC
+        """)
+        raw_edges = [dict(row) for row in cursor.fetchall()]
+        edges = [
+            e for e in raw_edges
+            if e["source_id"] in valid_ids and e["target_id"] in valid_ids
+        ]
+
+        return {
+            "nodes": nodes,
+            "edges": edges,
+            "links": edges
+        }
 
     # --- CRONOLOGIA TRASCRIZIONI ---
     def add_transcription(self, raw_text: str, final_text: str, target_app: str = "", style_used: str = "Naturale", whisper_ms: int = 0, qwen_ms: int = 0, duration_s: float = 0.0):

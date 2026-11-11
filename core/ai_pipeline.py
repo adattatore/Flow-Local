@@ -22,7 +22,7 @@ import subprocess
 import winsound
 import urllib.request
 import urllib.error
-from typing import Tuple, Optional, Callable
+from typing import Tuple, Optional, Callable, List, Dict, Union, Any
 
 # Compatibilità pyav >= 13/14 con faster-whisper:
 # Le versioni recenti di PyAV hanno rimosso il parametro metadata_errors da av.open()
@@ -69,6 +69,11 @@ FILLER_WORDS_REGEX = re.compile(
 
 VOICE_LEARN_REGEX = re.compile(
     r'^(?:impara|correggi|salva(?: nel dizionario)?)\s+["\']?(.+?)["\']?\s+(?:in|con|come|si scrive)\s+["\']?(.+?)["\']?[.!?]?$',
+    flags=re.IGNORECASE
+)
+
+QUICK_NOTE_TRIGGER_REGEX = re.compile(
+    r'^(?:nuovo\s+appunto|prendi\s+nota(?:\s+che|\s+di)?|salva\s+nota(?:\s+che)?|ricordami\s+di|appunto)\b[\s,.:;—–-]*',
     flags=re.IGNORECASE
 )
 
@@ -188,6 +193,52 @@ ANTI_HALLUCINATION_RULE = (
     "Restituisci SOLO il testo rifinito senza tag."
 )
 
+PUNCTUATION_RULE = (
+    "PUNTEGGIATURA E SCORREVOLEZZA SINTATTICA NATURALE:\n"
+    "- Il testo risultante deve avere punteggiatura completa, fluida e naturale come un messaggio digitato a tastiera, preservando fedelmente il tono e l'intento dell'utente.\n"
+    "- Inserisci sempre la punteggiatura corretta: virgole per incisi e proposizioni subordinate, punto fermo (.) a fine frase o al cambio di proposizione logica, e chiudi SEMPRE ogni frase o domanda interrogativa con il punto interrogativo (?).\n"
+    "- EVITA assolutamente punti fermi artificiali prima di congiunzioni coordinanti come 'ma', 'però', 'e' (usa la virgola ',' quando la frase prosegue lo stesso pensiero).\n"
+    "- Rimuovi esitazioni vocali e riempitivi puri ('mmm', 'ehm', 'uhm', 'vabbè', 'cioè' usato come mero intercalare, false partenze ripetute).\n"
+    "- Correggi piccoli errori grammaticali o concordanze di tempo del parlato veloce, senza mai allungare, parafrasare arbitrariamente o riassumere il contenuto."
+)
+
+
+def normalize_phonetic_variants(text: str) -> str:
+    """Normalizzazione automatica post-Whisper / pre-LLM di varianti fonetiche comuni."""
+    if not text:
+        return text
+
+    def _preserve_case(matched_word: str, replacement: str) -> str:
+        if matched_word.isupper():
+            return replacement.upper()
+        if matched_word and matched_word[0].isupper():
+            return replacement.capitalize()
+        return replacement.lower()
+
+    def _replace_sbobbina(match: re.Match) -> str:
+        word = match.group(0)
+        # Sostituisce la doppia 'bb' con 'b' (es. sbobbina -> sbobina, sbobbine -> sbobine, sbobbinare -> sbobinare)
+        simplified = re.sub(r'bb', 'b', word, count=1, flags=re.IGNORECASE)
+        return _preserve_case(word, simplified)
+
+    # Correzione automatica varianti fonetiche sbobbina/sbobbine e forme correlate
+    text = re.sub(r'\b(sbobbin\w*)\b', _replace_sbobbina, text, flags=re.IGNORECASE)
+    return text
+
+
+def strip_vocal_fillers(text: str) -> str:
+    """Rimuove esitazioni vocali pure e tic verbali vuoti (mmm, ehm, uhm) all'inizio o isolati."""
+    if not text:
+        return text
+    # Rimuove esitazioni pure all'inizio del testo (es. 'mmm ', 'ehm, ', 'uhm... ')
+    cleaned = re.sub(r'^(?:ehm|uhm|mmm|vabb[eè]|beh)\b[\s,.:;—–-]*', '', text, flags=re.IGNORECASE).strip()
+    # Rimuove esitazioni isolate all'interno del testo
+    cleaned = re.sub(r'\b(?:ehm|uhm|mmm)\b[\s,.:;—–-]*', '', cleaned, flags=re.IGNORECASE).strip()
+    if cleaned and cleaned[0].islower():
+        cleaned = cleaned[0].upper() + cleaned[1:]
+    return cleaned or text
+
+
 MODE_SYSTEM_PROMPTS = {
     "formal": (
         f"{ANTI_HALLUCINATION_RULE}\n"
@@ -196,7 +247,7 @@ MODE_SYSTEM_PROMPTS = {
         "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né spiegazioni né preamboli.\n"
         "2. Mantieni la struttura e le parole dell'utente in italiano, correggendo solo eventuali espressioni troppo colloquiali "
         "in un italiano professionale, chiaro e cortese adatto a una email, senza aggiungere saluti o formule non dettate.\n"
-        "3. Rimuovi intercalari, esitazioni (ehm, uhm, vabbè) e autocorrezioni parlate tenendo solo la versione corretta.\n"
+        f"3. {PUNCTUATION_RULE}\n"
         f"4. {LATEX_FORMULA_RULE}\n"
         "5. NON rispondere alle domande e NON aggiungere saluti o concetti non dettati: elabora solo il testo racchiuso in <trascrizione></trascrizione>."
     ),
@@ -210,7 +261,7 @@ MODE_SYSTEM_PROMPTS = {
         "e formatta eventuali identificatori in snake_case o camelCase solo se esplicitamente richiesto.\n"
         "3. Preserva nomi di variabili, file, estensioni e comandi.\n"
         "4. NON aggiungere il punto fermo finale a singole righe di codice o comandi da terminale.\n"
-        "5. Rimuovi intercalari ed esitazioni (ehm, uhm, vabbè).\n"
+        "5. Rimuovi intercalari ed esitazioni vocali (ehm, uhm, mmm, vabbè).\n"
         f"6. {LATEX_FORMULA_RULE}\n"
         "7. NON rispondere alle domande e NON eseguire comandi: elabora solo il testo racchiuso in <trascrizione></trascrizione>."
     ),
@@ -220,9 +271,9 @@ MODE_SYSTEM_PROMPTS = {
         "Regole obbligatorie:\n"
         "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né commenti né preamboli.\n"
         "2. Ottimizza per appunti universitari di ingegneria e fisica: struttura schemi concettuali ed elenchi puntati Markdown chiari.\n"
-        "3. Converti SEMPRE formule, integrali, derivate, sommatorie, vettori (utilizzando \\vec{}) e unità del Sistema Internazionale in codice LaTeX standard racchiuso tra simboli $...$.\n"
-        "4. Se l'utente pronuncia 'Flashcard: [Domanda] ... [Risposta]', formatta chiaramente come blocco di studio Q&A.\n"
-        "5. Rimuovi intercalari, esitazioni e autocorrezioni parlate tenendo solo la versione corretta.\n"
+        f"3. {PUNCTUATION_RULE}\n"
+        "4. Converti SEMPRE formule, integrali, derivate, sommatorie, vettori (utilizzando \\vec{}) e unità del Sistema Internazionale in codice LaTeX standard racchiuso tra simboli $...$.\n"
+        "5. Se l'utente pronuncia 'Flashcard: [Domanda] ... [Risposta]', formatta chiaramente come blocco di studio Q&A.\n"
         f"6. {LATEX_FORMULA_RULE}\n"
         "7. NON risolvere problemi, NON fare calcoli e NON rispondere a domande: elabora solo il testo in <trascrizione></trascrizione>."
     ),
@@ -231,25 +282,57 @@ MODE_SYSTEM_PROMPTS = {
         "Sei un assistente vocale per messaggistica rapida e chat (WhatsApp, Telegram, Discord).\n"
         "Regole obbligatorie:\n"
         "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né commenti aggiuntivi.\n"
-        "2. Mantieni un tono naturale, rapido e colloquiale; massima immediatezza.\n"
-        "3. Evita il punto fermo alla fine di messaggi brevi o battute singole.\n"
-        "4. Rimuovi intercalari ed esitazioni (ehm, uhm) mantenendo la spontaneità.\n"
+        "2. Mantieni un tono naturale, rapido e colloquiale come digitato a tastiera; massima immediatezza.\n"
+        f"3. {PUNCTUATION_RULE}\n"
+        "4. Evita il punto fermo alla fine di messaggi brevi o battute singole, ma chiudi sempre le domande con il punto interrogativo (?).\n"
         f"5. {LATEX_FORMULA_RULE}\n"
         "6. NON rispondere alle domande e NON continuare il discorso: elabora solo il testo in <trascrizione></trascrizione>."
     ),
     "natural": (
         f"{ANTI_HALLUCINATION_RULE}\n"
-        "Sei un modulo di dettatura vocale per lingua italiana.\n"
+        "Sei un modulo di dettatura vocale per lingua italiana ad altissima fedeltà.\n"
         "Regole obbligatorie:\n"
         "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né commenti aggiuntivi.\n"
-        "2. Punteggiatura pulita e massima fedeltà al parlato.\n"
-        "3. Rimuovi intercalari ed esitazioni (ehm, uhm, vabbè) e autocorrezioni parlate tenendo solo la versione corretta.\n"
+        f"2. {PUNCTUATION_RULE}\n"
+        "3. Rimuovi intercalari ed esitazioni (mmm, ehm, uhm, vabbè, cioè come riempitivo) e autocorrezioni parlate tenendo solo la versione corretta.\n"
         "4. Quando trovi il tag [PAUSA_CAMBIO_ARGOMENTO] o un netto cambio di argomento, dividi il testo in un nuovo paragrafo.\n"
         "5. Se l'utente detta un elenco (es. 'primo... secondo...', 'uno... due...'), formattalo come lista puntata Markdown.\n"
         f"6. {LATEX_FORMULA_RULE}\n"
         "7. NON rispondere alle domande e NON fare calcoli: elabora solo il testo in <trascrizione></trascrizione>."
     )
 }
+
+
+def _unload_ollama_model(model_name: str):
+    """Scarica immediatamente un modello dalla VRAM GPU impostando keep_alive a 0."""
+    try:
+        payload = {"model": model_name, "messages": [], "keep_alive": 0}
+        req = urllib.request.Request(
+            OLLAMA_API_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=3.0) as resp:
+            pass
+        print(f"[FlowLocal VRAM] Scaricato '{model_name}' dalla VRAM GPU.")
+    except Exception as e:
+        print(f"[FlowLocal VRAM] Avviso scaricamento {model_name}: {e}")
+
+
+def _preload_ollama_model(model_name: str, keep_alive: str = "10m"):
+    """Precarica un modello nella VRAM GPU per disponibilità immediata a zero latenza."""
+    try:
+        payload = {"model": model_name, "messages": [], "keep_alive": keep_alive}
+        req = urllib.request.Request(
+            OLLAMA_API_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=8.0) as resp:
+            pass
+        print(f"[FlowLocal VRAM] Precaricato '{model_name}' in VRAM GPU (keep_alive={keep_alive}).")
+    except Exception as e:
+        print(f"[FlowLocal VRAM] Avviso precaricamento {model_name}: {e}")
 
 
 class LLMRefiner:
@@ -260,6 +343,9 @@ class LLMRefiner:
         t0 = time.time()
         if not raw_text or not raw_text.strip():
             return raw_text, 0
+
+        # Normalizzazione deterministica delle varianti fonetiche
+        raw_text = normalize_phonetic_variants(raw_text)
 
         # 1. Snippet Vocali deterministici
         expanded = db.match_and_expand_snippet(raw_text)
@@ -294,12 +380,17 @@ class LLMRefiner:
         if "SEI UN FILTRO DI PULIZIA TESTUALE" not in system_prompt:
             system_prompt = f"{ANTI_HALLUCINATION_RULE}\n\n{system_prompt}"
 
+        # Assicura la presenza della regola di punteggiatura sintattica naturale (esclusa modalità codice puro)
+        if "PUNTEGGIATURA E SCORREVOLEZZA SINTATTICA" not in system_prompt and mode_key != "code":
+            system_prompt = f"{system_prompt}\n\n{PUNCTUATION_RULE}"
+
         # Aggiunta Vocabolario al prompt di Qwen
         vocab_terms = db.get_vocabulary_biasing_prompt()
         if vocab_terms:
             system_prompt += f"\nVocabolario e termini tecnici da rispettare: {vocab_terms}."
 
-        user_content = f"Testo pronunciato da elaborare:\n<trascrizione>\n{raw_text}\n</trascrizione>"
+        clean_prompt_text = strip_vocal_fillers(raw_text)
+        user_content = f"Testo pronunciato da elaborare:\n<trascrizione>\n{clean_prompt_text}\n</trascrizione>"
 
         payload = {
             "model": LLM_MODEL,
@@ -342,9 +433,21 @@ class LLMRefiner:
 
                 refined = re.sub(r"</?trascri\w*\s*>", "", refined, flags=re.IGNORECASE).strip()
 
+                # Rimuove prefissi o preamboli discorsivi artificiali (es. 'Trascrizione: ...', 'Ecco il testo elaborato: ...')
+                refined = re.sub(
+                    r'^(?:ecco(?:\s+qui)?\s+(?:il\s+)?testo\s+(?:elaborato|rifinito|trascritto)|trascrizione|output|testo\s+elaborato|testo\s+rifinito)\s*:\s*(?:<br\s*/?>)*\s*',
+                    '',
+                    refined,
+                    flags=re.IGNORECASE
+                ).strip()
+                refined = re.sub(r'^(?:<br\s*/?>)+', '', refined, flags=re.IGNORECASE).strip()
+
                 refined = refined.strip()
                 if refined.startswith('"') and refined.endswith('"'):
                     refined = refined[1:-1].strip()
+
+                # Pulizia esitazioni vocali residue all'inizio
+                refined = strip_vocal_fillers(refined)
 
                 # Rimuove eventuali backslash finali (\) o spazi superflui
                 refined = refined.rstrip()
@@ -357,7 +460,9 @@ class LLMRefiner:
                 max_allowed_len = max(len(raw_text) * 1.45, len(raw_text) + 40)
                 if len(refined) > max_allowed_len:
                     print(f"[FlowLocal] Allucinazione LLM scartata ({len(refined)} car > {max_allowed_len:.0f} max). Fallback su testo acustico.")
-                    clean = db.apply_phonetic_replacements(raw_text).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
+                    clean = normalize_phonetic_variants(raw_text)
+                    clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
+                    clean = strip_vocal_fillers(clean)
                     while clean.endswith('\\'):
                         clean = clean[:-1].rstrip()
                     return clean, qwen_ms
@@ -368,10 +473,17 @@ class LLMRefiner:
             pass
 
         qwen_ms = int((time.time() - t0) * 1000)
-        clean = db.apply_phonetic_replacements(raw_text).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
+        clean = normalize_phonetic_variants(raw_text)
+        clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
+        clean = strip_vocal_fillers(clean)
         while clean.endswith('\\'):
             clean = clean[:-1].rstrip()
         return clean, qwen_ms
+
+    @classmethod
+    def refine_text(cls, raw_text: str, mode: str = "natural") -> Tuple[str, int]:
+        """Alias architetturale per refine."""
+        return cls.refine(raw_text, mode=mode)
 
     @classmethod
     def transform_selection(cls, selected_text: str, voice_command: str) -> str:
@@ -468,6 +580,125 @@ class LLMRefiner:
         if not chunk_text or not chunk_text.strip():
             return chunk_text
 
+    @classmethod
+    def generate_lecture_summary(cls, lecture_markdown: str, subject_context: str = "") -> str:
+        """Genera un riquadro di Sommario Esecutivo con i punti chiave della lezione."""
+        if not lecture_markdown or not lecture_markdown.strip():
+            return ""
+
+        lecture_model = cls.detect_lecture_model()
+        ctx_info = f"\nMateria: {subject_context.strip()}" if subject_context else ""
+
+        system_prompt = (
+            "SEI UN ASSISTENTE UNIVERSITARIO ESPERTO. "
+            f"{ctx_info}\n"
+            "Genera un Sommario Esecutivo sintetico, chiaro e rigoroso dei punti chiave trattati nella lezione. "
+            "Restituisci ESCLUSIVAMENTE un riquadro in stile citazione Markdown nel seguente formato esatto:\n\n"
+            "> 📌 **Punti Chiave della Lezione:**\n"
+            "> - [Punto chiave 1]\n"
+            "> - [Punto chiave 2]\n"
+            "> - [Punto chiave 3]\n"
+            "> - [Punto chiave 4]\n\n"
+            "Includi da 4 a 6 punti salienti. Nessun commento, premessa o testo extra prima o dopo il riquadro."
+        )
+
+        sample_text = lecture_markdown.strip()
+        if len(sample_text) > 8000:
+            sample_text = sample_text[:8000] + "\n...(continua)"
+
+        payload = {
+            "model": lecture_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"<testo_lezione>\n{sample_text}\n</testo_lezione>"}
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.2,
+                "num_predict": 600
+            }
+        }
+
+        try:
+            req = urllib.request.Request(
+                OLLAMA_API_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=30.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                summary = data.get("message", {}).get("content", "").strip()
+                summary = re.sub(r"</?(?:testo_lezione|output|result)>\s*", "", summary, flags=re.IGNORECASE).strip()
+                if summary:
+                    return summary
+        except Exception as e:
+            print(f"[FlowLocal] Errore generazione sommario esecutivo ({lecture_model}): {e}")
+
+        return ""
+
+    @classmethod
+    def extract_flashcards_from_note(cls, note_text: str) -> List[Dict[str, str]]:
+        """Estrae 5-8 domande e risposte d'esame in formato strutturato per flashcard da una nota di studio."""
+        if not note_text or not note_text.strip():
+            return []
+
+        lecture_model = cls.detect_lecture_model()
+        system_prompt = (
+            "SEI UN DOCENTE UNIVERSITARIO ESPERTO. "
+            "Estrai dal testo della lezione da 5 a 8 domande d'esame fondamentali con risposte sintetiche e precise per flashcard di ripasso attivo. "
+            "Restituisci ESCLUSIVAMENTE un array JSON valido con questa struttura esatta:\n"
+            "[\n"
+            "  {\"question\": \"Domanda d'esame 1?\", \"answer\": \"Risposta sintetica 1.\"},\n"
+            "  {\"question\": \"Domanda d'esame 2?\", \"answer\": \"Risposta sintetica 2.\"}\n"
+            "]\n"
+            "Non aggiungere assolutamente testo introduttivo, saluti, spiegazioni o blocchi di codice markdown prima o dopo il JSON."
+        )
+
+        sample_text = note_text.strip()
+        if len(sample_text) > 9000:
+            sample_text = sample_text[:9000]
+
+        payload = {
+            "model": lecture_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"<testo_lezione>\n{sample_text}\n</testo_lezione>"}
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.25,
+                "num_predict": 1200
+            }
+        }
+
+        try:
+            req = urllib.request.Request(
+                OLLAMA_API_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=45.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data.get("message", {}).get("content", "").strip()
+
+                json_match = re.search(r'\[[\s\S]*\]', content)
+                if json_match:
+                    parsed = json.loads(json_match.group(0))
+                    if isinstance(parsed, list):
+                        cards = []
+                        for item in parsed:
+                            if isinstance(item, dict) and "question" in item and "answer" in item:
+                                q_val = str(item["question"]).strip()
+                                a_val = str(item["answer"]).strip()
+                                if q_val and a_val:
+                                    cards.append({"question": q_val, "answer": a_val})
+                        if cards:
+                            return cards
+        except Exception as e:
+            print(f"[FlowLocal] Errore estrazione flashcard ({lecture_model}): {e}")
+
+        return []
+
         ctx_instruction = ""
         if subject_context and subject_context.strip():
             ctx_instruction = f"\nMateria / Parole chiave della lezione: {subject_context.strip()}."
@@ -478,6 +709,9 @@ class LLMRefiner:
             "Trasforma la trascrizione grezza della lezione in una sbobina scorrevole, ordinata e fedelissima alle parole del docente, "
             "senza ripetere mai due volte lo stesso paragrafo o titolo. "
             "Usa paragrafi chiari, qualche titolo ## solo sui veri cambi di argomento ed elenchi puntati essenziali. "
+            "Quando introduci un titolo di sezione o cambio argomento (## Titolo), inserisci accanto ad esso il minutaggio approssimativo di inizio "
+            "tra parentesi quadre ricavato dai riferimenti [MM:SS] presenti nel testo (es. ## 2. Il Nesso di Causalità [14:20] o ## Il Nesso di Causalità [14:20]). "
+            "Non lasciare marcatori temporali [MM:SS] isolati all'interno delle frasi ordinarie. "
             "Non scrivere mai etichette artificiali come 'Sottotitolo 1', 'Definizioni in Grassetto' o 'Riformulazione della Lezione'. "
             "Correggi evidenti refusi fonetici coerenti con il contesto della materia (es. tirocinio, polizza, fatti dolosi, falso ideologico, "
             "responsabilità in vigilando, colpa generica, imprudenza, imperizia, negligenza). "
@@ -549,6 +783,125 @@ class LLMRefiner:
         return chunk_text
 
     @classmethod
+    def generate_lecture_summary(cls, lecture_markdown: str, subject_context: str = "") -> str:
+        """Genera un riquadro di Sommario Esecutivo con i punti chiave della lezione."""
+        if not lecture_markdown or not lecture_markdown.strip():
+            return ""
+
+        lecture_model = cls.detect_lecture_model()
+        ctx_info = f"\nMateria: {subject_context.strip()}" if subject_context else ""
+
+        system_prompt = (
+            "SEI UN ASSISTENTE UNIVERSITARIO ESPERTO. "
+            f"{ctx_info}\n"
+            "Genera un Sommario Esecutivo sintetico, chiaro e rigoroso dei punti chiave trattati nella lezione. "
+            "Restituisci ESCLUSIVAMENTE un riquadro in stile citazione Markdown nel seguente formato esatto:\n\n"
+            "> 📌 **Punti Chiave della Lezione:**\n"
+            "> - [Punto chiave 1]\n"
+            "> - [Punto chiave 2]\n"
+            "> - [Punto chiave 3]\n"
+            "> - [Punto chiave 4]\n\n"
+            "Includi da 4 a 6 punti salienti. Nessun commento, premessa o testo extra prima o dopo il riquadro."
+        )
+
+        sample_text = lecture_markdown.strip()
+        if len(sample_text) > 8000:
+            sample_text = sample_text[:8000] + "\n...(continua)"
+
+        payload = {
+            "model": lecture_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"<testo_lezione>\n{sample_text}\n</testo_lezione>"}
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.2,
+                "num_predict": 600
+            }
+        }
+
+        try:
+            req = urllib.request.Request(
+                OLLAMA_API_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=30.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                summary = data.get("message", {}).get("content", "").strip()
+                summary = re.sub(r"</?(?:testo_lezione|output|result)>\s*", "", summary, flags=re.IGNORECASE).strip()
+                if summary:
+                    return summary
+        except Exception as e:
+            print(f"[FlowLocal] Errore generazione sommario esecutivo ({lecture_model}): {e}")
+
+        return ""
+
+    @classmethod
+    def extract_flashcards_from_note(cls, note_text: str) -> List[Dict[str, str]]:
+        """Estrae 5-8 domande e risposte d'esame in formato strutturato per flashcard da una nota di studio."""
+        if not note_text or not note_text.strip():
+            return []
+
+        lecture_model = cls.detect_lecture_model()
+        system_prompt = (
+            "SEI UN DOCENTE UNIVERSITARIO ESPERTO. "
+            "Estrai dal testo della lezione da 5 a 8 domande d'esame fondamentali con risposte sintetiche e precise per flashcard di ripasso attivo. "
+            "Restituisci ESCLUSIVAMENTE un array JSON valido con questa struttura esatta:\n"
+            "[\n"
+            "  {\"question\": \"Domanda d'esame 1?\", \"answer\": \"Risposta sintetica 1.\"},\n"
+            "  {\"question\": \"Domanda d'esame 2?\", \"answer\": \"Risposta sintetica 2.\"}\n"
+            "]\n"
+            "Non aggiungere assolutamente testo introduttivo, saluti, spiegazioni o blocchi di codice markdown prima o dopo il JSON."
+        )
+
+        sample_text = note_text.strip()
+        if len(sample_text) > 9000:
+            sample_text = sample_text[:9000]
+
+        payload = {
+            "model": lecture_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"<testo_lezione>\n{sample_text}\n</testo_lezione>"}
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.25,
+                "num_predict": 1200
+            }
+        }
+
+        try:
+            req = urllib.request.Request(
+                OLLAMA_API_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=45.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data.get("message", {}).get("content", "").strip()
+
+                json_match = re.search(r'\[[\s\S]*\]', content)
+                if json_match:
+                    parsed = json.loads(json_match.group(0))
+                    if isinstance(parsed, list):
+                        cards = []
+                        for item in parsed:
+                            if isinstance(item, dict) and "question" in item and "answer" in item:
+                                q_val = str(item["question"]).strip()
+                                a_val = str(item["answer"]).strip()
+                                if q_val and a_val:
+                                    cards.append({"question": q_val, "answer": a_val})
+                        if cards:
+                            return cards
+        except Exception as e:
+            print(f"[FlowLocal] Errore estrazione flashcard ({lecture_model}): {e}")
+
+        return []
+
+    @classmethod
     def _save_flashcard(cls, text: str):
         try:
             content = text[10:].strip()
@@ -562,6 +915,141 @@ class LLMRefiner:
             db.add_study_note(title=f"Flashcard: {q[:30]}...", content_markdown=f"**D:** {q}\n\n**R:** {a}", note_type="Flashcard", tags="Vocale")
         except Exception:
             pass
+
+    @classmethod
+    def find_related_notes(
+        cls,
+        new_title: str,
+        new_content: str,
+        existing_notes_summary: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Individua fino a 3 note/sbobine correlate tramite:
+        1. Riferimenti espliciti Wikilink [[Titolo]] presenti nel testo/titolo.
+        2. Auto-linking semantico concettuale interrogando Ollama (qwen2.5:7b se presente, altrimenti modello standard).
+        Restituisce una lista di dict: [{'id': int, 'title': str, 'reason': str}].
+        """
+        if not existing_notes_summary:
+            return []
+
+        results: List[Dict[str, Any]] = []
+        linked_ids = set()
+
+        notes_by_id = {n["id"]: n for n in existing_notes_summary if "id" in n}
+
+        # 1. Parsing Wikilink espliciti [[Titolo]]
+        full_text = f"{new_title or ''}\n{new_content or ''}"
+        wikilinks = re.findall(r'\[\[(.*?)\]\]', full_text)
+        for link_target in wikilinks:
+            target_clean = link_target.strip().lower()
+            if not target_clean:
+                continue
+            for n in existing_notes_summary:
+                nid = n.get("id")
+                ntitle = (n.get("title") or "").strip()
+                if nid and nid not in linked_ids:
+                    if target_clean == ntitle.lower() or target_clean in ntitle.lower() or ntitle.lower() in target_clean:
+                        results.append({
+                            "id": nid,
+                            "title": ntitle,
+                            "reason": f"Riferimento esplicito [[{link_target.strip()}]]"
+                        })
+                        linked_ids.add(nid)
+                        break
+
+        # Se abbiamo già raggiunto 3 correlazioni tramite wikilink espliciti, restituisci
+        if len(results) >= 3:
+            return results[:3]
+
+        # 2. Auto-linking semantico concettuale con Ollama Qwen
+        candidate_notes = [n for n in existing_notes_summary if n.get("id") not in linked_ids]
+        if not candidate_notes:
+            return results
+
+        candidates_formatted = []
+        for n in candidate_notes[:25]:
+            nid = n.get("id")
+            ntitle = (n.get("title") or "Senza Titolo").strip()
+            ntags = (n.get("tags") or "").strip()
+            preview = (n.get("preview") or n.get("content_markdown") or "").strip()
+            preview = re.sub(r'[\r\n]+', ' ', preview)
+            if len(preview) > 130:
+                preview = preview[:130] + "..."
+            candidates_formatted.append(f"- ID {nid}: \"{ntitle}\" [Tag: {ntags}] -> {preview}")
+
+        candidates_block = "\n".join(candidates_formatted)
+        content_sample = (new_content or "").strip()
+        if len(content_sample) > 3000:
+            content_sample = content_sample[:3000] + "\n...(continua)"
+
+        lecture_model = getattr(cls, "model", None) or cls.detect_lecture_model()
+
+        system_prompt = (
+            "SEI UN ASSISTENTE PER LA GESTIONE DELLA CONOSCENZA E GRAFI ACCADEMICI (stile Obsidian / Zettelkasten).\n"
+            "Analizza la NUOVA NOTA/SBOBINA e confrontala con l'ELENCO DELLE NOTE ESISTENTI per individuare da 0 a un massimo di 3 note correlate "
+            "per argomento, medesima materia, istituto giuridico, algoritmi, teoremi o concetti chiave condivisi.\n\n"
+            "REGOLE INDEROGABILI:\n"
+            "1. Scegli SOLO note con una reale e fondata correlazione concettuale. Se nessuna nota esistente è pertinente, restituisci una lista vuota [].\n"
+            "2. Per ogni nota correlata, fornisci il suo ID numerico e una 'reason' sintetica e chiara (max 12-15 parole, es. 'Stesso istituto giuridico: responsabilità in vigilando' oppure 'Approfondimento del medesimo algoritmo di ordinamento').\n"
+            "3. Restituisci ESCLUSIVAMENTE un array JSON valido con questa struttura esatta:\n"
+            "[\n"
+            "  {\"id\": 1, \"reason\": \"Breve motivazione della correlazione\"}\n"
+            "]\n"
+            "NON includere spiegazioni, markdown o testo prima o dopo il JSON."
+        )
+
+        user_content = (
+            f"<nuova_nota>\nTitolo: {new_title}\nContenuto:\n{content_sample}\n</nuova_nota>\n\n"
+            f"<note_esistenti>\n{candidates_block}\n</note_esistenti>"
+        )
+
+        payload = {
+            "model": lecture_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.2,
+                "num_predict": 400
+            }
+        }
+
+        try:
+            req = urllib.request.Request(
+                OLLAMA_API_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=12.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data.get("message", {}).get("content", "").strip()
+
+                json_match = re.search(r'\[[\s\S]*\]', content)
+                if json_match:
+                    parsed = json.loads(json_match.group(0))
+                    if isinstance(parsed, list):
+                        for item in parsed:
+                            if isinstance(item, dict) and "id" in item:
+                                try:
+                                    target_id = int(item["id"])
+                                except (ValueError, TypeError):
+                                    continue
+                                if target_id in notes_by_id and target_id not in linked_ids:
+                                    reason_text = str(item.get("reason") or "Correlazione semantica concettuale").strip()
+                                    results.append({
+                                        "id": target_id,
+                                        "title": notes_by_id[target_id].get("title", ""),
+                                        "reason": reason_text
+                                    })
+                                    linked_ids.add(target_id)
+                                    if len(results) >= 3:
+                                        break
+        except Exception as e:
+            print(f"[FlowLocal] Errore auto-linking note LLM ({lecture_model}): {e}")
+
+        return results[:3]
 
 
 class FlowLocalEngine:
@@ -997,7 +1485,8 @@ class FlowLocalEngine:
                     sound_done()
                     return
 
-            # Sostituzione deterministica alias fonetici
+            # Normalizzazione automatica varianti fonetiche e sostituzione alias da DB
+            raw_text = normalize_phonetic_variants(raw_text)
             raw_text = db.apply_phonetic_replacements(raw_text)
 
             # Stadio 2: Rifinitura Qwen 2.5
@@ -1008,6 +1497,56 @@ class FlowLocalEngine:
             final_text = final_text.rstrip()
             while final_text.endswith('\\'):
                 final_text = final_text[:-1].rstrip()
+
+            # 4. Trigger Vocale Zero-Focus per Appunti Rapidi ("Prendi nota", "Appunto", ecc.)
+            is_quick_note = bool(
+                QUICK_NOTE_TRIGGER_REGEX.match(raw_text.strip()) or
+                QUICK_NOTE_TRIGGER_REGEX.match(final_text.strip())
+            )
+            if is_quick_note:
+                # Rimuove il prefisso trigger dal testo raffinato
+                clean_note = QUICK_NOTE_TRIGGER_REGEX.sub('', final_text).strip()
+                if not clean_note:
+                    clean_note = QUICK_NOTE_TRIGGER_REGEX.sub('', raw_text).strip() or final_text.strip()
+
+                # Rimuove eventuale punteggiatura iniziale residua
+                clean_note = re.sub(r'^[\s,.:;—–-]+', '', clean_note).strip()
+                if clean_note:
+                    clean_note = clean_note[0].upper() + clean_note[1:]
+
+                title = clean_note.split("\n")[0][:45].strip() or "Appunto Rapido"
+                if len(title) > 42:
+                    title = title[:42] + "..."
+
+                print(f"[FlowLocal] Appunto rapido salvato (zero-focus): '{title}'")
+                db.add_study_note(
+                    title=title,
+                    content_markdown=clean_note,
+                    note_type="Appunto Rapido",
+                    tags="Vocale, Rapido"
+                )
+
+                app_label, _, _ = context
+                db.add_transcription(
+                    raw_text=raw_text,
+                    final_text=clean_note,
+                    target_app=app_label,
+                    style_used="Appunto Rapido",
+                    whisper_ms=whisper_ms,
+                    qwen_ms=qwen_ms,
+                    duration_s=duration_s
+                )
+
+                # Notifica discreta su HUD (zero focus steal) e segnale sonoro senza incolla
+                if self.orb:
+                    self.orb.show_toast("⚡ Appunto rapido salvato nell'Hub", duration_s=2.5)
+                sound_done()
+
+                # Notifica thread-safe all'Hub per refresh immediato se aperto
+                if self.hub and hasattr(self.hub, "note_added"):
+                    self.hub.note_added.emit()
+
+                return
 
             # Iniezione testo e feedback sonoro
             WindowsInjector.paste_text(final_text)
@@ -1128,24 +1667,44 @@ class FlowLocalEngine:
                     self.orb.show_toast(f"+ Imparato: {errata} → {corretta}", duration_s=2.5)
                 break
 
-    def transcribe_audio_file(self, file_path: str, subject_context: str = "", progress_callback: Optional[Callable[[str], None]] = None) -> str:
-        """Sbobina un file audio o video (.mp3, .m4a, .wav, .ogg, .mp4, .mov, .mkv, .webm) con pre-processing aula, Faster-Whisper e Qwen 2.5."""
+    def transcribe_audio_file(
+        self,
+        file_path: str,
+        subject_context: str = "",
+        progress_callback: Optional[Callable[..., None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None
+    ) -> str:
+        """Sbobina un file audio o video (.mp3, .m4a, .wav, .ogg, .mp4, .mov, .mkv, .webm)
+        con pre-processing d'aula, de-noising FFT, Faster-Whisper, gestione VRAM e Qwen 2.5 7B."""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File non trovato: {file_path}")
 
         temp_wav_path = None
         target_audio_path = file_path
 
-        def report(msg: str):
+        def report(msg: str, percent: int = -1):
             if progress_callback:
                 try:
-                    progress_callback(msg)
+                    # Supporta callback a 1 o 2 argomenti (msg, percent)
+                    progress_callback(msg, percent)
+                except TypeError:
+                    try:
+                        progress_callback(msg)
+                    except Exception:
+                        pass
                 except Exception:
                     pass
-            print(f"[FlowLocal Sbobina] {msg}")
+            pct_str = f" [{percent}%]" if percent >= 0 else ""
+            print(f"[FlowLocal Sbobina]{pct_str} {msg}")
 
-        # 1. Pre-elaborazione FFmpeg (Voce debole / Aula universitaria)
-        report("Pre-elaborazione audio in corso...")
+        def check_cancelled():
+            if cancel_check and cancel_check():
+                raise InterruptedError("Sbobinatura annullata dall'utente.")
+
+        check_cancelled()
+
+        # 1. Pre-elaborazione FFmpeg con De-noiser d'aula (afftdn + dynaudnorm)
+        report("Fase 1/3: Pre-elaborazione audio e de-noising aula in corso...", 5)
         ffmpeg_exe = None
         try:
             import imageio_ffmpeg
@@ -1166,26 +1725,33 @@ class FlowLocalEngine:
                 temp_fd, temp_wav_path = tempfile.mkstemp(suffix="_cleaned_lecture.wav")
                 os.close(temp_fd)
 
-                # Filtro per voce bassa/aula: highpass 80Hz, lowpass 8000Hz, dynamic audio normalizer, output PCM 16-bit
+                # Catena filtri: taglio rumble (80Hz), cutoff alte frequenze (7500Hz),
+                # denoiser FFT d'aula (afftdn -25dB), normalizzatore dinamico (dynaudnorm)
                 cmd = [
                     ffmpeg_exe, "-y", "-i", file_path,
-                    "-af", "highpass=f=80,lowpass=f=8000,dynaudnorm=f=150:g=15",
+                    "-af", "highpass=f=80,lowpass=f=7500,afftdn=nf=-25,dynaudnorm=f=150:g=15",
                     "-ar", "16000", "-ac", "1",
                     "-c:a", "pcm_s16le",
                     temp_wav_path
                 ]
                 proc = subprocess.run(cmd, capture_output=True, text=True)
+                check_cancelled()
+
                 if proc.returncode == 0 and os.path.exists(temp_wav_path) and os.path.getsize(temp_wav_path) > 100:
                     target_audio_path = temp_wav_path
-                    report("Filtri audio per aula applicati con successo.")
+                    report("Filtri d'aula e de-noising applicati con successo.", 15)
                 else:
-                    report("FFmpeg ha restituito errore. Utilizzo file sorgente come fallback.")
+                    report("FFmpeg ha restituito errore. Utilizzo file sorgente come fallback.", 15)
+            except InterruptedError:
+                raise
             except Exception as e:
-                report(f"Avviso FFmpeg: {e}. Procedo con audio originale.")
+                report(f"Avviso FFmpeg: {e}. Procedo con audio originale.", 15)
         else:
-            report("FFmpeg non disponibile: procedo direttamente con il file audio sorgente.")
+            report("FFmpeg non disponibile: procedo direttamente con il file sorgente.", 15)
 
         try:
+            check_cancelled()
+
             # Carica l'audio direttamente come ndarray float32 se abbiamo generato il WAV a 16kHz
             audio_input = target_audio_path
             if target_audio_path == temp_wav_path:
@@ -1197,7 +1763,7 @@ class FlowLocalEngine:
                     audio_input = target_audio_path
 
             # 2. Trascrizione Faster-Whisper (Profilo Aula: threshold 0.35, min_silence 800ms)
-            report("Trascrizione acustica Faster-Whisper (Profilo Aula)...")
+            report("Fase 2/3: Trascrizione acustica Faster-Whisper (Profilo Aula)...", 25)
             base_prompt = db.get_whisper_initial_prompt(limit=40) or ""
             if subject_context and subject_context.strip():
                 clean_ctx = subject_context.strip()
@@ -1207,6 +1773,8 @@ class FlowLocalEngine:
                     whisper_prompt = f"Lezione universitaria di {clean_ctx}. Glossario: {clean_ctx}. Trascrizione accurata in italiano."
             else:
                 whisper_prompt = base_prompt or None
+
+            check_cancelled()
 
             segments, info = self.model.transcribe(
                 audio_input,
@@ -1242,6 +1810,7 @@ class FlowLocalEngine:
                     unclear_end = None
 
             for seg in segments:
+                check_cancelled()
                 start_sec = getattr(seg, "start", 0.0) or 0.0
                 end_sec = getattr(seg, "end", start_sec) or start_sec
                 avg_logprob = getattr(seg, "avg_logprob", 0.0)
@@ -1285,6 +1854,12 @@ class FlowLocalEngine:
             if not full_raw_text:
                 return "*(Nessun parlato rilevato nel file audio)*"
 
+            # Normalizzazione automatica varianti fonetiche e glossario utente
+            full_raw_text = normalize_phonetic_variants(full_raw_text)
+            full_raw_text = db.apply_phonetic_replacements(full_raw_text)
+
+            check_cancelled()
+
             # 3. Suddivisione in chunk da circa 2200 caratteri (a fine frase) per rielaborazione fluida
             sentences = full_raw_text.replace("\r\n", "\n").split(". ")
             chunks = []
@@ -1307,22 +1882,41 @@ class FlowLocalEngine:
             if curr_chunk:
                 chunks.append(". ".join(curr_chunk) + ("" if curr_chunk[-1].endswith(".") else "."))
 
-            # 4. Riformattazione Sbobina con Qwen 2.5 blocco per blocco con correzione refusi fonetici d'aula
-            total_chunks = len(chunks)
+            # 4. Gestione dinamica VRAM: scarica il 3B prima di avviare il 7B
             active_lecture_model = LLMRefiner.detect_lecture_model()
-            report(f"Trascrizione completata ({len(full_raw_text)} car.). Riformattazione {active_lecture_model} (0/{total_chunks})...")
+            if "7b" in active_lecture_model:
+                report("Ottimizzazione VRAM: scaricamento modello 3B per liberare ~2.2 GB...", 42)
+                _unload_ollama_model(LLM_MODEL)
+
+            total_chunks = len(chunks)
+            report(f"Fase 3/3: Riformattazione {active_lecture_model} (0/{total_chunks})...", 45)
 
             formatted_blocks = []
             for i, chunk in enumerate(chunks, 1):
-                report(f"Sbobinatura blocco {i}/{total_chunks} ({active_lecture_model})...")
+                check_cancelled()
+                pct = int(45 + (i / total_chunks) * 45)  # Da 45% a 90%
+                report(f"Riformattazione blocco {i}/{total_chunks} ({active_lecture_model})...", pct)
                 formatted = LLMRefiner.reformat_lecture_block(chunk, subject_context=subject_context)
                 formatted_blocks.append(formatted.strip())
 
-            final_markdown = "\n\n".join(formatted_blocks).strip()
+            check_cancelled()
+            lecture_body = "\n\n".join(formatted_blocks).strip()
+
             # Pulizia regex finale: rimozione di eventuali backtick attorno ai segnaposto temporali
-            final_markdown = re.sub(r'`+(\[Audio non chiaro[^\]]+\])`+', r'\1', final_markdown)
-            final_markdown = re.sub(r'`+(\*{0,2}\[Audio non chiaro[^\]]+\]\*{0,2})`+', r'\1', final_markdown)
-            report("Sbobinatura completata con successo!")
+            lecture_body = re.sub(r'`+(\[Audio non chiaro[^\]]+\])`+', r'\1', lecture_body)
+            lecture_body = re.sub(r'`+(\*{0,2}\[Audio non chiaro[^\]]+\]\*{0,2})`+', r'\1', lecture_body)
+
+            # 5. Generazione automatica Sommario Esecutivo
+            report("Generazione Sommario Esecutivo della lezione...", 94)
+            check_cancelled()
+            summary = LLMRefiner.generate_lecture_summary(lecture_body, subject_context=subject_context)
+
+            if summary:
+                final_markdown = f"{summary}\n\n{lecture_body}".strip()
+            else:
+                final_markdown = lecture_body
+
+            report("Sbobinatura completata con successo!", 100)
             return final_markdown
 
         finally:
@@ -1331,3 +1925,12 @@ class FlowLocalEngine:
                     os.remove(temp_wav_path)
                 except Exception:
                     pass
+
+            # Ripristino dinamico VRAM: scarica 7B e ricarica 3B per dettatura rapida push-to-talk
+            try:
+                active_model = LLMRefiner.detect_lecture_model()
+                if "7b" in active_model:
+                    _unload_ollama_model("qwen2.5:7b")
+                _preload_ollama_model(LLM_MODEL, "10m")
+            except Exception:
+                pass
