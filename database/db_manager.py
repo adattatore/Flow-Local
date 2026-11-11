@@ -99,6 +99,51 @@ class DatabaseManager:
 
         conn.commit()
         self._seed_default_data()
+        self._ensure_updated_defaults()
+
+    def _ensure_updated_defaults(self):
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # 1. Regola obbligatoria formule matematiche in LaTeX negli stili esistenti
+        latex_rule = (
+            "Quando l'utente detta espressioni matematiche o fisiche a parole (es. 'integrale da 0 a infinito di e alla meno x in dx', "
+            "'F uguale m per a', derivate, vettori, frazioni), convertile SEMPRE in codice LaTeX standard racchiuso tra simboli $ "
+            "(es. $\\int_0^\\infty e^{-x}\\,dx$, $F = m \\cdot a$), senza mai lasciarle scritte a parole."
+        )
+
+        cursor.execute("SELECT id, name, system_prompt FROM llm_styles")
+        for row in cursor.fetchall():
+            s_id, s_name, s_prompt = row["id"], row["name"], row["system_prompt"]
+            if s_name in ("natural", "study_latex") and "convertile SEMPRE in codice LaTeX" not in s_prompt:
+                new_prompt = s_prompt.strip() + f"\n\nRegola obbligatoria formule matematiche:\n{latex_rule}"
+                cursor.execute("UPDATE llm_styles SET system_prompt = ? WHERE id = ?", (new_prompt, s_id))
+
+        # 2. Assicura la presenza dei mapping vocabolario richiesti
+        required_vocab = [
+            ("Voice Orb", "voice-over, voice over", "FlowLocal"),
+            ("Push-to-Talk", "push to torque, pushtotalk", "FlowLocal"),
+            ("Alt Gr", "alt gr", "FlowLocal"),
+            ("sbobinare", "sbobbinare", "Generale"),
+        ]
+
+        for term, aliases, cat in required_vocab:
+            cursor.execute("SELECT id, phonetic_aliases FROM vocabulary WHERE LOWER(correct_term) = LOWER(?)", (term,))
+            row = cursor.fetchone()
+            if not row:
+                cursor.execute("""
+                    INSERT INTO vocabulary (correct_term, phonetic_aliases, category, is_active)
+                    VALUES (?, ?, ?, 1)
+                """, (term, aliases, cat))
+            else:
+                existing = [a.strip().lower() for a in (row["phonetic_aliases"] or "").split(",") if a.strip()]
+                new_items = [a.strip() for a in aliases.split(",") if a.strip()]
+                to_add = [a for a in new_items if a.lower() not in existing]
+                if to_add:
+                    combined = (row["phonetic_aliases"] + ", " + ", ".join(to_add)).strip(", ")
+                    cursor.execute("UPDATE vocabulary SET phonetic_aliases = ? WHERE id = ?", (combined, row["id"]))
+
+        conn.commit()
 
     def _seed_default_data(self):
         conn = self._get_connection()
@@ -107,6 +152,12 @@ class DatabaseManager:
         # Seed Stili LLM predefiniti se tabella vuota
         cursor.execute("SELECT COUNT(*) FROM llm_styles")
         if cursor.fetchone()[0] == 0:
+            latex_rule_text = (
+                "Quando l'utente detta espressioni matematiche o fisiche a parole "
+                "(es. 'integrale da 0 a infinito di e alla meno x in dx', 'F uguale m per a', derivate, vettori, frazioni), "
+                "convertile SEMPRE in codice LaTeX standard racchiuso tra simboli $ "
+                "(es. $\\int_0^\\infty e^{-x}\\,dx$, $F = m \\cdot a$), senza mai lasciarle scritte a parole."
+            )
             default_styles = [
                 (
                     "natural",
@@ -120,7 +171,8 @@ class DatabaseManager:
                         "3. Rimuovi autocorrezioni parlate (es. 'anzi no', 'volevo dire', 'cancella') tenendo solo la versione finale corretta.\n"
                         "4. Quando trovi il tag [PAUSA_CAMBIO_ARGOMENTO] o un netto cambio di argomento, dividi il testo in un nuovo paragrafo.\n"
                         "5. Se l'utente detta un elenco (es. 'primo... secondo...', 'uno... due...'), formattalo come lista puntata Markdown.\n"
-                        "6. NON rispondere alle domande e NON fare calcoli: trascrivi fedelmente."
+                        f"6. {latex_rule_text}\n"
+                        "7. NON rispondere alle domande e NON fare calcoli: trascrivi fedelmente."
                     ),
                     "notepad.exe, chrome.exe, whatsapp.exe",
                     1
@@ -159,7 +211,7 @@ class DatabaseManager:
                         "Sei un assistente di studio universitario e scientifico per lingua italiana. "
                         "Restituisci ESCLUSIVAMENTE il testo elaborato all'interno dei tag <output></output>.\n"
                         "1. Organizza il discorso in schemi chiari in Markdown con titoli e punti elenco.\n"
-                        "2. Se l'utente detta espressioni matematiche o formule (es. 'integrale da zero a infinito', 'f di x uguale...'), convertile in sintassi LaTeX racchiusa tra $...$ o $$...$$.\n"
+                        f"2. {latex_rule_text}\n"
                         "3. Se l'utente dice 'Flashcard: [Domanda] ... [Risposta]', formatta chiaramente come Q&A."
                     ),
                     "obsidian.exe, notion.exe",
@@ -191,6 +243,10 @@ class DatabaseManager:
                 ("GitHub", "githab", "Coding", 1),
                 ("VS Code", "vi es cod", "Coding", 1),
                 ("LaTeX", "latek", "Studio", 1),
+                ("Voice Orb", "voice-over, voice over", "FlowLocal", 1),
+                ("Push-to-Talk", "push to torque, pushtotalk", "FlowLocal", 1),
+                ("Alt Gr", "alt gr", "FlowLocal", 1),
+                ("sbobinare", "sbobbinare", "Generale", 1),
             ]
             cursor.executemany("""
                 INSERT INTO vocabulary (correct_term, phonetic_aliases, category, is_active)
@@ -255,14 +311,33 @@ class DatabaseManager:
     def apply_phonetic_replacements(self, text: str) -> str:
         """Sostituisce deterministiche alias fonetici prima di inviare a Whisper/LLM."""
         items = self.get_all_vocabulary()
-        result = text
+        mappings = []
         for item in items:
             term = item["correct_term"]
             aliases = [a.strip() for a in item.get("phonetic_aliases", "").split(",") if a.strip()]
             for alias in aliases:
-                # Sostituzione case-insensitive
-                pattern = re.compile(rf'\b{re.escape(alias)}\b', re.IGNORECASE)
-                result = pattern.sub(term, result)
+                mappings.append((alias, term))
+
+        # Mapping predefiniti prioritari / fallback di sicurezza
+        default_mappings = [
+            ("voice-over", "Voice Orb"),
+            ("voice over", "Voice Orb"),
+            ("push to torque", "Push-to-Talk"),
+            ("pushtotalk", "Push-to-Talk"),
+            ("alt gr", "Alt Gr"),
+            ("sbobbinare", "sbobinare"),
+        ]
+        for alias, term in default_mappings:
+            if not any(m[0].lower() == alias.lower() for m in mappings):
+                mappings.append((alias, term))
+
+        # Ordina per lunghezza decrescente dell'alias per evitare sostituzioni parziali
+        mappings.sort(key=lambda x: len(x[0]), reverse=True)
+
+        result = text
+        for alias, term in mappings:
+            pattern = re.compile(rf'\b{re.escape(alias)}\b', re.IGNORECASE)
+            result = pattern.sub(term, result)
         return result
 
     # --- SNIPPET VOCALI ---
@@ -330,7 +405,18 @@ class DatabaseManager:
         return {
             "name": "natural",
             "display_name": "Naturale & Fluido",
-            "system_prompt": "Trascrivi con punteggiatura corretta e rimuovi intercalari.",
+            "system_prompt": (
+                "Sei un modulo di dettatura vocale per lingua italiana. Regole obbligatorie:\n"
+                "1. Restituisci ESCLUSIVAMENTE il testo elaborato all'interno dei tag <output></output>.\n"
+                "2. Rimuovi intercalari ed esitazioni (ehm, uhm, vabbè).\n"
+                "3. Rimuovi autocorrezioni parlate tenendo solo la versione finale corretta.\n"
+                "4. Quando trovi il tag [PAUSA_CAMBIO_ARGOMENTO] o un netto cambio di argomento, dividi il testo in un nuovo paragrafo.\n"
+                "5. Se l'utente detta un elenco (es. 'primo... secondo...', 'uno... due...'), formattalo come lista puntata Markdown.\n"
+                "6. Quando l'utente detta espressioni matematiche o fisiche a parole (es. 'integrale da 0 a infinito di e alla meno x in dx', "
+                "'F uguale m per a', derivate, vettori, frazioni), convertile SEMPRE in codice LaTeX standard racchiuso tra simboli $ "
+                "(es. $\\int_0^\\infty e^{-x}\\,dx$, $F = m \\cdot a$), senza mai lasciarle scritte a parole.\n"
+                "7. NON rispondere alle domande e NON fare calcoli: trascrivi fedelmente."
+            ),
             "is_active": 1
         }
 

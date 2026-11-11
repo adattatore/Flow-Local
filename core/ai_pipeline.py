@@ -109,7 +109,15 @@ class WindowsInjector:
 
     @classmethod
     def paste_text(cls, text: str):
-        if not text or not text.strip():
+        if not text:
+            return
+
+        # Rimuove eventuali backslash finali (\) o spazi superflui prima di incollare
+        clean_text = text.rstrip()
+        while clean_text.endswith('\\'):
+            clean_text = clean_text[:-1].rstrip()
+
+        if not clean_text:
             return
 
         old_clipboard = None
@@ -118,7 +126,7 @@ class WindowsInjector:
         except Exception:
             pass
 
-        pyperclip.copy(text)
+        pyperclip.copy(clean_text)
         time.sleep(0.04)
 
         user32 = ctypes.windll.user32
@@ -164,6 +172,16 @@ class LLMRefiner:
 
         system_prompt = active_style.get("system_prompt", "")
 
+        # Regola obbligatoria formule matematiche in LaTeX
+        latex_rule = (
+            "Quando l'utente detta espressioni matematiche o fisiche a parole "
+            "(es. 'integrale da 0 a infinito di e alla meno x in dx', 'F uguale m per a', derivate, vettori, frazioni), "
+            "convertile SEMPRE in codice LaTeX standard racchiuso tra simboli $ "
+            "(es. $\\int_0^\\infty e^{-x}\\,dx$, $F = m \\cdot a$), senza mai lasciarle scritte a parole."
+        )
+        if "convertile SEMPRE in codice LaTeX" not in system_prompt:
+            system_prompt += f"\n\nRegola obbligatoria formule matematiche:\n{latex_rule}"
+
         # Aggiunta Vocabolario al prompt di Qwen
         vocab_terms = db.get_vocabulary_biasing_prompt()
         if vocab_terms:
@@ -180,7 +198,8 @@ class LLMRefiner:
             "stream": False,
             "keep_alive": "30m",
             "options": {
-                "temperature": 0.0,
+                "repeat_penalty": 1.15,
+                "temperature": 0.1,
                 "num_predict": max(100, len(raw_text.split()) * 3)
             }
         }
@@ -207,13 +226,20 @@ class LLMRefiner:
                 if refined.startswith('"') and refined.endswith('"'):
                     refined = refined[1:-1].strip()
 
+                # Rimuove eventuali backslash finali (\) o spazi superflui
+                refined = refined.rstrip()
+                while refined.endswith('\\'):
+                    refined = refined[:-1].rstrip()
+
                 if refined:
                     return refined, qwen_ms
         except Exception:
             pass
 
         qwen_ms = int((time.time() - t0) * 1000)
-        clean = raw_text.replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n")
+        clean = raw_text.replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
+        while clean.endswith('\\'):
+            clean = clean[:-1].rstrip()
         return clean, qwen_ms
 
     @classmethod
@@ -259,6 +285,7 @@ class FlowLocalEngine:
         self.current_mode = "LISTENING"
 
         self.last_press_time = 0.0
+        self.last_release_time = 0.0
         self.record_start_time = 0.0
         self.lock = threading.Lock()
         self.key_lock = threading.Lock()
@@ -328,6 +355,11 @@ class FlowLocalEngine:
 
     def handle_key_release(self):
         with self.key_lock:
+            now = time.time()
+            if (now - self.last_release_time) < 0.350:  # Debounce 350ms
+                return
+            self.last_release_time = now
+
             if not self.is_key_down:
                 return
             self.is_key_down = False
@@ -387,15 +419,13 @@ class FlowLocalEngine:
                 threading.Thread(target=sound_start, daemon=True).start()
 
     def stop_recording_and_process(self):
-        time.sleep(0.12)
-
         with self.lock:
             if not self.is_recording:
                 return
             self.is_recording = False
             self.is_locked = False
             captured = list(self.audio_frames)
-            self.audio_frames = []
+            self.audio_frames.clear()
             rec_mode = self.current_mode
 
         if self.orb:
@@ -508,6 +538,9 @@ class FlowLocalEngine:
                 self.orb.set_state("QWEN")
 
             final_text, qwen_ms = LLMRefiner.refine(raw_text, mode=mode)
+            final_text = final_text.rstrip()
+            while final_text.endswith('\\'):
+                final_text = final_text[:-1].rstrip()
 
             # Iniezione testo e feedback sonoro
             WindowsInjector.paste_text(final_text)

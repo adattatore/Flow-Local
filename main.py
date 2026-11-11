@@ -36,6 +36,9 @@ from core.ai_pipeline import FlowLocalEngine
 VK_RMENU = 0xA5  # Alt Gr
 VK_F8 = 0x77     # Tasto F8
 
+keyboard_lock = threading.Lock()
+last_release_time = 0.0
+
 
 def is_target_key(key) -> bool:
     if key in (keyboard.Key.alt_gr, keyboard.Key.alt_r, keyboard.Key.f8):
@@ -47,6 +50,21 @@ def is_target_key(key) -> bool:
     if vk in (165, 119):
         return True
     return False
+
+
+def safe_handle_press(engine: FlowLocalEngine):
+    with keyboard_lock:
+        engine.handle_key_press()
+
+
+def safe_handle_release(engine: FlowLocalEngine):
+    global last_release_time
+    with keyboard_lock:
+        now = time.time()
+        if (now - last_release_time) < 0.350:  # Debounce 350ms su rilascio Alt Gr
+            return
+        last_release_time = now
+        engine.handle_key_release()
 
 
 def ensure_ollama_running():
@@ -79,10 +97,10 @@ def run_keyboard_poller(engine: FlowLocalEngine):
 
             if is_down and not was_down:
                 was_down = True
-                threading.Thread(target=engine.handle_key_press, daemon=True).start()
+                safe_handle_press(engine)
             elif not is_down and was_down:
                 was_down = False
-                threading.Thread(target=engine.handle_key_release, daemon=True).start()
+                safe_handle_release(engine)
         except Exception:
             pass
 
@@ -201,11 +219,11 @@ def main():
 
     def on_press(key):
         if is_target_key(key):
-            threading.Thread(target=engine.handle_key_press, daemon=True).start()
+            safe_handle_press(engine)
 
     def on_release(key):
         if is_target_key(key):
-            threading.Thread(target=engine.handle_key_release, daemon=True).start()
+            safe_handle_release(engine)
 
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     listener.daemon = True
