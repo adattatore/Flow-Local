@@ -65,6 +65,7 @@ class OrbSignalBridge(QObject):
     feed_audio_signal = pyqtSignal(object)
     set_locked_signal = pyqtSignal(bool)
     set_badge_signal = pyqtSignal(str)
+    show_toast_signal = pyqtSignal(str, float)
 
 
 class VoiceOrbOverlay(QWidget):
@@ -87,6 +88,11 @@ class VoiceOrbOverlay(QWidget):
         # Badge Contesto Attivo ("{app_label} • {mode_label}")
         self.badge_text = ""
         self.badge_opacity = 0.0
+
+        # Notifica Toast di Apprendimento ("+ Imparato: X → Y")
+        self.toast_message = ""
+        self.toast_end_time = 0.0
+        self.toast_opacity = 0.0
 
         # Animazioni e interpolazioni (lerp)
         self.wave_envelope = 0.0     # 0.0 = nascosta, 1.0 = visibile
@@ -112,6 +118,7 @@ class VoiceOrbOverlay(QWidget):
         self.bridge.feed_audio_signal.connect(self._feed_audio_slot)
         self.bridge.set_locked_signal.connect(self._set_locked_slot)
         self.bridge.set_badge_signal.connect(self._set_badge_slot)
+        self.bridge.show_toast_signal.connect(self._show_toast_slot)
 
         self._setup_window()
 
@@ -138,19 +145,22 @@ class VoiceOrbOverlay(QWidget):
         self._apply_geometry_for_state("IDLE")
 
     def _apply_geometry_for_state(self, state: str):
-        if state == "IDLE":
+        is_toast_active = bool(self.toast_message and time.time() < self.toast_end_time)
+
+        if state == "IDLE" and not is_toast_active:
             w, h = self.IDLE_W, self.IDLE_H
         else:
-            if self.badge_text:
+            active_text = self.toast_message if is_toast_active else self.badge_text
+            if active_text:
                 f_app = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
                 f_mode = QFont("Segoe UI", 9, QFont.Weight.Normal)
                 fm_app = QFontMetrics(f_app)
                 fm_mode = QFontMetrics(f_mode)
-                if " • " in self.badge_text:
-                    p1, p2 = self.badge_text.split(" • ", 1)
+                if " • " in active_text:
+                    p1, p2 = active_text.split(" • ", 1)
                     text_w = fm_app.horizontalAdvance(p1) + fm_app.horizontalAdvance(" • ") + fm_mode.horizontalAdvance(p2)
                 else:
-                    text_w = fm_app.horizontalAdvance(self.badge_text)
+                    text_w = fm_app.horizontalAdvance(active_text)
 
                 badge_w = text_w + 36
                 gap = 12
@@ -172,8 +182,19 @@ class VoiceOrbOverlay(QWidget):
 
     def _set_badge_slot(self, text: str):
         self.badge_text = text
-        if self.state != "IDLE":
+        if self.state != "IDLE" or (self.toast_message and time.time() < self.toast_end_time):
             self._apply_geometry_for_state(self.state)
+        self.update()
+
+    def show_toast(self, message: str, duration_s: float = 2.5):
+        self.bridge.show_toast_signal.emit(message, duration_s)
+
+    def _show_toast_slot(self, message: str, duration_s: float):
+        self.toast_message = message
+        self.toast_end_time = time.time() + duration_s
+        self.last_activity_time = time.time()
+        self.ghost_opacity = 1.0
+        self._apply_geometry_for_state(self.state)
         self.update()
 
     def set_state(self, new_state: str):
@@ -235,17 +256,26 @@ class VoiceOrbOverlay(QWidget):
 
         is_listening = self.state in ("LISTENING", "COMMAND_MODE", "STUDY_MODE")
         is_processing = self.state in ("WHISPER", "QWEN")
+        is_toast_active = bool(self.toast_message and time.time() < self.toast_end_time)
 
         target_wave = 1.0 if is_listening else 0.0
         target_spin = 1.0 if is_processing else 0.0
-        target_badge = 1.0 if (self.state != "IDLE" and self.badge_text) else 0.0
+        target_badge = 1.0 if (self.state != "IDLE" and self.badge_text and not is_toast_active) else 0.0
+        target_toast = 1.0 if is_toast_active else 0.0
 
         self.wave_envelope += (target_wave - self.wave_envelope) * 0.22
         self.spinner_opacity += (target_spin - self.spinner_opacity) * 0.22
         self.badge_opacity += (target_badge - self.badge_opacity) * 0.22
+        self.toast_opacity += (target_toast - self.toast_opacity) * 0.22
+
+        if not is_toast_active and self.toast_opacity < 0.03 and self.toast_message:
+            self.toast_message = ""
+            self._apply_geometry_for_state(self.state)
 
         # Colore in base allo stato attivo
-        if self.state == "LISTENING":
+        if is_toast_active:
+            target_col = QColor("#10B981")   # Emerald Glow per apprendimento dizionario
+        elif self.state == "LISTENING":
             target_col = QColor("#38BDF8")   # Electric Cyan
         elif self.state == "COMMAND_MODE":
             target_col = QColor("#F59E0B")   # Amber Gold
@@ -306,11 +336,12 @@ class VoiceOrbOverlay(QWidget):
             painter.setOpacity(self.ghost_opacity)
 
         cx, cy = self.width() / 2.0, self.height() / 2.0
+        is_toast_active = bool(self.toast_message and time.time() < self.toast_end_time)
 
         # =========================================================
-        # 1. STATO IDLE: BOTTONE SOTTILE MINIMALE (60x22 px)
+        # 1. STATO IDLE PURO: BOTTONE SOTTILE MINIMALE (60x22 px)
         # =========================================================
-        if self.state == "IDLE":
+        if self.state == "IDLE" and not is_toast_active:
             btn_w = float(self.width() - 2)
             btn_h = float(self.height() - 2)
             btn_rect = QRectF(1.0, 1.0, btn_w, btn_h)
@@ -334,9 +365,9 @@ class VoiceOrbOverlay(QWidget):
             return
 
         # =========================================================
-        # 2. STATI ATTIVI: VOICE ORB (140x140 px)
+        # 2. STATI ATTIVI O TOAST: VOICE ORB (140x140 px)
         # =========================================================
-        if self.badge_text:
+        if self.badge_text or is_toast_active:
             cx = 70.0
             cy = self.height() / 2.0
         else:
@@ -439,9 +470,79 @@ class VoiceOrbOverlay(QWidget):
             painter.restore()
 
         # =========================================================
-        # 3. BADGE ACCANTO AL VOICE ORB: "{app_label} • {mode_label}"
+        # 3. NOTIFICA TOAST DI APPRENDIMENTO: "+ Imparato: {errata} → {corretta}"
         # =========================================================
-        if self.badge_text and self.badge_opacity > 0.01:
+        if is_toast_active and self.toast_opacity > 0.01:
+            painter.save()
+            painter.setOpacity(self.toast_opacity)
+
+            gap = 12.0
+            badge_h = 28.0
+            badge_x = 140.0 + gap
+            badge_y = cy - (badge_h / 2.0)
+            badge_w = max(40.0, self.width() - badge_x - 12.0)
+            badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
+            radius = badge_h / 2.0
+
+            # 1. Sfondo pillola Obsidian Glass con riflesso smeraldo
+            painter.setBrush(QColor(14, 18, 22, 235))
+            border_col = QColor("#10B981")
+            border_col.setAlpha(int(140 * self.toast_opacity))
+            painter.setPen(QPen(border_col, 1.3))
+            painter.drawRoundedRect(badge_rect, radius, radius)
+
+            # 2. Dot indicatore smeraldo brillante
+            dot_radius = 3.5
+            dot_cx = badge_x + 13.0
+            dot_cy = cy
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#10B981"))
+            painter.drawEllipse(QPointF(dot_cx, dot_cy), dot_radius, dot_radius)
+
+            # 3. Testo toast
+            text_x = dot_cx + 9.0
+            avail_text_w = badge_rect.right() - text_x - 10.0
+
+            f_bold = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
+            f_norm = QFont("Segoe UI", 9, QFont.Weight.Normal)
+            fm_bold = QFontMetrics(f_bold)
+            fm_norm = QFontMetrics(f_norm)
+
+            if " → " in self.toast_message:
+                left_part, right_part = self.toast_message.split(" → ", 1)
+                arrow_str = " → "
+                total_w = fm_bold.horizontalAdvance(left_part) + fm_norm.horizontalAdvance(arrow_str) + fm_bold.horizontalAdvance(right_part)
+                start_x = text_x + max(0.0, (avail_text_w - total_w) / 2.0)
+                base_y = badge_y + (badge_h + fm_bold.ascent() - fm_bold.descent()) / 2.0
+
+                # Parte sinistra (es. "+ Imparato: errata")
+                painter.setFont(f_bold)
+                painter.setPen(QColor("#34D399"))  # Emerald soft
+                painter.drawText(QPointF(start_x, base_y), left_part)
+                start_x += fm_bold.horizontalAdvance(left_part)
+
+                # Freccia
+                painter.setFont(f_norm)
+                painter.setPen(QColor("#64748B"))
+                painter.drawText(QPointF(start_x, base_y), arrow_str)
+                start_x += fm_norm.horizontalAdvance(arrow_str)
+
+                # Parte destra (corretta)
+                painter.setFont(f_bold)
+                painter.setPen(QColor("#FFFFFF"))
+                painter.drawText(QPointF(start_x, base_y), right_part)
+            else:
+                painter.setFont(f_bold)
+                painter.setPen(QColor("#34D399"))
+                text_rect = QRectF(text_x, badge_y, avail_text_w, badge_h)
+                painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, self.toast_message)
+
+            painter.restore()
+
+        # =========================================================
+        # 4. BADGE ACCANTO AL VOICE ORB: "{app_label} • {mode_label}"
+        # =========================================================
+        elif self.badge_text and self.badge_opacity > 0.01:
             painter.save()
             painter.setOpacity(self.badge_opacity)
 

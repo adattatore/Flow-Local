@@ -377,6 +377,52 @@ class DatabaseManager:
         active_terms = [item["correct_term"] for item in items if item.get("is_active", 1)]
         return ", ".join(active_terms)
 
+    def get_whisper_initial_prompt(self, limit: int = 40) -> str:
+        """Estrae i termini distinti dal vocabolario per il bias acustico in Faster-Whisper."""
+        items = self.get_all_vocabulary()
+        seen = set()
+        terms = []
+        for item in items:
+            if item.get("is_active", 1):
+                term = (item.get("correct_term") or "").strip()
+                if term and term.lower() not in seen:
+                    seen.add(term.lower())
+                    terms.append(term)
+                    if len(terms) >= limit:
+                        break
+        if not terms:
+            return ""
+        return f"Glossario tecnico: {', '.join(terms)}."
+
+    def learn_vocabulary_pair(self, alias: str, correct_term: str) -> bool:
+        """Salva o aggiorna la coppia (alias_errato, parola_corretta) nella tabella vocabulary."""
+        alias_clean = (alias or "").strip().lower()
+        term_clean = (correct_term or "").strip()
+        if not alias_clean or not term_clean or alias_clean == term_clean.lower():
+            return False
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id, phonetic_aliases FROM vocabulary WHERE LOWER(correct_term) = LOWER(?)", (term_clean,))
+        row = cursor.fetchone()
+        if row:
+            existing = [a.strip().lower() for a in (row["phonetic_aliases"] or "").split(",") if a.strip()]
+            if alias_clean not in existing:
+                existing.append(alias_clean)
+                new_aliases = ", ".join(existing)
+                cursor.execute("UPDATE vocabulary SET phonetic_aliases = ? WHERE id = ?", (new_aliases, row["id"]))
+                conn.commit()
+                return True
+            return False
+        else:
+            cursor.execute("""
+                INSERT INTO vocabulary (correct_term, phonetic_aliases, category, is_active)
+                VALUES (?, ?, 'Auto-Appreso', 1)
+            """, (term_clean, alias_clean))
+            conn.commit()
+            return True
+
     def apply_phonetic_replacements(self, text: str) -> str:
         """Sostituisce deterministiche alias fonetici prima di inviare a Whisper/LLM."""
         items = self.get_all_vocabulary()

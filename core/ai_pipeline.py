@@ -13,11 +13,12 @@ import re
 import time
 import json
 import ctypes
+import difflib
 import threading
 import winsound
 import urllib.request
 import urllib.error
-from typing import Tuple
+from typing import Tuple, Optional
 
 import numpy as np
 import sounddevice as sd
@@ -44,6 +45,11 @@ OLLAMA_API_URL = "http://localhost:11434/api/chat"
 
 FILLER_WORDS_REGEX = re.compile(
     r'\b(ehm+|uhm+|mhh+|ah+|eh+|vabbè)\b[\.\,\…]*\s*',
+    flags=re.IGNORECASE
+)
+
+VOICE_LEARN_REGEX = re.compile(
+    r'^(?:impara|correggi|salva(?: nel dizionario)?)\s+["\']?(.+?)["\']?\s+(?:in|con|come|si scrive)\s+["\']?(.+?)["\']?[.!?]?$',
     flags=re.IGNORECASE
 )
 
@@ -287,7 +293,8 @@ class LLMRefiner:
             "options": {
                 "repeat_penalty": 1.15,
                 "temperature": 0.1,
-                "num_predict": max(100, len(raw_text.split()) * 3)
+                "num_predict": max(100, len(raw_text.split()) * 3),
+                "stop": ["</trascrizione>"]
             }
         }
 
@@ -303,14 +310,18 @@ class LLMRefiner:
                 content = data.get("message", {}).get("content", "").strip()
                 qwen_ms = int((time.time() - t0) * 1000)
 
-                # Estrazione e rimozione di tag XML residui (<output>, <trascrizione>, ecc.)
-                refined = content
-                for tag in ("output", "trascrizione", "text", "refined"):
+                # Rimozione preliminare di qualsiasi tag residuo simile a <trascrizione> (inclusi refusi come </trascrizizione>)
+                refined = re.sub(r"</?trascri\w*\s*>", "", content, flags=re.IGNORECASE).strip()
+
+                # Estrazione e rimozione di eventuali altri tag XML residui (<output>, ecc.)
+                for tag in ("output", "text", "refined"):
                     match = re.search(rf'<{tag}>(.*?)</{tag}>', refined, flags=re.DOTALL | re.IGNORECASE)
                     if match:
                         refined = match.group(1)
                     else:
                         refined = re.sub(rf'</?{tag}>', '', refined, flags=re.IGNORECASE)
+
+                refined = re.sub(r"</?trascri\w*\s*>", "", refined, flags=re.IGNORECASE).strip()
 
                 refined = refined.strip()
                 if refined.startswith('"') and refined.endswith('"'):
@@ -583,7 +594,9 @@ class FlowLocalEngine:
                     self.orb.set_state("IDLE")
                 return
 
-            # 2. Faster-Whisper Inference con VAD e barriere anti-allucinazione
+            # 2. Faster-Whisper Inference con VAD, barriere anti-allucinazione e bias acustico dinamico
+            whisper_prompt = db.get_whisper_initial_prompt(limit=40) or None
+
             segments, info = self.model.transcribe(
                 audio_data,
                 beam_size=5,
@@ -596,7 +609,7 @@ class FlowLocalEngine:
                     min_silence_duration_ms=500,
                     speech_pad_ms=200,
                 ),
-                initial_prompt=None,
+                initial_prompt=whisper_prompt,
             )
 
             segments = list(segments)
@@ -610,7 +623,7 @@ class FlowLocalEngine:
                     condition_on_previous_text=False,
                     no_speech_threshold=0.6,
                     vad_filter=False,
-                    initial_prompt=None,
+                    initial_prompt=whisper_prompt,
                 )
                 segments = list(segments)
 
@@ -642,6 +655,19 @@ class FlowLocalEngine:
 
             print(f"[FlowLocal] Trascrizione grezza Whisper ({whisper_ms}ms): {raw_text}")
 
+            # 3. Intercettazione apprendimento vocale istantaneo ("Correggi X in Y")
+            learn_match = VOICE_LEARN_REGEX.match(raw_text.strip())
+            if learn_match:
+                errata = learn_match.group(1).strip().strip('"\'.,')
+                corretta = learn_match.group(2).strip().strip('"\'.,')
+                if errata and corretta and errata.lower() != corretta.lower():
+                    print(f"[FlowLocal] Apprendimento vocale istantaneo: '{errata}' -> '{corretta}'")
+                    db.learn_vocabulary_pair(errata, corretta)
+                    if self.orb:
+                        self.orb.show_toast(f"+ Imparato: {errata} → {corretta}", duration_s=2.5)
+                    sound_done()
+                    return
+
             # Sostituzione deterministica alias fonetici
             raw_text = db.apply_phonetic_replacements(raw_text)
 
@@ -657,6 +683,9 @@ class FlowLocalEngine:
             # Iniezione testo e feedback sonoro
             WindowsInjector.paste_text(final_text)
             sound_done()
+
+            # Watcher passivo su clipboard per correzioni manuali post-incolla (12 secondi)
+            self._start_clipboard_learning_watcher(final_text)
 
             # Salvataggio nel database locale
             app_label, mode_key, mode_label = context
@@ -680,3 +709,92 @@ class FlowLocalEngine:
         finally:
             if self.orb:
                 self.orb.set_state("IDLE")
+
+    @staticmethod
+    def _find_correction_pair(injected_text: str, clip_text: str) -> Optional[Tuple[str, str]]:
+        clip = (clip_text or "").strip()
+        injected = (injected_text or "").strip()
+        if not clip or not injected or clip == injected:
+            return None
+
+        orig_words = injected.split()
+        clip_words = clip.split()
+
+        # Caso 1: L'utente ha selezionato e copiato/tagliato la frase o frammento modificato (>2 parole)
+        if len(clip_words) > 2:
+            matcher = difflib.SequenceMatcher(None, orig_words, clip_words)
+            opcodes = matcher.get_opcodes()
+            replace_ops = [op for op in opcodes if op[0] == 'replace']
+            if len(replace_ops) == 1:
+                tag, i1, i2, j1, j2 = replace_ops[0]
+                if (1 <= (i2 - i1) <= 2) and (1 <= (j2 - j1) <= 2):
+                    errata = ' '.join(orig_words[i1:i2])
+                    corretta = ' '.join(clip_words[j1:j2])
+                    errata_clean = re.sub(r'^[^\w]+|[^\w]+$', '', errata)
+                    corretta_clean = re.sub(r'^[^\w]+|[^\w]+$', '', corretta)
+                    if errata_clean and corretta_clean and errata_clean.lower() != corretta_clean.lower():
+                        sim = difflib.SequenceMatcher(None, errata_clean.lower(), corretta_clean.lower()).ratio()
+                        if sim > 0.45 and len(errata_clean) <= 30 and len(corretta_clean) <= 30:
+                            return errata_clean, corretta_clean
+
+        # Caso 2: L'utente ha copiato solo la singola parola/espressione corretta (1 o 2 parole)
+        if 1 <= len(clip_words) <= 2 and len(clip) <= 30:
+            corretta_clean = re.sub(r'^[^\w]+|[^\w]+$', '', clip)
+            if not corretta_clean:
+                return None
+            best_match = None
+            best_sim = 0.45
+            for n in (1, 2):
+                for i in range(len(orig_words) - n + 1):
+                    cand = ' '.join(orig_words[i:i+n])
+                    cand_clean = re.sub(r'^[^\w]+|[^\w]+$', '', cand)
+                    if not cand_clean or cand_clean.lower() == corretta_clean.lower():
+                        continue
+                    sim = difflib.SequenceMatcher(None, cand_clean.lower(), corretta_clean.lower()).ratio()
+                    if sim > best_sim and len(cand_clean) <= 30:
+                        best_sim = sim
+                        best_match = (cand_clean, corretta_clean)
+            if best_match:
+                return best_match
+
+        return None
+
+    def _start_clipboard_learning_watcher(self, injected_text: str):
+        if not injected_text or not injected_text.strip():
+            return
+        threading.Thread(
+            target=self._clipboard_learning_worker,
+            args=(injected_text.strip(),),
+            daemon=True
+        ).start()
+
+    def _clipboard_learning_worker(self, injected_text: str):
+        # Attesa per il completamento dell'iniezione Ctrl+V e del ripristino clipboard iniziale
+        time.sleep(0.7)
+        try:
+            initial_clip = pyperclip.paste()
+        except Exception:
+            initial_clip = ""
+
+        start_time = time.time()
+        last_clip = initial_clip
+
+        while (time.time() - start_time) < 12.0:
+            time.sleep(0.35)
+            try:
+                curr_clip = pyperclip.paste()
+            except Exception:
+                continue
+
+            if not curr_clip or curr_clip == last_clip or curr_clip == injected_text:
+                continue
+
+            last_clip = curr_clip
+            pair = self._find_correction_pair(injected_text, curr_clip)
+            if pair:
+                errata, corretta = pair
+                print(f"[FlowLocal] Apprendimento passivo da correzione clipboard: '{errata}' -> '{corretta}'")
+                db.learn_vocabulary_pair(errata, corretta)
+                if self.orb:
+                    self.orb.show_toast(f"+ Imparato: {errata} → {corretta}", duration_s=2.5)
+                break
