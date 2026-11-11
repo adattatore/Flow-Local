@@ -136,7 +136,7 @@ class VoiceOrbOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("FlowLocal (Tieni premuto Alt Gr o clicca per parlare)")
+        self.setToolTip("FlowLocal (Tieni premuto Caps Lock o clicca per parlare)")
 
         avail = QApplication.primaryScreen().availableGeometry()
         self.anchor_x = avail.x() + avail.width() // 2
@@ -275,6 +275,8 @@ class VoiceOrbOverlay(QWidget):
         # Colore in base allo stato attivo
         if is_toast_active:
             target_col = QColor("#10B981")   # Emerald Glow per apprendimento dizionario
+        elif "Selezione" in self.badge_text:
+            target_col = QColor("#F59E0B")   # Amber Gold per trasformazione selezione attiva
         elif self.state == "LISTENING":
             target_col = QColor("#38BDF8")   # Electric Cyan
         elif self.state == "COMMAND_MODE":

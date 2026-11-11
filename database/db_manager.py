@@ -555,6 +555,17 @@ class DatabaseManager:
             cursor.execute("SELECT id, title, content_markdown, note_type, tags, created_at FROM study_notes ORDER BY id DESC")
         return [dict(row) for row in cursor.fetchall()]
 
+    def get_notes(self) -> List[Dict[str, Any]]:
+        """Alias usato dal FlowLocalHub: restituisce tutte le note salvate (più recenti prima)."""
+        return self.get_all_study_notes()
+
+    def get_style_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, display_name, description, system_prompt, auto_target_apps, is_active FROM llm_styles WHERE name = ? LIMIT 1", (name,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
     def delete_study_note(self, item_id: int):
         conn = self._get_connection()
         cursor = conn.cursor()

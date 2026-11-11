@@ -1,875 +1,878 @@
 """
 FlowLocalHub (PyQt6)
-Centro di controllo desktop (1080x700) con estetica Obsidian Dark (Linear/Raycast).
-TopBar con telemetria hardware in tempo reale (RTX 5060 via NVML), Sidebar fissa e QStackedWidget a 6 schede:
-1. Panoramica
-2. Vocabolario & Jargon
-3. Snippet Vocali
-4. Stili LLM & Studio
-5. Studio, Note & Flashcard
-6. Impostazioni Audio & Hotkeys
+Centro di controllo desktop minimal-dark (960x640).
+
+Layout:
+- Sidebar fissa a sinistra (210 px): titolo, stato motore, navigazione, promemoria scorciatoia.
+- QStackedWidget a 4 pagine:
+  1. Cronologia     — ricerca fissa + lista scorrevole delle trascrizioni
+  2. Note           — ricerca fissa + esportazione Markdown + lista note
+  3. Dizionario     — form fisso (alias -> parola corretta) + lista regole
+  4. Stili & Prompt — selettore modalità + editor System Prompt
+
+Regole UI (AGENTS.md §7): solo QSS valido Qt6, form/ricerche fuori dalla QScrollArea
+con altezza minima esplicita, liste scorrevoli anti-compressione.
 """
 
-import os
-import sounddevice as sd
-import pyperclip
-from typing import Optional
+from datetime import datetime
+from typing import Callable, Dict, List, Optional
 
-from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QStackedWidget, QTableWidget, QTableWidgetItem, QHeaderView, QLineEdit,
-    QTextEdit, QComboBox, QFrame, QRadioButton, QButtonGroup, QScrollArea,
-    QProgressBar, QMessageBox, QAbstractItemView, QSplitter
-)
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtWidgets import (
+    QApplication, QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QLabel,
+    QLineEdit, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
+    QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
+)
 
 from database import db
 
-# Telemetria GPU tramite NVML (senza warning)
-GPU_NAME = "NVIDIA GeForce RTX 5060"
-nvml_handle = None
+# Rilevamento GPU tramite NVML (opzionale, senza warning)
+GPU_AVAILABLE = False
 try:
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         import pynvml
         pynvml.nvmlInit()
-        nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-        GPU_NAME = pynvml.nvmlDeviceGetName(nvml_handle)
+        pynvml.nvmlDeviceGetHandleByIndex(0)
+        GPU_AVAILABLE = True
 except Exception:
-    nvml_handle = None
+    GPU_AVAILABLE = False
 
 
-OBSIDIAN_QSS = """
-QMainWindow, QWidget {
-    background-color: #090A0F;
-    color: #F8FAFC;
-    font-family: 'Segoe UI', 'Inter', sans-serif;
+# =====================================================================
+# STYLESHEET GLOBALE (solo proprietà QSS supportate da Qt6)
+# =====================================================================
+HUB_QSS = """
+QWidget {
+    color: #E2E8F0;
+    font-family: 'Segoe UI';
     font-size: 13px;
 }
 
-/* TOP BAR */
-QFrame#topbar {
-    background-color: #0E1017;
-    border-bottom: 1px solid #1F2230;
-    min-height: 48px;
-    max-height: 48px;
-    padding: 0 16px;
+QWidget#HubRoot, QStackedWidget#Pages, QWidget#Page {
+    background-color: #161920;
 }
 
-/* SIDEBAR */
-QFrame#sidebar {
-    background-color: #12131A;
-    border-right: 1px solid #1F2230;
-    min-width: 220px;
-    max-width: 220px;
+/* ---------------- SIDEBAR ---------------- */
+QFrame#Sidebar {
+    background-color: #111318;
+    border-right: 1px solid #232730;
 }
-
-QPushButton.nav-btn {
+QLabel#AppTitle {
+    font-size: 18px;
+    font-weight: bold;
+    color: #F8FAFC;
+    background-color: transparent;
+}
+QLabel#EngineStatus {
+    background-color: #0F2A22;
+    border: 1px solid #14532D;
+    border-radius: 10px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+QPushButton#NavButton {
+    min-height: 40px;
+    max-height: 40px;
     text-align: left;
-    padding: 10px 14px;
+    padding: 0 14px;
+    border: none;
+    border-radius: 8px;
     background-color: transparent;
     color: #94A3B8;
-    border: none;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 500;
+    font-weight: 600;
 }
-
-QPushButton.nav-btn:hover {
-    background-color: #1A1B24;
-    color: #F8FAFC;
+QPushButton#NavButton:hover {
+    background-color: #1A1F29;
+    color: #E2E8F0;
 }
-
-QPushButton.nav-btn:checked {
-    background-color: #1E2030;
+QPushButton#NavButton:checked {
+    background-color: #1E293B;
     color: #38BDF8;
-    border-left: 3px solid #38BDF8;
-    font-weight: 600;
 }
-
-/* CARDS */
-QFrame.card {
-    background-color: #12131A;
-    border: 1px solid #1F2230;
-    border-radius: 8px;
-    padding: 16px;
+QFrame#ShortcutBox {
+    background-color: #161A22;
+    border: 1px solid #232730;
+    border-radius: 10px;
 }
-
-QFrame.card-highlight {
-    background-color: #12131A;
-    border: 1px solid #6366F1;
-    border-radius: 8px;
-    padding: 16px;
+QLabel#ShortcutKey {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    padding: 2px 8px;
+    color: #38BDF8;
+    font-weight: bold;
 }
-
-/* TITOLI & TESTO */
-QLabel.page-title {
-    font-size: 20px;
-    font-weight: 700;
-    color: #F8FAFC;
-}
-
-QLabel.page-desc {
-    font-size: 13px;
+QLabel#ShortcutHint {
     color: #94A3B8;
-}
-
-QLabel.stat-val {
-    font-size: 26px;
-    font-weight: 700;
-    color: #F8FAFC;
-}
-
-QLabel.stat-lbl {
-    font-size: 11px;
-    color: #94A3B8;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-}
-
-/* INPUTS */
-QLineEdit, QTextEdit, QComboBox {
-    background-color: #161822;
-    border: 1px solid #232738;
-    border-radius: 6px;
-    padding: 8px 12px;
-    color: #F8FAFC;
-    selection-background-color: #6366F1;
-}
-
-QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
-    border: 1px solid #38BDF8;
-    background-color: #181A26;
-}
-
-QComboBox::drop-down {
-    border: none;
-    width: 24px;
-}
-
-/* PULSANTI */
-QPushButton.btn-primary {
-    background-color: #6366F1;
-    color: #FFFFFF;
-    border: none;
-    border-radius: 6px;
-    padding: 8px 16px;
-    font-weight: 600;
-}
-
-QPushButton.btn-primary:hover {
-    background-color: #4F46E5;
-}
-
-QPushButton.btn-secondary {
-    background-color: #1F2230;
-    color: #F8FAFC;
-    border: 1px solid #2D3142;
-    border-radius: 6px;
-    padding: 7px 14px;
-    font-weight: 500;
-}
-
-QPushButton.btn-secondary:hover {
-    background-color: #272B3C;
-}
-
-QPushButton.btn-danger {
-    background-color: #7F1D1D;
-    color: #FCA5A5;
-    border: 1px solid #991B1B;
-    border-radius: 6px;
-    padding: 6px 12px;
-    font-weight: 500;
-}
-
-QPushButton.btn-danger:hover {
-    background-color: #991B1B;
-    color: #FFFFFF;
-}
-
-/* TABELLE */
-QTableWidget {
-    background-color: #12131A;
-    border: 1px solid #1F2230;
-    border-radius: 6px;
-    gridline-color: #1A1B24;
-    color: #F8FAFC;
-    selection-background-color: #1E2030;
-    selection-color: #38BDF8;
-}
-
-QHeaderView::section {
-    background-color: #161822;
-    color: #94A3B8;
-    padding: 8px;
-    border: none;
-    border-bottom: 1px solid #1F2230;
-    font-weight: 600;
     font-size: 12px;
+    background-color: transparent;
 }
 
-QScrollBar:vertical {
-    background: #090A0F;
-    width: 8px;
-    border-radius: 4px;
-}
-
-QScrollBar::handle:vertical {
-    background: #1F2230;
-    border-radius: 4px;
-    min-height: 20px;
-}
-
-QScrollBar::handle:vertical:hover {
-    background: #38BDF8;
-}
-
-QProgressBar {
-    background-color: #161822;
-    border: 1px solid #1F2230;
-    border-radius: 4px;
-    text-align: center;
+/* ---------------- HEADER PAGINE ---------------- */
+QLabel#PageTitle {
+    font-size: 20px;
+    font-weight: bold;
     color: #F8FAFC;
-    height: 12px;
+}
+QLabel#PageSubtitle {
+    font-size: 12px;
+    color: #94A3B8;
 }
 
-QProgressBar::chunk {
-    background-color: #10B981;
-    border-radius: 3px;
+/* ---------------- INPUT ---------------- */
+QLineEdit {
+    min-height: 36px;
+    background-color: #1E222B;
+    border: 1px solid #2F3542;
+    border-radius: 8px;
+    padding: 0 12px;
+    color: #F1F5F9;
+    font-size: 13px;
+    selection-background-color: #0284C7;
+}
+QLineEdit:focus {
+    border: 1px solid #38BDF8;
+    background-color: #232833;
+}
+QTextEdit {
+    min-height: 120px;
+    background-color: #1E222B;
+    border: 1px solid #2F3542;
+    border-radius: 8px;
+    padding: 10px;
+    color: #F1F5F9;
+    font-size: 13px;
+    selection-background-color: #0284C7;
+}
+QTextEdit:focus {
+    border: 1px solid #38BDF8;
+}
+
+/* ---------------- PULSANTI ---------------- */
+QPushButton {
+    min-height: 34px;
+    border-radius: 7px;
+    padding: 0 14px;
+    font-weight: 600;
+    background-color: #262B36;
+    color: #E2E8F0;
+    border: 1px solid #2F3542;
+}
+QPushButton:hover {
+    background-color: #2F3542;
+}
+QPushButton:pressed {
+    background-color: #1E222B;
+}
+QPushButton[variant="primary"] {
+    background-color: #0284C7;
+    border: 1px solid #0284C7;
+    color: #FFFFFF;
+}
+QPushButton[variant="primary"]:hover {
+    background-color: #0369A1;
+    border: 1px solid #0369A1;
+}
+QPushButton[variant="danger"] {
+    background-color: transparent;
+    border: 1px solid #3F2A2E;
+    color: #F87171;
+}
+QPushButton[variant="danger"]:hover {
+    background-color: #2A1A1D;
+}
+QPushButton#ModeTab {
+    background-color: #1C2029;
+    border: 1px solid #2A303C;
+    color: #94A3B8;
+}
+QPushButton#ModeTab:hover {
+    color: #E2E8F0;
+}
+QPushButton#ModeTab:checked {
+    background-color: #1E293B;
+    border: 1px solid #38BDF8;
+    color: #38BDF8;
+}
+
+/* ---------------- LISTE SCORREVOLI ---------------- */
+QScrollArea {
+    background-color: transparent;
+    border: none;
+}
+QWidget#ScrollContent {
+    background-color: transparent;
+}
+QScrollBar:vertical {
+    background-color: transparent;
+    width: 10px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical {
+    background-color: #2F3542;
+    border-radius: 4px;
+    min-height: 30px;
+}
+QScrollBar::handle:vertical:hover {
+    background-color: #3B4252;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background-color: transparent;
+}
+
+/* ---------------- CARD ---------------- */
+QFrame#Card {
+    background-color: #1C2029;
+    border: 1px solid #2A303C;
+    border-radius: 10px;
+}
+QFrame#Card QLabel {
+    background-color: transparent;
+}
+QLabel#CardMeta {
+    color: #64748B;
+    font-size: 11px;
+}
+QLabel#CardTitle {
+    color: #F1F5F9;
+    font-weight: 600;
+}
+QLabel#CardBody {
+    color: #CBD5E1;
+    font-size: 13px;
+}
+QLabel#Badge {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    padding: 1px 8px;
+    color: #7DD3FC;
+    font-size: 11px;
+    font-weight: 600;
+}
+QLabel#BadgeMuted {
+    background-color: #20242D;
+    border: 1px solid #2F3542;
+    border-radius: 8px;
+    padding: 1px 8px;
+    color: #94A3B8;
+    font-size: 11px;
+}
+QLabel#EmptyState {
+    color: #64748B;
+    font-size: 13px;
+    padding: 30px;
+}
+
+QMessageBox {
+    background-color: #161920;
 }
 """
 
+# Modalità di dettatura (etichetta UI -> nome stile nel DB llm_styles)
+MODE_TABS = [
+    ("Naturale", "natural"),
+    ("Formale", "formal"),
+    ("Code / Tech", "coding"),
+    ("Studio / LaTeX", "study_latex"),
+    ("Chat", "chat"),
+]
+
+
+def _format_timestamp(raw: Optional[str]) -> str:
+    if not raw:
+        return ""
+    try:
+        return datetime.strptime(str(raw)[:19], "%Y-%m-%d %H:%M:%S").strftime("%d/%m/%Y · %H:%M")
+    except ValueError:
+        return str(raw)
+
+
+def _make_button(text: str, variant: Optional[str] = None) -> QPushButton:
+    btn = QPushButton(text)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    if variant:
+        btn.setProperty("variant", variant)
+    return btn
+
+
+def _make_label(text: str, object_name: str, wrap: bool = False) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setObjectName(object_name)
+    if object_name.startswith("Badge"):
+        lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+    if wrap:
+        lbl.setWordWrap(True)
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+    return lbl
+
+
+class ScrollList(QScrollArea):
+    """QScrollArea anti-compressione: card a larghezza piena, altezza naturale."""
+
+    def __init__(self, empty_text: str = "Nessun elemento."):
+        super().__init__()
+        self.empty_text = empty_text
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+
+        self.content = QWidget()
+        self.content.setObjectName("ScrollContent")
+        self.vbox = QVBoxLayout(self.content)
+        self.vbox.setContentsMargins(0, 0, 6, 0)
+        self.vbox.setSpacing(10)
+        self.vbox.addStretch(1)
+        self.setWidget(self.content)
+
+    def clear(self):
+        while self.vbox.count() > 1:
+            item = self.vbox.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+
+    def add_card(self, widget: QWidget):
+        self.vbox.insertWidget(self.vbox.count() - 1, widget)
+
+    def show_empty(self, text: Optional[str] = None):
+        lbl = _make_label(text or self.empty_text, "EmptyState", wrap=True)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.add_card(lbl)
+
+
+def _make_card() -> (QFrame, QVBoxLayout):
+    card = QFrame()
+    card.setObjectName("Card")
+    card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(12, 12, 12, 12)
+    layout.setSpacing(8)
+    return card, layout
+
 
 class FlowLocalHub(QMainWindow):
-    def __init__(self, on_device_changed: Optional[callable] = None):
+    def __init__(self, on_device_changed: Optional[Callable] = None):
         super().__init__()
+        # API pubblica mantenuta per compatibilità con main.py / pipeline audio
         self.on_device_changed = on_device_changed
-        self.setWindowTitle("FlowLocal Hub — AI Voice & Study Workspace")
-        self.resize(1080, 700)
-        self.setMinimumSize(920, 600)
-        self.setStyleSheet(OBSIDIAN_QSS)
+        self.live_volume = 0.0
+
+        self.setWindowTitle("FlowLocal Hub")
+        self.resize(960, 640)
+        self.setMinimumSize(820, 540)
+        self.setStyleSheet(HUB_QSS)
+
+        self._current_mode_name = MODE_TABS[0][1]
+        self._last_transcription_marker = None
 
         self._build_ui()
-        self._refresh_all_views()
+        self._refresh_current_page()
 
-        # Timer telemetria e statistiche live
-        self.telemetry_timer = QTimer(self)
-        self.telemetry_timer.timeout.connect(self._update_hardware_telemetry)
-        self.telemetry_timer.start(2000)
+        # Aggiornamento leggero della Cronologia: ricostruisce solo se arrivano nuovi dettati
+        self.poll_timer = QTimer(self)
+        self.poll_timer.timeout.connect(self._poll_new_transcriptions)
+        self.poll_timer.start(2500)
+
+    # -----------------------------------------------------------------
+    # API pubblica
+    # -----------------------------------------------------------------
+    def update_live_volume(self, rms_normalized: float):
+        """Chiamato dal thread audio: memorizza solo il valore (nessuna operazione UI cross-thread)."""
+        self.live_volume = float(rms_normalized)
 
     def closeEvent(self, event):
         event.ignore()
         self.hide()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refresh_current_page()
+
+    # -----------------------------------------------------------------
+    # Struttura principale
+    # -----------------------------------------------------------------
     def _build_ui(self):
         root = QWidget()
+        root.setObjectName("HubRoot")
         self.setCentralWidget(root)
-        main_layout = QVBoxLayout(root)
+
+        main_layout = QHBoxLayout(root)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # ---------------------------------------------------------------------
-        # TOP BAR: Brand & Telemetria Live GPU
-        # ---------------------------------------------------------------------
-        topbar = QFrame()
-        topbar.setObjectName("topbar")
-        tbl = QHBoxLayout(topbar)
-        tbl.setContentsMargins(16, 0, 16, 0)
-        tbl.setSpacing(12)
+        main_layout.addWidget(self._build_sidebar())
 
-        logo_lbl = QLabel("🎙️ FLOW LOCAL")
-        logo_lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        logo_lbl.setStyleSheet("color: #F8FAFC; letter-spacing: 1.5px;")
+        self.pages = QStackedWidget()
+        self.pages.setObjectName("Pages")
+        self.pages.addWidget(self._build_history_page())
+        self.pages.addWidget(self._build_notes_page())
+        self.pages.addWidget(self._build_dictionary_page())
+        self.pages.addWidget(self._build_styles_page())
+        main_layout.addWidget(self.pages, 1)
 
-        hub_badge = QLabel("STUDIO & WORKSPACE")
-        hub_badge.setStyleSheet("background-color: #1E2030; color: #38BDF8; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: bold;")
+        self.nav_buttons[0].setChecked(True)
 
-        tbl.addWidget(logo_lbl)
-        tbl.addWidget(hub_badge)
-        tbl.addStretch()
-
-        # Badge Hardware GPU & Modelli
-        self.badge_gpu = QLabel("🟢 RTX 5060: Inizializzazione...")
-        self.badge_gpu.setStyleSheet("background-color: #161822; color: #10B981; border: 1px solid #1F2230; padding: 4px 10px; border-radius: 6px; font-size: 11px; font-family: monospace;")
-
-        self.badge_models = QLabel("⚡ Whisper Large-v3-Turbo + Qwen 2.5")
-        self.badge_models.setStyleSheet("background-color: #161822; color: #818CF8; border: 1px solid #1F2230; padding: 4px 10px; border-radius: 6px; font-size: 11px;")
-
-        tbl.addWidget(self.badge_gpu)
-        tbl.addWidget(self.badge_models)
-        main_layout.addWidget(topbar)
-
-        # ---------------------------------------------------------------------
-        # BODY: Sidebar + QStackedWidget
-        # ---------------------------------------------------------------------
-        body = QWidget()
-        body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(0)
-
-        # 1. Sidebar di navigazione
+    def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
-        sidebar.setObjectName("sidebar")
-        sb_layout = QVBoxLayout(sidebar)
-        sb_layout.setContentsMargins(14, 18, 14, 18)
-        sb_layout.setSpacing(6)
+        sidebar.setObjectName("Sidebar")
+        sidebar.setFixedWidth(210)
+
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(14, 20, 14, 16)
+        layout.setSpacing(6)
+
+        title = QLabel("FlowLocal")
+        title.setObjectName("AppTitle")
+        layout.addWidget(title)
+
+        if GPU_AVAILABLE:
+            status = QLabel("● GPU / CUDA Attivo")
+            status.setStyleSheet("color: #10B981;")
+        else:
+            status = QLabel("● CPU (GPU non rilevata)")
+            status.setStyleSheet("color: #F59E0B; background-color: #2A2210; border: 1px solid #4A3A12;")
+        status.setObjectName("EngineStatus")
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 4, 0, 0)
+        status_row.addWidget(status)
+        status_row.addStretch(1)
+        layout.addLayout(status_row)
+
+        layout.addSpacing(22)
 
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
-
-        self.btn_home = QPushButton("⚡  Panoramica")
-        self.btn_vocab = QPushButton("📖  Vocabolario & Jargon")
-        self.btn_snippets = QPushButton("🪄  Snippet Vocali")
-        self.btn_styles = QPushButton("🧠  Stili LLM & Studio")
-        self.btn_study = QPushButton("📚  Studio, Note & Flashcard")
-        self.btn_audio = QPushButton("⚙️  Audio & Hotkeys")
-
-        nav_items = [
-            (self.btn_home, 0),
-            (self.btn_vocab, 1),
-            (self.btn_snippets, 2),
-            (self.btn_styles, 3),
-            (self.btn_study, 4),
-            (self.btn_audio, 5),
-        ]
-
-        for btn, idx in nav_items:
+        self.nav_buttons: List[QPushButton] = []
+        for idx, label in enumerate(["Cronologia", "Note", "Dizionario", "Stili && Prompt"]):
+            btn = QPushButton(label)
+            btn.setObjectName("NavButton")
             btn.setCheckable(True)
-            btn.setProperty("class", "nav-btn")
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            btn.clicked.connect(lambda _checked, i=idx: self._on_nav_clicked(i))
             self.nav_group.addButton(btn, idx)
-            sb_layout.addWidget(btn)
+            self.nav_buttons.append(btn)
+            layout.addWidget(btn)
 
-        self.nav_group.idClicked.connect(self._on_nav_clicked)
-        self.btn_home.setChecked(True)
+        layout.addStretch(1)
 
-        sb_layout.addStretch()
+        shortcut_box = QFrame()
+        shortcut_box.setObjectName("ShortcutBox")
+        sb_layout = QVBoxLayout(shortcut_box)
+        sb_layout.setContentsMargins(12, 10, 12, 10)
+        sb_layout.setSpacing(6)
 
-        # Status Footer
-        hw_box = QFrame()
-        hw_box.setStyleSheet("background-color: #161822; border: 1px solid #1F2230; border-radius: 6px; padding: 10px;")
-        hw_layout = QVBoxLayout(hw_box)
-        hw_layout.setContentsMargins(6, 6, 6, 6)
-        hw_layout.setSpacing(3)
-        hw_lbl1 = QLabel("100% Locale & Privato")
-        hw_lbl1.setStyleSheet("color: #10B981; font-weight: 600; font-size: 11px;")
-        hw_lbl2 = QLabel("Zero dati inviati al Cloud")
-        hw_lbl2.setStyleSheet("color: #94A3B8; font-size: 10px;")
-        hw_layout.addWidget(hw_lbl1)
-        hw_layout.addWidget(hw_lbl2)
-        sb_layout.addWidget(hw_box)
+        key_row = QHBoxLayout()
+        key_row.setContentsMargins(0, 0, 0, 0)
+        key = QLabel("Caps Lock")
+        key.setObjectName("ShortcutKey")
+        key_row.addWidget(key)
+        key_row.addStretch(1)
+        sb_layout.addLayout(key_row)
 
-        body_layout.addWidget(sidebar)
+        hint = QLabel("Tieni premuto per dettare.\nDoppio tocco: mani libere.\nShift+Caps: Bloc Maiusc.")
+        hint.setObjectName("ShortcutHint")
+        hint.setWordWrap(True)
+        sb_layout.addWidget(hint)
 
-        # 2. Area Schede QStackedWidget
-        self.stack = QStackedWidget()
-        self.stack.setStyleSheet("background-color: #090A0F; padding: 22px;")
-
-        self.view_home = self._create_home_view()
-        self.view_vocab = self._create_vocab_view()
-        self.view_snippets = self._create_snippets_view()
-        self.view_styles = self._create_styles_view()
-        self.view_study = self._create_study_view()
-        self.view_audio = self._create_audio_view()
-
-        self.stack.addWidget(self.view_home)      # 0
-        self.stack.addWidget(self.view_vocab)     # 1
-        self.stack.addWidget(self.view_snippets)  # 2
-        self.stack.addWidget(self.view_styles)    # 3
-        self.stack.addWidget(self.view_study)     # 4
-        self.stack.addWidget(self.view_audio)     # 5
-
-        body_layout.addWidget(self.stack)
-        main_layout.addWidget(body)
-
-    def _update_hardware_telemetry(self):
-        if nvml_handle:
-            try:
-                mem = pynvml.nvmlDeviceGetMemoryInfo(nvml_handle)
-                temp = pynvml.nvmlDeviceGetTemperature(nvml_handle, pynvml.NVML_TEMPERATURE_GPU)
-                used_gb = mem.used / (1024**3)
-                tot_gb = mem.total / (1024**3)
-                self.badge_gpu.setText(f"🟢 RTX 5060: {temp}°C | VRAM {used_gb:.1f}/{tot_gb:.1f} GB")
-            except Exception:
-                pass
+        layout.addWidget(shortcut_box)
+        return sidebar
 
     def _on_nav_clicked(self, idx: int):
-        self.stack.setCurrentIndex(idx)
+        self.pages.setCurrentIndex(idx)
+        self._refresh_current_page()
+
+    def _refresh_current_page(self):
+        idx = self.pages.currentIndex() if hasattr(self, "pages") else 0
         if idx == 0:
-            self._refresh_home_stats()
+            self._refresh_history()
         elif idx == 1:
-            self._refresh_vocab_table()
+            self._refresh_notes()
         elif idx == 2:
-            self._refresh_snippets_table()
+            self._refresh_dictionary()
         elif idx == 3:
-            self._refresh_styles_view()
-        elif idx == 4:
-            self._refresh_study_view()
+            self._load_mode_prompt(self._current_mode_name)
 
-    # =========================================================================
-    # VISTA 1: PANORAMICA (HOME)
-    # =========================================================================
-    def _create_home_view(self) -> QWidget:
-        widget = QWidget()
-        vbox = QVBoxLayout(widget)
-        vbox.setSpacing(16)
+    @staticmethod
+    def _make_page(title: str, subtitle: str) -> (QWidget, QVBoxLayout):
+        page = QWidget()
+        page.setObjectName("Page")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(28, 24, 28, 20)
+        layout.setSpacing(14)
 
-        # Hero Banner
-        hero = QFrame()
-        hero.setProperty("class", "card")
-        hl = QVBoxLayout(hero)
-        t = QLabel("Bentornato su FlowLocal")
-        t.setProperty("class", "page-title")
-        sub = QLabel("Il tuo assistente vocale e secondo cervello 100% offline. Premi 'Alt Gr' per parlare ovunque.")
-        sub.setProperty("class", "page-desc")
-        hl.addWidget(t)
-        hl.addWidget(sub)
-        vbox.addWidget(hero)
+        header = QVBoxLayout()
+        header.setSpacing(2)
+        header.addWidget(_make_label(title, "PageTitle"))
+        header.addWidget(_make_label(subtitle, "PageSubtitle", wrap=True))
+        layout.addLayout(header)
+        return page, layout
 
-        # 3 KPI Cards Principali
-        stats_layout = QHBoxLayout()
-        stats_layout.setSpacing(12)
+    # -----------------------------------------------------------------
+    # 1. CRONOLOGIA
+    # -----------------------------------------------------------------
+    def _build_history_page(self) -> QWidget:
+        page, layout = self._make_page("Cronologia", "Le tue ultime dettature, con modalità e app di destinazione.")
 
-        self.kpi_words = self._make_stat_card("PAROLE / TEMPO RISPARMIATO", "0 parole", "#38BDF8")
-        self.kpi_latency = self._make_stat_card("LATENZA GPU COMBINATA", "0 ms", "#10B981")
-        self.kpi_jargon = self._make_stat_card("TERMINI JARGON ATTIVI", "8 attivi", "#6366F1")
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
+        self.history_search = QLineEdit()
+        self.history_search.setPlaceholderText("Cerca nelle trascrizioni…")
+        self.history_search.setMinimumHeight(36)
+        self.history_search.textChanged.connect(self._refresh_history)
+        toolbar.addWidget(self.history_search, 1)
 
-        stats_layout.addWidget(self.kpi_words)
-        stats_layout.addWidget(self.kpi_latency)
-        stats_layout.addWidget(self.kpi_jargon)
-        vbox.addLayout(stats_layout)
+        clear_btn = _make_button("Svuota", "danger")
+        clear_btn.clicked.connect(self._clear_history)
+        toolbar.addWidget(clear_btn)
+        layout.addLayout(toolbar)
 
-        # Feed Ultime Dettature
-        feed_box = QFrame()
-        feed_box.setProperty("class", "card")
-        fl = QVBoxLayout(feed_box)
-        ft = QLabel("Ultime Trascrizioni Effettuate")
-        ft.setStyleSheet("font-weight: 700; font-size: 14px; color: #F8FAFC;")
-        fl.addWidget(ft)
+        self.history_list = ScrollList("Nessuna trascrizione ancora. Tieni premuto Alt Gr per iniziare.")
+        layout.addWidget(self.history_list, 1)
+        return page
 
-        self.home_feed_table = QTableWidget()
-        self.home_feed_table.setColumnCount(4)
-        self.home_feed_table.setHorizontalHeaderLabels(["Ora", "Trascrizione Rifinita", "Latenza", "Azioni"])
-        self.home_feed_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.home_feed_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.home_feed_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        fl.addWidget(self.home_feed_table)
+    def _refresh_history(self):
+        query = self.history_search.text().strip().lower() if hasattr(self, "history_search") else ""
+        items = db.get_recent_transcriptions(limit=200)
+        self._last_transcription_marker = items[0]["id"] if items else None
 
-        vbox.addWidget(feed_box)
-        return widget
+        if query:
+            items = [
+                t for t in items
+                if query in (t.get("final_text") or "").lower()
+                or query in (t.get("target_app") or "").lower()
+                or query in (t.get("style_used") or "").lower()
+            ]
 
-    def _make_stat_card(self, label: str, value: str, accent_color: str) -> QFrame:
-        card = QFrame()
-        card.setProperty("class", "card")
-        cl = QVBoxLayout(card)
-        cl.setSpacing(4)
-        lbl = QLabel(label)
-        lbl.setProperty("class", "stat-lbl")
-        val = QLabel(value)
-        val.setProperty("class", "stat-val")
-        val.setStyleSheet(f"color: {accent_color};")
-        cl.addWidget(lbl)
-        cl.addWidget(val)
-        card.val_label = val
+        self.history_list.clear()
+        if not items:
+            self.history_list.show_empty("Nessun risultato." if query else None)
+            return
+
+        for t in items:
+            self.history_list.add_card(self._make_history_card(t))
+
+    def _make_history_card(self, t: Dict) -> QFrame:
+        card, layout = _make_card()
+
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(6)
+        meta_row.addWidget(_make_label(_format_timestamp(t.get("created_at")), "CardMeta"))
+        if t.get("style_used"):
+            meta_row.addWidget(_make_label(t["style_used"], "Badge"))
+        if t.get("target_app"):
+            meta_row.addWidget(_make_label(t["target_app"], "BadgeMuted"))
+        meta_row.addStretch(1)
+
+        text = t.get("final_text") or ""
+        copy_btn = _make_button("Copia")
+        copy_btn.clicked.connect(lambda _c=False, s=text: self._copy_to_clipboard(s))
+        meta_row.addWidget(copy_btn)
+        layout.addLayout(meta_row)
+
+        layout.addWidget(_make_label(text, "CardBody", wrap=True))
         return card
 
-    def _refresh_home_stats(self):
-        stats = db.get_statistics()
-        vocab_count = len(db.get_all_vocabulary())
-        self.kpi_words.val_label.setText(f"{stats['total_words']:,} ({stats['saved_minutes']} min)")
-        self.kpi_latency.val_label.setText(f"{stats['avg_latency_ms']} ms")
-        self.kpi_jargon.val_label.setText(f"{vocab_count} attivi")
+    def _clear_history(self):
+        reply = QMessageBox.question(
+            self, "Svuota cronologia",
+            "Eliminare definitivamente tutte le trascrizioni salvate?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            db.clear_all_transcriptions()
+            self._refresh_history()
 
-        recents = db.get_recent_transcriptions(limit=6)
-        self.home_feed_table.setRowCount(len(recents))
-        for row, item in enumerate(recents):
-            time_str = item["created_at"].split()[1][:5] if " " in item["created_at"] else item["created_at"]
-            self.home_feed_table.setItem(row, 0, QTableWidgetItem(time_str))
-            self.home_feed_table.setItem(row, 1, QTableWidgetItem(item["final_text"]))
-            total_lat = item.get("whisper_ms", 0) + item.get("qwen_ms", 0)
-            self.home_feed_table.setItem(row, 2, QTableWidgetItem(f"{total_lat} ms"))
+    def _poll_new_transcriptions(self):
+        if not self.isVisible() or self.pages.currentIndex() != 0:
+            return
+        latest = db.get_recent_transcriptions(limit=1)
+        marker = latest[0]["id"] if latest else None
+        if marker != self._last_transcription_marker:
+            self._refresh_history()
 
-            copy_btn = QPushButton("Copia")
-            copy_btn.setProperty("class", "btn-secondary")
-            copy_btn.clicked.connect(lambda ch, t=item["final_text"]: pyperclip.copy(t))
-            self.home_feed_table.setCellWidget(row, 3, copy_btn)
+    # -----------------------------------------------------------------
+    # 2. NOTE
+    # -----------------------------------------------------------------
+    def _build_notes_page(self) -> QWidget:
+        page, layout = self._make_page("Note", "Appunti di studio e flashcard salvati dalla dettatura.")
 
-    # =========================================================================
-    # VISTA 2: VOCABOLARIO & JARGON
-    # =========================================================================
-    def _create_vocab_view(self) -> QWidget:
-        widget = QWidget()
-        vbox = QVBoxLayout(widget)
-        vbox.setSpacing(14)
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
+        self.notes_search = QLineEdit()
+        self.notes_search.setPlaceholderText("Cerca nelle note…")
+        self.notes_search.setMinimumHeight(36)
+        self.notes_search.textChanged.connect(self._refresh_notes)
+        toolbar.addWidget(self.notes_search, 1)
 
-        t = QLabel("Vocabolario & Termini Tecnici")
-        t.setProperty("class", "page-title")
-        d = QLabel("Inserisci termini specifici o alias fonetici per il Prompt Biasing di Whisper e la correzione esatta di Qwen 2.5.")
-        d.setProperty("class", "page-desc")
-        vbox.addWidget(t)
-        vbox.addWidget(d)
+        export_btn = _make_button("Esporta (.md)")
+        export_btn.clicked.connect(self._export_notes)
+        toolbar.addWidget(export_btn)
+        layout.addLayout(toolbar)
 
-        # Form inserimento
-        form_box = QFrame()
-        form_box.setProperty("class", "card")
-        fl = QHBoxLayout(form_box)
-        fl.setSpacing(10)
+        self.notes_list = ScrollList("Nessuna nota salvata. Detta in un'app di studio (Obsidian, Notion, Overleaf…) per crearne.")
+        layout.addWidget(self.notes_list, 1)
+        return page
 
-        self.vocab_term_input = QLineEdit()
-        self.vocab_term_input.setPlaceholderText("Termine corretto (es. PyQt6, CUDA)")
+    def _filtered_notes(self) -> List[Dict]:
+        query = self.notes_search.text().strip().lower()
+        notes = db.get_notes()
+        if query:
+            notes = [
+                n for n in notes
+                if query in (n.get("title") or "").lower()
+                or query in (n.get("content_markdown") or "").lower()
+                or query in (n.get("tags") or "").lower()
+            ]
+        return notes
 
-        self.vocab_aliases_input = QLineEdit()
-        self.vocab_aliases_input.setPlaceholderText("Pronuncia fonetica / Alias (es. pichiutù)")
+    def _refresh_notes(self):
+        if not hasattr(self, "notes_list"):
+            return
+        notes = self._filtered_notes()
+        self.notes_list.clear()
+        if not notes:
+            self.notes_list.show_empty("Nessun risultato." if self.notes_search.text().strip() else None)
+            return
+        for n in notes:
+            self.notes_list.add_card(self._make_note_card(n))
 
-        self.vocab_cat_combo = QComboBox()
-        self.vocab_cat_combo.addItems(["Coding", "AI", "Studio", "Aziendale", "Generale"])
+    def _make_note_card(self, n: Dict) -> QFrame:
+        card, layout = _make_card()
 
-        add_btn = QPushButton("+ Aggiungi")
-        add_btn.setProperty("class", "btn-primary")
-        add_btn.clicked.connect(self._add_vocab_item)
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(6)
+        meta_row.addWidget(_make_label(_format_timestamp(n.get("created_at")), "CardMeta"))
+        if n.get("note_type"):
+            meta_row.addWidget(_make_label(n["note_type"], "Badge"))
+        if n.get("tags"):
+            meta_row.addWidget(_make_label(n["tags"], "BadgeMuted"))
+        meta_row.addStretch(1)
 
-        fl.addWidget(self.vocab_term_input, 2)
-        fl.addWidget(self.vocab_aliases_input, 2)
-        fl.addWidget(self.vocab_cat_combo, 1)
-        fl.addWidget(add_btn, 1)
-        vbox.addWidget(form_box)
+        content = n.get("content_markdown") or ""
+        copy_btn = _make_button("Copia")
+        copy_btn.clicked.connect(lambda _c=False, s=content: self._copy_to_clipboard(s))
+        meta_row.addWidget(copy_btn)
 
-        # Tabella
-        self.vocab_table = QTableWidget()
-        self.vocab_table.setColumnCount(4)
-        self.vocab_table.setHorizontalHeaderLabels(["Termine Corretto", "Alias Fonetici", "Categoria", "Azioni"])
-        self.vocab_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.vocab_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.vocab_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        vbox.addWidget(self.vocab_table)
+        del_btn = _make_button("Elimina", "danger")
+        del_btn.clicked.connect(lambda _c=False, nid=n["id"]: self._delete_note(nid))
+        meta_row.addWidget(del_btn)
+        layout.addLayout(meta_row)
 
-        return widget
+        if n.get("title"):
+            layout.addWidget(_make_label(n["title"], "CardTitle", wrap=True))
+        layout.addWidget(_make_label(content, "CardBody", wrap=True))
+        return card
 
-    def _refresh_vocab_table(self):
-        items = db.get_all_vocabulary()
-        self.vocab_table.setRowCount(len(items))
-        for row, item in enumerate(items):
-            self.vocab_table.setItem(row, 0, QTableWidgetItem(item["correct_term"]))
-            self.vocab_table.setItem(row, 1, QTableWidgetItem(item.get("phonetic_aliases", "")))
-            self.vocab_table.setItem(row, 2, QTableWidgetItem(item.get("category", "Generale")))
+    def _delete_note(self, note_id: int):
+        db.delete_study_note(note_id)
+        self._refresh_notes()
 
-            del_btn = QPushButton("Elimina")
-            del_btn.setProperty("class", "btn-danger")
-            del_btn.clicked.connect(lambda ch, i=item["id"]: self._delete_vocab_item(i))
-            self.vocab_table.setCellWidget(row, 3, del_btn)
+    def _export_notes(self):
+        notes = self._filtered_notes()
+        if not notes:
+            QMessageBox.information(self, "Esporta note", "Non ci sono note da esportare.")
+            return
 
-    def _add_vocab_item(self):
-        term = self.vocab_term_input.text().strip()
-        aliases = self.vocab_aliases_input.text().strip()
-        cat = self.vocab_cat_combo.currentText()
-        if term:
-            db.add_vocabulary(term, aliases, cat)
-            self.vocab_term_input.clear()
-            self.vocab_aliases_input.clear()
-            self._refresh_vocab_table()
+        default_name = f"FlowLocal_Note_{datetime.now().strftime('%Y%m%d_%H%M')}.md"
+        path, _ = QFileDialog.getSaveFileName(self, "Esporta note", default_name, "Markdown (*.md)")
+        if not path:
+            return
 
-    def _delete_vocab_item(self, item_id: int):
-        db.delete_vocabulary(item_id)
-        self._refresh_vocab_table()
+        parts = ["# FlowLocal — Note\n"]
+        for n in notes:
+            parts.append(f"## {n.get('title') or 'Nota'}")
+            meta = " · ".join(x for x in (_format_timestamp(n.get("created_at")), n.get("note_type"), n.get("tags")) if x)
+            if meta:
+                parts.append(f"*{meta}*\n")
+            parts.append((n.get("content_markdown") or "").strip() + "\n")
 
-    # =========================================================================
-    # VISTA 3: SNIPPET VOCALI
-    # =========================================================================
-    def _create_snippets_view(self) -> QWidget:
-        widget = QWidget()
-        vbox = QVBoxLayout(widget)
-        vbox.setSpacing(14)
-
-        t = QLabel("Snippet Vocali & Macro di Testo")
-        t.setProperty("class", "page-title")
-        d = QLabel("Pronuncia una parola trigger (es. 'firma', 'bug report') per incollare all'istante interi blocchi di testo predefiniti.")
-        d.setProperty("class", "page-desc")
-        vbox.addWidget(t)
-        vbox.addWidget(d)
-
-        form_box = QFrame()
-        form_box.setProperty("class", "card")
-        fl = QVBoxLayout(form_box)
-
-        self.snippet_trigger_input = QLineEdit()
-        self.snippet_trigger_input.setPlaceholderText("Parola trigger vocale (es. 'firma', 'coordinate bancarie')")
-        fl.addWidget(self.snippet_trigger_input)
-
-        self.snippet_text_input = QTextEdit()
-        self.snippet_text_input.setPlaceholderText("Testo espanso che verrà incollato automaticamente...")
-        self.snippet_text_input.setMaximumHeight(80)
-        fl.addWidget(self.snippet_text_input)
-
-        add_btn = QPushButton("+ Salva Snippet")
-        add_btn.setProperty("class", "btn-primary")
-        add_btn.clicked.connect(self._add_snippet_item)
-        fl.addWidget(add_btn, alignment=Qt.AlignmentFlag.AlignRight)
-
-        vbox.addWidget(form_box)
-
-        self.snippets_table = QTableWidget()
-        self.snippets_table.setColumnCount(4)
-        self.snippets_table.setHorizontalHeaderLabels(["Trigger Vocale", "Testo Espanso", "Utilizzi", "Azioni"])
-        self.snippets_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.snippets_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.snippets_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        vbox.addWidget(self.snippets_table)
-
-        return widget
-
-    def _refresh_snippets_table(self):
-        items = db.get_all_snippets()
-        self.snippets_table.setRowCount(len(items))
-        for row, item in enumerate(items):
-            self.snippets_table.setItem(row, 0, QTableWidgetItem(item["trigger_phrase"]))
-            self.snippets_table.setItem(row, 1, QTableWidgetItem(item["expansion_text"]))
-            self.snippets_table.setItem(row, 2, QTableWidgetItem(str(item.get("use_count", 0))))
-
-            del_btn = QPushButton("Elimina")
-            del_btn.setProperty("class", "btn-danger")
-            del_btn.clicked.connect(lambda ch, i=item["id"]: self._delete_snippet_item(i))
-            self.snippets_table.setCellWidget(row, 3, del_btn)
-
-    def _add_snippet_item(self):
-        trig = self.snippet_trigger_input.text().strip()
-        txt = self.snippet_text_input.toPlainText().strip()
-        if trig and txt:
-            db.add_snippet(trig, txt)
-            self.snippet_trigger_input.clear()
-            self.snippet_text_input.clear()
-            self._refresh_snippets_table()
-
-    def _delete_snippet_item(self, item_id: int):
-        db.delete_snippet(item_id)
-        self._refresh_snippets_table()
-
-    # =========================================================================
-    # VISTA 4: STILI LLM & STUDIO (QWEN 2.5)
-    # =========================================================================
-    def _create_styles_view(self) -> QWidget:
-        widget = QWidget()
-        vbox = QVBoxLayout(widget)
-        vbox.setSpacing(14)
-
-        t = QLabel("Stili di Rifinitura LLM & Studio (Qwen 2.5)")
-        t.setProperty("class", "page-title")
-        d = QLabel("Seleziona il profilo di scrittura desiderato o abbinalo automaticamente alle applicazioni target.")
-        d.setProperty("class", "page-desc")
-        vbox.addWidget(t)
-        vbox.addWidget(d)
-
-        self.styles_group = QButtonGroup(self)
-        self.styles_radio_layout = QVBoxLayout()
-        vbox.addLayout(self.styles_radio_layout)
-
-        # Editor System Prompt
-        editor_box = QFrame()
-        editor_box.setProperty("class", "card")
-        el = QVBoxLayout(editor_box)
-        el_title = QLabel("System Prompt Attivo & App Associate")
-        el_title.setStyleSheet("font-weight: 700; color: #F8FAFC;")
-
-        self.style_apps_input = QLineEdit()
-        self.style_apps_input.setPlaceholderText("Applicazioni associate (es. Code.exe, notepad.exe)")
-
-        self.style_prompt_edit = QTextEdit()
-        self.style_prompt_edit.setMinimumHeight(130)
-
-        save_btn = QPushButton("Salva Modifiche Profilo")
-        save_btn.setProperty("class", "btn-primary")
-        save_btn.clicked.connect(self._save_active_style)
-
-        el.addWidget(el_title)
-        el.addWidget(QLabel("App Target (separati da virgola):"))
-        el.addWidget(self.style_apps_input)
-        el.addWidget(QLabel("Prompt di Istruzione:"))
-        el.addWidget(self.style_prompt_edit)
-        el.addWidget(save_btn, alignment=Qt.AlignmentFlag.AlignRight)
-        vbox.addWidget(editor_box)
-
-        vbox.addStretch()
-        return widget
-
-    def _refresh_styles_view(self):
-        while self.styles_radio_layout.count():
-            item = self.styles_radio_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
-        styles = db.get_all_styles()
-        active_style = None
-
-        for s in styles:
-            rb = QRadioButton(f"{s['display_name']} — {s.get('description', '')}")
-            rb.setStyleSheet("color: #F8FAFC; font-weight: 500; padding: 4px;")
-            self.styles_group.addButton(rb, s["id"])
-            if s["is_active"]:
-                rb.setChecked(True)
-                active_style = s
-            self.styles_radio_layout.addWidget(rb)
-
-        self.styles_group.idClicked.connect(self._on_style_selected)
-
-        if active_style:
-            self.style_prompt_edit.setText(active_style["system_prompt"])
-            self.style_apps_input.setText(active_style.get("auto_target_apps", ""))
-
-    def _on_style_selected(self, style_id: int):
-        db.set_active_style(style_id)
-        styles = db.get_all_styles()
-        for s in styles:
-            if s["id"] == style_id:
-                self.style_prompt_edit.setText(s["system_prompt"])
-                self.style_apps_input.setText(s.get("auto_target_apps", ""))
-                break
-
-    def _save_active_style(self):
-        active_id = self.styles_group.checkedId()
-        if active_id > 0:
-            prompt = self.style_prompt_edit.toPlainText().strip()
-            apps = self.style_apps_input.text().strip()
-            db.update_style_prompt(active_id, prompt, apps)
-            QMessageBox.information(self, "Salvataggio", "Profilo LLM aggiornato con successo!")
-
-    # =========================================================================
-    # VISTA 5: STUDIO, NOTE & FLASHCARD
-    # =========================================================================
-    def _create_study_view(self) -> QWidget:
-        widget = QWidget()
-        vbox = QVBoxLayout(widget)
-        vbox.setSpacing(14)
-
-        t = QLabel("Studio, Note & Flashcard Vocali")
-        t.setProperty("class", "page-title")
-        d = QLabel("Archivio degli appunti presi con il Metodo Feynman e Flashcard generate dicendo 'Flashcard: [Domanda] ... [Risposta]'.")
-        d.setProperty("class", "page-desc")
-        vbox.addWidget(t)
-        vbox.addWidget(d)
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-
-        # Colonna Sinistra: Elenco Note
-        left_box = QFrame()
-        left_box.setProperty("class", "card")
-        ll = QVBoxLayout(left_box)
-        ll_title = QLabel("I Tuoi Appunti & Flashcard")
-        ll_title.setStyleSheet("font-weight: 700; color: #F8FAFC;")
-        ll.addWidget(ll_title)
-
-        self.notes_table = QTableWidget()
-        self.notes_table.setColumnCount(3)
-        self.notes_table.setHorizontalHeaderLabels(["Titolo", "Tipo", "Data"])
-        self.notes_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.notes_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.notes_table.clicked.connect(self._on_note_clicked)
-        ll.addWidget(self.notes_table)
-        splitter.addWidget(left_box)
-
-        # Colonna Destra: Visualizzatore Markdown
-        right_box = QFrame()
-        right_box.setProperty("class", "card")
-        rl = QVBoxLayout(right_box)
-        rl_title = QLabel("Dettaglio Scheda")
-        rl_title.setStyleSheet("font-weight: 700; color: #F8FAFC;")
-
-        self.note_viewer = QTextEdit()
-        self.note_viewer.setReadOnly(True)
-
-        copy_note_btn = QPushButton("Copia negli Appunti")
-        copy_note_btn.setProperty("class", "btn-secondary")
-        copy_note_btn.clicked.connect(lambda: pyperclip.copy(self.note_viewer.toPlainText()))
-
-        rl.addWidget(rl_title)
-        rl.addWidget(self.note_viewer)
-        rl.addWidget(copy_note_btn, alignment=Qt.AlignmentFlag.AlignRight)
-        splitter.addWidget(right_box)
-
-        splitter.setSizes([450, 450])
-        vbox.addWidget(splitter)
-        return widget
-
-    def _refresh_study_view(self):
-        notes = db.get_all_study_notes()
-        self.notes_table.setRowCount(len(notes))
-        for row, n in enumerate(notes):
-            self.notes_table.setItem(row, 0, QTableWidgetItem(n["title"]))
-            self.notes_table.setItem(row, 1, QTableWidgetItem(n.get("note_type", "Note")))
-            date_str = n["created_at"].split()[0] if " " in n["created_at"] else n["created_at"]
-            self.notes_table.setItem(row, 2, QTableWidgetItem(date_str))
-
-    def _on_note_clicked(self, index):
-        row = index.row()
-        notes = db.get_all_study_notes()
-        if row < len(notes):
-            n = notes[row]
-            self.note_viewer.setText(f"# {n['title']}\n\n*Tipo:* {n['note_type']} | *Data:* {n['created_at']}\n\n---\n\n{n['content_markdown']}")
-
-    # =========================================================================
-    # VISTA 6: IMPOSTAZIONI AUDIO & HOTKEYS
-    # =========================================================================
-    def _create_audio_view(self) -> QWidget:
-        widget = QWidget()
-        vbox = QVBoxLayout(widget)
-        vbox.setSpacing(16)
-
-        t = QLabel("Impostazioni Audio & Hotkeys")
-        t.setProperty("class", "page-title")
-        d = QLabel("Configurazione del microfono hardware WASAPI e assegnazione tasti.")
-        d.setProperty("class", "page-desc")
-        vbox.addWidget(t)
-        vbox.addWidget(d)
-
-        card = QFrame()
-        card.setProperty("class", "card")
-        cl = QVBoxLayout(card)
-        cl.setSpacing(14)
-
-        cl.addWidget(QLabel("Dispositivo Microfono:"))
-        self.device_combo = QComboBox()
         try:
-            for idx, dev in enumerate(sd.query_devices()):
-                if dev["max_input_channels"] > 0:
-                    self.device_combo.addItem(f"{dev['name']} [ID: {idx}]", idx)
-        except Exception:
-            self.device_combo.addItem("Microfono predefinito", None)
-        self.device_combo.currentIndexChanged.connect(self._on_device_selection_changed)
-        cl.addWidget(self.device_combo)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(parts))
+        except OSError as e:
+            QMessageBox.warning(self, "Esporta note", f"Impossibile salvare il file:\n{e}")
 
-        cl.addWidget(QLabel("Livello Audio di Ingresso (VU-Meter):"))
-        self.audio_meter = QProgressBar()
-        self.audio_meter.setRange(0, 100)
-        self.audio_meter.setValue(0)
-        cl.addWidget(self.audio_meter)
+    # -----------------------------------------------------------------
+    # 3. DIZIONARIO
+    # -----------------------------------------------------------------
+    def _build_dictionary_page(self) -> QWidget:
+        page, layout = self._make_page(
+            "Dizionario",
+            "Correzioni applicate a ogni dettatura e glossario usato per guidare Whisper.",
+        )
 
-        vbox.addWidget(card)
+        form = QHBoxLayout()
+        form.setSpacing(10)
+        self.dict_alias_input = QLineEdit()
+        self.dict_alias_input.setPlaceholderText("Parola errata / alias (es. antigraffiti)")
+        self.dict_alias_input.setMinimumHeight(36)
+        form.addWidget(self.dict_alias_input, 1)
 
-        hotkey_box = QFrame()
-        hotkey_box.setProperty("class", "card")
-        hl = QVBoxLayout(hotkey_box)
-        hl.setSpacing(8)
-        hl.addWidget(QLabel("Tasto Primario Push-to-Talk: Alt Gr (VK_RMENU)"))
-        hl.addWidget(QLabel("Hands-Free Lock: Doppio tocco rapido su Alt Gr (avvia timer di dettatura continua)"))
-        hl.addWidget(QLabel("Command Mode: Evidenzia del testo prima di premere Alt Gr per riassumerlo/modificarlo"))
-        vbox.addWidget(hotkey_box)
+        arrow = QLabel("→")
+        arrow.setStyleSheet("color: #64748B; font-size: 16px;")
+        form.addWidget(arrow)
 
-        vbox.addStretch()
-        return widget
+        self.dict_term_input = QLineEdit()
+        self.dict_term_input.setPlaceholderText("Parola corretta (es. Antigravity)")
+        self.dict_term_input.setMinimumHeight(36)
+        self.dict_term_input.returnPressed.connect(self._add_dictionary_rule)
+        form.addWidget(self.dict_term_input, 1)
 
-    def update_live_volume(self, rms_normalized: float):
-        val = int(min(100, max(0, rms_normalized * 100)))
-        self.audio_meter.setValue(val)
+        add_btn = _make_button("Aggiungi", "primary")
+        add_btn.clicked.connect(self._add_dictionary_rule)
+        form.addWidget(add_btn)
+        layout.addLayout(form)
 
-    def _on_device_selection_changed(self, index: int):
-        dev_idx = self.device_combo.currentData()
-        if self.on_device_changed and dev_idx is not None:
-            self.on_device_changed(dev_idx)
+        self.dict_list = ScrollList("Il dizionario è vuoto.")
+        layout.addWidget(self.dict_list, 1)
+        return page
 
-    def _refresh_all_views(self):
-        self._refresh_home_stats()
-        self._refresh_vocab_table()
-        self._refresh_snippets_table()
-        self._refresh_styles_view()
-        self._refresh_study_view()
+    def _refresh_dictionary(self):
+        items = db.get_all_vocabulary()
+        self.dict_list.clear()
+        if not items:
+            self.dict_list.show_empty()
+            return
+        for v in items:
+            self.dict_list.add_card(self._make_dictionary_card(v))
+
+    def _make_dictionary_card(self, v: Dict) -> QFrame:
+        card, layout = _make_card()
+        row = QHBoxLayout()
+        row.setSpacing(10)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(4)
+        aliases = (v.get("phonetic_aliases") or "").strip()
+        rule = f"{aliases}  →  {v['correct_term']}" if aliases else v["correct_term"]
+        text_col.addWidget(_make_label(rule, "CardTitle", wrap=True))
+
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(6)
+        meta_row.addWidget(_make_label(v.get("category") or "Generale", "BadgeMuted"))
+        if not aliases:
+            meta_row.addWidget(_make_label("solo glossario", "CardMeta"))
+        meta_row.addStretch(1)
+        text_col.addLayout(meta_row)
+        row.addLayout(text_col, 1)
+
+        del_btn = _make_button("Elimina", "danger")
+        del_btn.clicked.connect(lambda _c=False, vid=v["id"]: self._delete_dictionary_rule(vid))
+        row.addWidget(del_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        layout.addLayout(row)
+        return card
+
+    def _add_dictionary_rule(self):
+        alias = self.dict_alias_input.text().strip()
+        term = self.dict_term_input.text().strip()
+        if not term:
+            self.dict_term_input.setFocus()
+            return
+
+        if alias:
+            db.learn_vocabulary_pair(alias, term)
+        else:
+            existing = {v["correct_term"].lower() for v in db.get_all_vocabulary()}
+            if term.lower() not in existing:
+                db.add_vocabulary(term, "", "Manuale")
+
+        self.dict_alias_input.clear()
+        self.dict_term_input.clear()
+        self.dict_alias_input.setFocus()
+        self._refresh_dictionary()
+
+    def _delete_dictionary_rule(self, vocab_id: int):
+        db.delete_vocabulary(vocab_id)
+        self._refresh_dictionary()
+
+    # -----------------------------------------------------------------
+    # 4. STILI & PROMPT
+    # -----------------------------------------------------------------
+    def _build_styles_page(self) -> QWidget:
+        page, layout = self._make_page(
+            "Stili & Prompt",
+            "Seleziona una modalità e modifica il relativo System Prompt.",
+        )
+
+        tabs_row = QHBoxLayout()
+        tabs_row.setSpacing(8)
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.setExclusive(True)
+        for idx, (label, name) in enumerate(MODE_TABS):
+            btn = QPushButton(label)
+            btn.setObjectName("ModeTab")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _c=False, n=name: self._load_mode_prompt(n))
+            self.mode_group.addButton(btn, idx)
+            tabs_row.addWidget(btn)
+            if idx == 0:
+                btn.setChecked(True)
+        tabs_row.addStretch(1)
+        layout.addLayout(tabs_row)
+
+        self.prompt_editor = QTextEdit()
+        self.prompt_editor.setAcceptRichText(False)
+        self.prompt_editor.setMinimumHeight(110)
+        self.prompt_editor.setPlaceholderText("System Prompt della modalità selezionata…")
+        self.prompt_editor.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self.prompt_editor, 1)
+
+        footer = QHBoxLayout()
+        self.prompt_status = _make_label("", "PageSubtitle")
+        footer.addWidget(self.prompt_status, 1)
+        save_btn = _make_button("Salva Prompt", "primary")
+        save_btn.clicked.connect(self._save_mode_prompt)
+        footer.addWidget(save_btn)
+        layout.addLayout(footer)
+        return page
+
+    def _load_mode_prompt(self, mode_name: str):
+        self._current_mode_name = mode_name
+        style = db.get_style_by_name(mode_name)
+        if style:
+            self.prompt_editor.setPlainText(style.get("system_prompt") or "")
+            self.prompt_status.setText(style.get("display_name") or "")
+        else:
+            self.prompt_editor.setPlainText("")
+            self.prompt_status.setText("Nessuno stile salvato per questa modalità: verrà creato al salvataggio.")
+
+    def _save_mode_prompt(self):
+        prompt = self.prompt_editor.toPlainText().strip()
+        if not prompt:
+            self.prompt_status.setText("Il prompt non può essere vuoto.")
+            return
+
+        style = db.get_style_by_name(self._current_mode_name)
+        if style:
+            db.update_style_prompt(style["id"], prompt, style.get("auto_target_apps") or "")
+        else:
+            label = next((l for l, n in MODE_TABS if n == self._current_mode_name), self._current_mode_name)
+            conn = db._get_connection()
+            conn.execute(
+                "INSERT INTO llm_styles (name, display_name, description, system_prompt, auto_target_apps, is_active) "
+                "VALUES (?, ?, '', ?, '', 0)",
+                (self._current_mode_name, label, prompt),
+            )
+            conn.commit()
+
+        self.prompt_status.setText(f"Salvato · {datetime.now().strftime('%H:%M:%S')}")
+
+    # -----------------------------------------------------------------
+    # Utility
+    # -----------------------------------------------------------------
+    @staticmethod
+    def _copy_to_clipboard(text: str):
+        QApplication.clipboard().setText(text or "")

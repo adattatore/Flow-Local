@@ -60,7 +60,8 @@ Tutti gli agenti AI che modificano questo repository **DEVONO** rispettare rigor
 
 ### 2. Concorrenza e Debounce Hardware
 - Mantenere la sincronizzazione thread-safe tramite `threading.Lock()` e `key_lock` durante la gestione dell'audio e dei tasti.
-- Il debounce hardware di **350ms** sul rilascio del tasto `Alt Gr` (o `F8`) è essenziale per evitare falsi eventi di keyup/keydown dovuti al typematic repeat di Windows. Non rimuoverlo.
+- Il tasto principale Push-to-Talk è **`Caps Lock`** (con fallback su `F8`). Il comportamento nativo di cambio maiuscole viene soppresso quando usato per FlowLocal, mentre `Shift + Caps Lock` consente di attivare/disattivare regolarmente il Bloc Maiusc.
+- Il debounce hardware di **350ms** sul rilascio del tasto è essenziale per evitare falsi eventi di keyup/keydown dovuti al typematic repeat di Windows. Non rimuoverlo. Supporta il doppio tocco per la modalità mani libere (Hands-Free).
 
 ### 3. Preservazione Assoluta della Lingua Italiana in Modalità `code`
 - Nella modalità `code` (utilizzata su Antigravity, VS Code, Cursor, Terminali, PowerShell), **NON tradurre mai il discorso dell'utente in inglese**.
@@ -90,4 +91,15 @@ Tutti gli agenti AI che modificano questo repository **DEVONO** rispettare rigor
   - Database SQLite e relativi file di write-ahead log: `*.db`, `*.db-shm`, `*.db-wal`, `flow_hub.db*`.
   - Ambiente virtuale: `.venv/`.
   - Script scratch o test temporanei: `test_*.py`, `scratch_*.py`.
+
+### 7. Regole UI & QSS (PyQt6 Nativo)
+- **Solo QSS valido per Qt6:** usare esclusivamente proprietà supportate dai fogli di stile Qt (`background-color`, `border`, `border-radius`, `padding`, `margin`, `color`, `font-size`, `font-weight`, `min-height`, pseudo-stati `:hover`, `:focus`, `:checked`, `:pressed`).
+  - **Vietato** usare proprietà CSS web non supportate da Qt: `box-shadow`, `backdrop-filter`, `transition`, `gap`, `display: flex` / `display: grid`. Ombre ed effetti vanno realizzati, se indispensabili, con `QGraphicsDropShadowEffect` o pittura custom in `paintEvent`.
+- **Form e barre di ricerca sempre fuori dalla `QScrollArea`:** i `QLineEdit` e `QTextEdit` di input/ricerca devono restare fissi nell'header della pagina (sopra l'area scorrevole) e avere sempre una `setMinimumHeight()` esplicita:
+  - `QLineEdit` → `setMinimumHeight(36)` o superiore.
+  - `QTextEdit` → `setMinimumHeight(110)` o superiore.
+- **Anti-compressione nelle liste scorrevoli:**
+  - Impostare sempre `scroll_area.setWidgetResizable(True)`.
+  - Applicare `setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)` alle card interne.
+  - Applicare `setWordWrap(True)` alle `QLabel` con testo variabile, affinché nessun contenuto venga tagliato o schiacciato durante lo scroll o il ridimensionamento della finestra.
 

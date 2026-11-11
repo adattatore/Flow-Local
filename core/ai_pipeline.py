@@ -355,6 +355,72 @@ class LLMRefiner:
         return clean, qwen_ms
 
     @classmethod
+    def transform_selection(cls, selected_text: str, voice_command: str) -> str:
+        """Trasforma il testo selezionato applicando l'istruzione vocale dell'utente via Qwen 2.5."""
+        if not selected_text or not selected_text.strip():
+            return selected_text
+        if not voice_command or not voice_command.strip():
+            return selected_text
+
+        system_prompt = (
+            "SEI UN EDITOR DI TESTI PROFESSIONALE PER LINGUA ITALIANA. "
+            "Applica l'istruzione dell'utente al testo selezionato mantenendo rigorosamente tutti i fatti, "
+            "i tempi verbali (passato, presente, futuro) e il significato originale. "
+            "Usa un italiano formale idiomatico, corretto nei congiuntivi e senza mai inserire parole inglesi o calchi dall'inglese. "
+            "Restituisci ESCLUSIVAMENTE il testo trasformato.\n\n"
+            "Esempio:\n"
+            "<comando>Riscrivilo in stile formale</comando>\n"
+            "<testo_selezionato>ciao prof le mando il file domani appena finisco di controllare i conti spero vada bene</testo_selezionato>\n"
+            "Output:\n"
+            "Gentile Professore, Le invierò il file domani non appena avrò terminato il controllo dei conti. Spero che vada tutto bene."
+        )
+
+        user_content = (
+            f"<comando>{voice_command.strip()}</comando>\n"
+            f"<testo_selezionato>{selected_text.strip()}</testo_selezionato>"
+        )
+
+        payload = {
+            "model": LLM_MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            "stream": False,
+            "keep_alive": "30m",
+            "options": {
+                "repeat_penalty": 1.15,
+                "temperature": 0.15,
+                "top_p": 0.85,
+                "num_predict": max(300, len(selected_text.split()) * 4),
+                "stop": ["</testo_selezionato>", "</comando>", "</trascrizione>"]
+            }
+        }
+
+        try:
+            req = urllib.request.Request(
+                OLLAMA_API_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=10.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data.get("message", {}).get("content", "").strip()
+
+                # Pulizia tag residui (inclusi refusi o chiusure XML)
+                refined = re.sub(r"</?(?:testo_selezionato|comando|trascri\w*|output|result)>\s*", "", content, flags=re.IGNORECASE).strip()
+                refined = refined.rstrip()
+                while refined.endswith('\\'):
+                    refined = refined[:-1].rstrip()
+
+                if refined:
+                    return refined
+        except Exception as e:
+            print(f"[FlowLocal] Errore trasformazione selezione LLM: {e}")
+
+        return selected_text
+
+    @classmethod
     def _save_flashcard(cls, text: str):
         try:
             content = text[10:].strip()
@@ -397,6 +463,8 @@ class FlowLocalEngine:
         self.current_mode = "LISTENING"
         self.current_context = ("Desktop", "natural", "Naturale")
         self.active_mode_key = "natural"
+        self.active_selection_text: Optional[str] = None
+        self.previous_clipboard: Optional[str] = None
 
         self.last_press_time = 0.0
         self.last_release_time = 0.0
@@ -517,6 +585,49 @@ class FlowLocalEngine:
             if self.is_recording:
                 return
 
+            # 0. Rilevamento selezione attiva da trasformare (Text-to-Action)
+            previous_clip = None
+            try:
+                previous_clip = pyperclip.paste()
+            except Exception:
+                pass
+            self.previous_clipboard = previous_clip
+
+            selected_text = None
+            try:
+                pyperclip.copy("")
+                user32 = ctypes.windll.user32
+                VK_CONTROL = 0x11
+                VK_C = 0x43
+                KEYEVENTF_KEYUP = 0x0002
+                user32.keybd_event(VK_CONTROL, 0, 0, 0)
+                user32.keybd_event(VK_C, 0, 0, 0)
+                time.sleep(0.100)  # ~100ms di attesa per la cattura selezione su Windows
+                user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0)
+                user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+                time.sleep(0.020)
+
+                current_clip = (pyperclip.paste() or "").strip()
+                if current_clip:
+                    selected_text = current_clip
+            except Exception:
+                selected_text = None
+
+            if selected_text:
+                self.active_selection_text = selected_text
+                # Non ripristiniamo subito la clipboard precedente: selected_text rimane attivo per la sessione
+                sel_len = len(selected_text)
+                badge_str = f"✨ Selezione ({sel_len} car.)"
+            else:
+                self.active_selection_text = None
+                badge_str = None
+                # Ripristina subito la clipboard precedente se non c'è selezione
+                if previous_clip is not None:
+                    try:
+                        pyperclip.copy(previous_clip)
+                    except Exception:
+                        pass
+
             # Rilevamento immediato del contesto attivo
             app_label, mode_key, mode_label = detect_active_context()
             self.current_context = (app_label, mode_key, mode_label)
@@ -529,7 +640,11 @@ class FlowLocalEngine:
             self.record_start_time = time.time()
 
             if self.orb:
-                self.orb.set_badge_text(f"{app_label} • {mode_label}")
+                # set_badge_text emette set_badge_signal al main thread Qt in modo thread-safe
+                if badge_str:
+                    self.orb.set_badge_text(badge_str)
+                else:
+                    self.orb.set_badge_text(f"{app_label} • {mode_label}")
                 orb_state = "STUDY_MODE" if mode_key == "study_latex" else self.current_mode
                 self.orb.set_state(orb_state)
                 self.orb.set_locked(locked)
@@ -549,6 +664,10 @@ class FlowLocalEngine:
             self.audio_frames.clear()
             rec_mode = self.active_mode_key
             rec_context = self.current_context
+            selection_text = self.active_selection_text
+            prev_clipboard = self.previous_clipboard
+            self.active_selection_text = None
+            self.previous_clipboard = None
 
         if self.orb:
             self.orb.set_state("WHISPER")
@@ -557,6 +676,12 @@ class FlowLocalEngine:
         if not captured:
             if self.orb:
                 self.orb.set_state("IDLE")
+            # Ripristina previous_clipboard se presente
+            if prev_clipboard is not None:
+                try:
+                    pyperclip.copy(prev_clipboard)
+                except Exception:
+                    pass
             return
 
         raw_audio = np.concatenate(captured, axis=0).flatten()
@@ -572,15 +697,20 @@ class FlowLocalEngine:
         if duration_s < 0.20:
             if self.orb:
                 self.orb.set_state("IDLE")
+            if prev_clipboard is not None:
+                try:
+                    pyperclip.copy(prev_clipboard)
+                except Exception:
+                    pass
             return
 
         threading.Thread(
             target=self._transcribe_and_inject,
-            args=(audio_16k, duration_s, rec_mode, rec_context),
+            args=(audio_16k, duration_s, rec_mode, rec_context, selection_text, prev_clipboard),
             daemon=True
         ).start()
 
-    def _transcribe_and_inject(self, audio_data: np.ndarray, duration_s: float, mode: str, context: tuple = ("Desktop", "natural", "Naturale")):
+    def _transcribe_and_inject(self, audio_data: np.ndarray, duration_s: float, mode: str, context: tuple = ("Desktop", "natural", "Naturale"), selection_text: Optional[str] = None, previous_clipboard: Optional[str] = None):
         t0 = time.time()
         whisper_ms = 0
         try:
@@ -592,6 +722,11 @@ class FlowLocalEngine:
                 print("[FlowLocal] Livello audio impercettibile / microfono muto.")
                 if self.orb:
                     self.orb.set_state("IDLE")
+                if previous_clipboard is not None:
+                    try:
+                        pyperclip.copy(previous_clipboard)
+                    except Exception:
+                        pass
                 return
 
             # 2. Faster-Whisper Inference con VAD, barriere anti-allucinazione e bias acustico dinamico
@@ -651,9 +786,72 @@ class FlowLocalEngine:
                 print("[FlowLocal] Nessun testo vocale rilevato.")
                 if self.orb:
                     self.orb.set_state("IDLE")
+                if previous_clipboard is not None:
+                    try:
+                        pyperclip.copy(previous_clipboard)
+                    except Exception:
+                        pass
                 return
 
             print(f"[FlowLocal] Trascrizione grezza Whisper ({whisper_ms}ms): {raw_text}")
+
+            # =========================================================
+            # CASO A: TRASFORMAZIONE SELEZIONE ATTIVA (Text-to-Action)
+            # =========================================================
+            if selection_text and selection_text.strip():
+                if self.orb:
+                    self.orb.set_state("QWEN")
+
+                t_qwen = time.time()
+                transformed_text = LLMRefiner.transform_selection(
+                    selected_text=selection_text,
+                    voice_command=raw_text
+                )
+                qwen_ms = int((time.time() - t_qwen) * 1000)
+
+                # Sovrascrive direttamente il testo evidenziato nella finestra attiva
+                pyperclip.copy(transformed_text)
+                time.sleep(0.04)
+
+                user32 = ctypes.windll.user32
+                VK_CONTROL = 0x11
+                VK_V = 0x56
+                KEYEVENTF_KEYUP = 0x0002
+                user32.keybd_event(VK_CONTROL, 0, 0, 0)
+                user32.keybd_event(VK_V, 0, 0, 0)
+                time.sleep(0.03)
+                user32.keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0)
+                user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+
+                sound_done()
+
+                # Ripristina previous_clipboard dopo ~150ms
+                def restore_clip():
+                    time.sleep(0.18)
+                    if previous_clipboard is not None:
+                        try:
+                            pyperclip.copy(previous_clipboard)
+                        except Exception:
+                            pass
+
+                threading.Thread(target=restore_clip, daemon=True).start()
+
+                # Salvataggio nel database locale con mode="Selezione"
+                app_label, _, _ = context
+                db.add_transcription(
+                    raw_text=f"[Comando: {raw_text}] Su selezione ({len(selection_text)} car.)",
+                    final_text=transformed_text,
+                    target_app=app_label,
+                    style_used="Selezione",
+                    whisper_ms=whisper_ms,
+                    qwen_ms=qwen_ms,
+                    duration_s=duration_s
+                )
+                return
+
+            # =========================================================
+            # CASO B: DETTATURA NORMALE ESISTENTE
+            # =========================================================
 
             # 3. Intercettazione apprendimento vocale istantaneo ("Correggi X in Y")
             learn_match = VOICE_LEARN_REGEX.match(raw_text.strip())

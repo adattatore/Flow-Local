@@ -26,30 +26,27 @@ import urllib.request
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction
 from PyQt6.QtCore import Qt
-from pynput import keyboard
+import keyboard
 
 from database import db
 from ui.voice_orb import VoiceOrbOverlay
 from ui.hub_window import FlowLocalHub
 from core.ai_pipeline import FlowLocalEngine
 
-VK_RMENU = 0xA5  # Alt Gr
-VK_F8 = 0x77     # Tasto F8
+VK_CAPITAL = 0x14  # Caps Lock (Bloc Maiusc)
+VK_SHIFT = 0x10    # Shift
+VK_F8 = 0x77       # Tasto F8
 
 keyboard_lock = threading.Lock()
 last_release_time = 0.0
 
 
-def is_target_key(key) -> bool:
-    if key in (keyboard.Key.alt_gr, keyboard.Key.alt_r, keyboard.Key.f8):
-        return True
-    name = getattr(key, 'name', None)
-    if name in ('alt_gr', 'alt_r', 'f8'):
-        return True
-    vk = getattr(key, 'vk', None)
-    if vk in (165, 119):
-        return True
-    return False
+def is_shift_down() -> bool:
+    """Verifica se il tasto Shift è attualmente premuto."""
+    try:
+        return bool(ctypes.windll.user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
+    except Exception:
+        return False
 
 
 def safe_handle_press(engine: FlowLocalEngine):
@@ -61,7 +58,7 @@ def safe_handle_release(engine: FlowLocalEngine):
     global last_release_time
     with keyboard_lock:
         now = time.time()
-        if (now - last_release_time) < 0.350:  # Debounce 350ms su rilascio Alt Gr
+        if (now - last_release_time) < 0.350:  # Debounce 350ms su rilascio Caps Lock / F8
             return
         last_release_time = now
         engine.handle_key_release()
@@ -85,15 +82,17 @@ ensure_ollama_running()
 
 
 def run_keyboard_poller(engine: FlowLocalEngine):
-    """Poller hardware nativo Win32 (Livello 1)."""
+    """Poller hardware nativo Win32 (Livello 1) per Caps Lock e F8."""
     user32 = ctypes.windll.user32
     was_down = False
 
     while True:
         try:
-            rmenu_down = bool(user32.GetAsyncKeyState(VK_RMENU) & 0x8000)
+            # Se Shift è premuto con Caps Lock, lasciamo che l'utente usi la scorciatoia per attivare il Bloc Maiusc
+            shift_pressed = bool(user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
+            caps_down = bool(user32.GetAsyncKeyState(VK_CAPITAL) & 0x8000) and not shift_pressed
             f8_down = bool(user32.GetAsyncKeyState(VK_F8) & 0x8000)
-            is_down = rmenu_down or f8_down
+            is_down = caps_down or f8_down
 
             if is_down and not was_down:
                 was_down = True
@@ -165,7 +164,7 @@ def main():
     # 4. System Tray Icon nativa Qt
     tray = QSystemTrayIcon()
     tray.setIcon(create_tray_icon(active=True))
-    tray.setToolTip("FlowLocal — AI Voice & Study Workspace (Alt Gr per parlare)")
+    tray.setToolTip("FlowLocal — AI Voice & Study Workspace (Caps Lock per parlare)")
 
     menu = QMenu()
     menu.setStyleSheet(
@@ -213,21 +212,46 @@ def main():
     tray.activated.connect(lambda reason: toggle_hub() if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
     tray.show()
 
-    # 5. Dual Key Engine
+    # 5. Dual Key Engine con Hook Globale soppressivo su Caps Lock
     poller_thread = threading.Thread(target=run_keyboard_poller, args=(engine,), daemon=True)
     poller_thread.start()
 
-    def on_press(key):
-        if is_target_key(key):
-            safe_handle_press(engine)
+    def on_key_event(event):
+        """Intercetta ed elabora Caps Lock e F8 sopprimendo il cambio maiuscole nativo."""
+        try:
+            name = (event.name or "").lower()
+            if name == "caps lock":
+                # Se l'utente preme Shift + Caps Lock, lascia passare l'evento per consentire il normale toggle del Bloc Maiusc
+                if is_shift_down():
+                    return True
 
-    def on_release(key):
-        if is_target_key(key):
-            safe_handle_release(engine)
+                if event.event_type == "down":
+                    safe_handle_press(engine)
+                elif event.event_type == "up":
+                    safe_handle_release(engine)
+                # Sopprime l'evento a livello di sistema operativo per evitare il toggle maiuscole
+                return False
 
-    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-    listener.daemon = True
-    listener.start()
+            elif name == "f8":
+                if event.event_type == "down":
+                    safe_handle_press(engine)
+                elif event.event_type == "up":
+                    safe_handle_release(engine)
+                return False
+        except Exception:
+            pass
+        return True
+
+    # Registra l'hook globale con soppressione attiva (suppress=True)
+    hook_handler = keyboard.hook(on_key_event, suppress=True)
+
+    def cleanup_keyboard():
+        try:
+            keyboard.unhook(hook_handler)
+        except Exception:
+            pass
+
+    app.aboutToQuit.connect(cleanup_keyboard)
 
     sys.exit(app.exec())
 
