@@ -11,6 +11,21 @@ import os
 import sys
 import ctypes
 
+# Compatibilità PyAV >= 13/14 con Faster-Whisper:
+# Le versioni recenti di PyAV hanno rimosso il parametro metadata_errors da av.open()
+try:
+    import av
+    if hasattr(av, "open"):
+        _orig_av_open = av.open
+        def _safe_av_open(*args, **kwargs):
+            kwargs.pop("metadata_errors", None)
+            return _orig_av_open(*args, **kwargs)
+        av.open = _safe_av_open
+    if hasattr(av, "container") and hasattr(av.container, "core") and hasattr(av.container.core, "open"):
+        av.container.core.open = _safe_av_open
+except Exception:
+    pass
+
 try:
     hwnd = ctypes.windll.kernel32.GetConsoleWindow()
     if hwnd:
@@ -153,6 +168,7 @@ def main():
 
     # 3. Core Engine: Faster-Whisper + Qwen 2.5 + Audio WASAPI
     engine = FlowLocalEngine(orb=orb, hub=hub)
+    hub.engine = engine  # Condivide l'istanza con il modello Whisper già in VRAM
     orb.on_click_toggle = engine.toggle_recording_click
     orb.on_change_mode = engine.set_mode
     hub.on_device_changed = engine.change_device

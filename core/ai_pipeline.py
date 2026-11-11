@@ -9,16 +9,35 @@ Supporta:
 - Trascrizione affidabile a zero ritardo (senza falsi keyup)
 """
 
+import os
 import re
 import time
 import json
+import wave
 import ctypes
 import difflib
+import tempfile
 import threading
+import subprocess
 import winsound
 import urllib.request
 import urllib.error
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Callable
+
+# Compatibilità pyav >= 13/14 con faster-whisper:
+# Le versioni recenti di PyAV hanno rimosso il parametro metadata_errors da av.open()
+try:
+    import av
+    if hasattr(av, "open"):
+        _orig_av_open = av.open
+        def _safe_av_open(*args, **kwargs):
+            kwargs.pop("metadata_errors", None)
+            return _orig_av_open(*args, **kwargs)
+        av.open = _safe_av_open
+    if hasattr(av, "container") and hasattr(av.container, "core") and hasattr(av.container.core, "open"):
+        av.container.core.open = _safe_av_open
+except Exception:
+    pass
 
 import numpy as np
 import sounddevice as sd
@@ -421,6 +440,115 @@ class LLMRefiner:
         return selected_text
 
     @classmethod
+    def detect_lecture_model(cls) -> str:
+        """Rileva se qwen2.5:7b è presente su Ollama (tramite API /api/tags o CLI 'ollama list'), con fallback su qwen2.5:3b."""
+        try:
+            req_tags = urllib.request.Request("http://localhost:11434/api/tags")
+            with urllib.request.urlopen(req_tags, timeout=1.2) as resp_tags:
+                models_data = json.loads(resp_tags.read().decode())
+                names = [m.get("name", "") for m in models_data.get("models", [])]
+                if any("qwen2.5:7b" in n for n in names):
+                    return "qwen2.5:7b"
+        except Exception:
+            pass
+
+        try:
+            res = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=2.0)
+            if res.returncode == 0 and "qwen2.5:7b" in res.stdout:
+                return "qwen2.5:7b"
+        except Exception:
+            pass
+
+        return LLM_MODEL
+
+    @classmethod
+    def reformat_lecture_block(cls, chunk_text: str, subject_context: str = "") -> str:
+        """Riformatta un blocco di sbobinatura universitaria in Markdown chiaro ed elegante con Qwen 2.5 (preferendo 7B),
+        correggendo refusi fonetici e allucinazioni acustiche incompatibili con il contesto accademico."""
+        if not chunk_text or not chunk_text.strip():
+            return chunk_text
+
+        ctx_instruction = ""
+        if subject_context and subject_context.strip():
+            ctx_instruction = f"\nMateria / Parole chiave della lezione: {subject_context.strip()}."
+
+        system_prompt = (
+            "SEI UN SBOBINATORE UNIVERSITARIO ESPERTO. "
+            f"{ctx_instruction}\n\n"
+            "Trasforma la trascrizione grezza della lezione in una sbobina scorrevole, ordinata e fedelissima alle parole del docente, "
+            "senza ripetere mai due volte lo stesso paragrafo o titolo. "
+            "Usa paragrafi chiari, qualche titolo ## solo sui veri cambi di argomento ed elenchi puntati essenziali. "
+            "Non scrivere mai etichette artificiali come 'Sottotitolo 1', 'Definizioni in Grassetto' o 'Riformulazione della Lezione'. "
+            "Correggi evidenti refusi fonetici coerenti con il contesto della materia (es. tirocinio, polizza, fatti dolosi, falso ideologico, "
+            "responsabilità in vigilando, colpa generica, imprudenza, imperizia, negligenza). "
+            "Quando incontri un tag `[AUDIO_NON_CHIARO da MM:SS a MM:SS]` o una frase realmente incomprensibile, "
+            "trasformalo esclusivamente nel segnaposto **`[Audio non chiaro / testo incompleto: da MM:SS a MM:SS]`** senza inventare nulla per riempire il vuoto."
+        )
+
+        user_content = f"<trascrizione_lezione>\n{chunk_text.strip()}\n</trascrizione_lezione>"
+
+        # Selezione modello: preferisci qwen2.5:7b per qualità della sbobina, fallback su LLM_MODEL (3B)
+        lecture_model = cls.detect_lecture_model()
+        print(f"[FlowLocal Sbobina] Riformattazione blocco con modello: {lecture_model}")
+
+        payload = {
+            "model": lecture_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            "stream": False,
+            "keep_alive": "30m",
+            "options": {
+                "repeat_penalty": 1.15,
+                "temperature": 0.15,
+                "num_predict": 2048,
+                "stop": ["</trascrizione_lezione>", "</sbobina>", "</trascrizione>"]
+            }
+        }
+
+        try:
+            req = urllib.request.Request(
+                OLLAMA_API_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=50.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                content = data.get("message", {}).get("content", "").strip()
+                refined = re.sub(r"</?(?:trascrizione_lezione|sbobina|output|result)>\s*", "", content, flags=re.IGNORECASE).strip()
+                refined = refined.rstrip()
+                while refined.endswith('\\'):
+                    refined = refined[:-1].rstrip()
+
+                # Normalizzazione finale segnaposto audio intervallo
+                refined = re.sub(
+                    r'\[AUDIO_NON_CHIARO\s+da\s+(\d{2}:\d{2})\s+a\s+(\d{2}:\d{2})\]',
+                    r'**[Audio non chiaro / testo incompleto: da \1 a \2]**',
+                    refined,
+                    flags=re.IGNORECASE
+                )
+                refined = re.sub(
+                    r'\[AUDIO_NON_CHIARO\s+(\d{2}:\d{2})\]',
+                    r'**[Audio non chiaro / testo incompleto: da \1 a \1]**',
+                    refined,
+                    flags=re.IGNORECASE
+                )
+                # Rimuove marcatori temporali [MM:SS] standalone lasciati nel testo ordinario
+                refined = re.sub(r'(?<!Audio non chiaro / testo incompleto: da )(?<!a )\[\d{2}:\d{2}\]\s*', '', refined)
+
+                # Pulizia regex finale: rimuove backtick residui attorno ai segnaposto temporali
+                refined = re.sub(r'`+(\[Audio non chiaro[^\]]+\])`+', r'\1', refined)
+                refined = re.sub(r'`+(\*{0,2}\[Audio non chiaro[^\]]+\]\*{0,2})`+', r'\1', refined)
+
+                if refined:
+                    return refined
+        except Exception as e:
+            print(f"[FlowLocal] Errore riformattazione blocco sbobina LLM ({lecture_model}): {e}")
+
+        return chunk_text
+
+    @classmethod
     def _save_flashcard(cls, text: str):
         try:
             content = text[10:].strip()
@@ -448,6 +576,9 @@ class FlowLocalEngine:
             compute_type=COMPUTE_TYPE,
             download_root=None,
         )
+
+        detected_lecture = LLMRefiner.detect_lecture_model()
+        print(f"[FlowLocal] Dettatura live: {LLM_MODEL} | Sbobinatura d'aula: {detected_lecture}")
 
         def warm_llm():
             try:
@@ -996,3 +1127,207 @@ class FlowLocalEngine:
                 if self.orb:
                     self.orb.show_toast(f"+ Imparato: {errata} → {corretta}", duration_s=2.5)
                 break
+
+    def transcribe_audio_file(self, file_path: str, subject_context: str = "", progress_callback: Optional[Callable[[str], None]] = None) -> str:
+        """Sbobina un file audio o video (.mp3, .m4a, .wav, .ogg, .mp4, .mov, .mkv, .webm) con pre-processing aula, Faster-Whisper e Qwen 2.5."""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File non trovato: {file_path}")
+
+        temp_wav_path = None
+        target_audio_path = file_path
+
+        def report(msg: str):
+            if progress_callback:
+                try:
+                    progress_callback(msg)
+                except Exception:
+                    pass
+            print(f"[FlowLocal Sbobina] {msg}")
+
+        # 1. Pre-elaborazione FFmpeg (Voce debole / Aula universitaria)
+        report("Pre-elaborazione audio in corso...")
+        ffmpeg_exe = None
+        try:
+            import imageio_ffmpeg
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            pass
+
+        if not ffmpeg_exe:
+            try:
+                res = subprocess.run(["ffmpeg", "-version"], capture_output=True)
+                if res.returncode == 0:
+                    ffmpeg_exe = "ffmpeg"
+            except Exception:
+                ffmpeg_exe = None
+
+        if ffmpeg_exe:
+            try:
+                temp_fd, temp_wav_path = tempfile.mkstemp(suffix="_cleaned_lecture.wav")
+                os.close(temp_fd)
+
+                # Filtro per voce bassa/aula: highpass 80Hz, lowpass 8000Hz, dynamic audio normalizer, output PCM 16-bit
+                cmd = [
+                    ffmpeg_exe, "-y", "-i", file_path,
+                    "-af", "highpass=f=80,lowpass=f=8000,dynaudnorm=f=150:g=15",
+                    "-ar", "16000", "-ac", "1",
+                    "-c:a", "pcm_s16le",
+                    temp_wav_path
+                ]
+                proc = subprocess.run(cmd, capture_output=True, text=True)
+                if proc.returncode == 0 and os.path.exists(temp_wav_path) and os.path.getsize(temp_wav_path) > 100:
+                    target_audio_path = temp_wav_path
+                    report("Filtri audio per aula applicati con successo.")
+                else:
+                    report("FFmpeg ha restituito errore. Utilizzo file sorgente come fallback.")
+            except Exception as e:
+                report(f"Avviso FFmpeg: {e}. Procedo con audio originale.")
+        else:
+            report("FFmpeg non disponibile: procedo direttamente con il file audio sorgente.")
+
+        try:
+            # Carica l'audio direttamente come ndarray float32 se abbiamo generato il WAV a 16kHz
+            audio_input = target_audio_path
+            if target_audio_path == temp_wav_path:
+                try:
+                    with wave.open(temp_wav_path, "rb") as wf:
+                        raw_bytes = wf.readframes(wf.getnframes())
+                        audio_input = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+                except Exception:
+                    audio_input = target_audio_path
+
+            # 2. Trascrizione Faster-Whisper (Profilo Aula: threshold 0.35, min_silence 800ms)
+            report("Trascrizione acustica Faster-Whisper (Profilo Aula)...")
+            base_prompt = db.get_whisper_initial_prompt(limit=40) or ""
+            if subject_context and subject_context.strip():
+                clean_ctx = subject_context.strip()
+                if base_prompt:
+                    whisper_prompt = f"Lezione universitaria di {clean_ctx}. {base_prompt}. Trascrizione accurata in italiano."
+                else:
+                    whisper_prompt = f"Lezione universitaria di {clean_ctx}. Glossario: {clean_ctx}. Trascrizione accurata in italiano."
+            else:
+                whisper_prompt = base_prompt or None
+
+            segments, info = self.model.transcribe(
+                audio_input,
+                beam_size=5,
+                language="it",
+                temperature=0.0,
+                condition_on_previous_text=False,
+                compression_ratio_threshold=2.2,
+                log_prob_threshold=-1.2,
+                no_speech_threshold=0.65,
+                vad_filter=True,
+                vad_parameters=dict(
+                    threshold=0.35,
+                    min_silence_duration_ms=800,
+                ),
+                initial_prompt=whisper_prompt,
+            )
+
+            raw_parts = []
+            repeat_count = 0
+            last_text = ""
+            last_timestamp_sec = -999.0
+            unclear_start: Optional[float] = None
+            unclear_end: Optional[float] = None
+
+            def flush_unclear():
+                nonlocal unclear_start, unclear_end
+                if unclear_start is not None and unclear_end is not None:
+                    m1, s1 = int(unclear_start) // 60, int(unclear_start) % 60
+                    m2, s2 = int(unclear_end) // 60, int(unclear_end) % 60
+                    raw_parts.append(f"[AUDIO_NON_CHIARO da {m1:02d}:{s1:02d} a {m2:02d}:{s2:02d}]")
+                    unclear_start = None
+                    unclear_end = None
+
+            for seg in segments:
+                start_sec = getattr(seg, "start", 0.0) or 0.0
+                end_sec = getattr(seg, "end", start_sec) or start_sec
+                avg_logprob = getattr(seg, "avg_logprob", 0.0)
+
+                # Se la confidenza acustica è troppo bassa (voce sussurrata, rauca o rumori d'aula)
+                if avg_logprob is not None and avg_logprob < -1.15:
+                    if unclear_start is None:
+                        unclear_start = start_sec
+                    unclear_end = end_sec
+                    continue
+
+                flush_unclear()
+
+                text_clean = seg.text.strip()
+                if not text_clean:
+                    continue
+
+                # Filtro post-segmento: scarta o deduplica frasi consecutive identiche ripetute in loop (> 2 volte)
+                norm_text = text_clean.lower().rstrip(".,!?")
+                if norm_text == last_text:
+                    repeat_count += 1
+                    if repeat_count > 2:
+                        continue
+                else:
+                    last_text = norm_text
+                    repeat_count = 1
+
+                # Inserisce un riferimento temporale [MM:SS] all'inizio o ogni ~30 secondi
+                insert_time_prefix = ""
+                if (start_sec - last_timestamp_sec) >= 30.0 or last_timestamp_sec < 0:
+                    m = int(start_sec) // 60
+                    s = int(start_sec) % 60
+                    insert_time_prefix = f"[{m:02d}:{s:02d}] "
+                    last_timestamp_sec = start_sec
+
+                raw_parts.append(f"{insert_time_prefix}{text_clean}")
+
+            flush_unclear()
+
+            full_raw_text = " ".join(raw_parts).strip()
+            if not full_raw_text:
+                return "*(Nessun parlato rilevato nel file audio)*"
+
+            # 3. Suddivisione in chunk da circa 2200 caratteri (a fine frase) per rielaborazione fluida
+            sentences = full_raw_text.replace("\r\n", "\n").split(". ")
+            chunks = []
+            curr_chunk = []
+            curr_len = 0
+
+            for s in sentences:
+                s_strip = s.strip()
+                if not s_strip:
+                    continue
+                add_len = len(s_strip) + 2
+                if curr_len + add_len > 2200 and curr_chunk:
+                    chunks.append(". ".join(curr_chunk) + ".")
+                    curr_chunk = [s_strip]
+                    curr_len = len(s_strip)
+                else:
+                    curr_chunk.append(s_strip)
+                    curr_len += add_len
+
+            if curr_chunk:
+                chunks.append(". ".join(curr_chunk) + ("" if curr_chunk[-1].endswith(".") else "."))
+
+            # 4. Riformattazione Sbobina con Qwen 2.5 blocco per blocco con correzione refusi fonetici d'aula
+            total_chunks = len(chunks)
+            active_lecture_model = LLMRefiner.detect_lecture_model()
+            report(f"Trascrizione completata ({len(full_raw_text)} car.). Riformattazione {active_lecture_model} (0/{total_chunks})...")
+
+            formatted_blocks = []
+            for i, chunk in enumerate(chunks, 1):
+                report(f"Sbobinatura blocco {i}/{total_chunks} ({active_lecture_model})...")
+                formatted = LLMRefiner.reformat_lecture_block(chunk, subject_context=subject_context)
+                formatted_blocks.append(formatted.strip())
+
+            final_markdown = "\n\n".join(formatted_blocks).strip()
+            # Pulizia regex finale: rimozione di eventuali backtick attorno ai segnaposto temporali
+            final_markdown = re.sub(r'`+(\[Audio non chiaro[^\]]+\])`+', r'\1', final_markdown)
+            final_markdown = re.sub(r'`+(\*{0,2}\[Audio non chiaro[^\]]+\]\*{0,2})`+', r'\1', final_markdown)
+            report("Sbobinatura completata con successo!")
+            return final_markdown
+
+        finally:
+            if temp_wav_path and os.path.exists(temp_wav_path):
+                try:
+                    os.remove(temp_wav_path)
+                except Exception:
+                    pass

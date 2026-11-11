@@ -16,15 +16,32 @@ con altezza minima esplicita, liste scorrevoli anti-compressione.
 
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
+import os
+import re
 
-from PyQt6.QtCore import Qt, QTimer
+# Compatibilità PyAV >= 13/14 con Faster-Whisper
+try:
+    import av
+    if hasattr(av, "open"):
+        _orig_av_open = av.open
+        def _safe_av_open(*args, **kwargs):
+            kwargs.pop("metadata_errors", None)
+            return _orig_av_open(*args, **kwargs)
+        av.open = _safe_av_open
+    if hasattr(av, "container") and hasattr(av.container, "core") and hasattr(av.container.core, "open"):
+        av.container.core.open = _safe_av_open
+except Exception:
+    pass
+
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
+    QApplication, QButtonGroup, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
+    QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from database import db
+from core.exporter import export_to_md, export_to_docx, export_to_pdf
 
 # Rilevamento GPU tramite NVML (opzionale, senza warning)
 GPU_AVAILABLE = False
@@ -359,12 +376,46 @@ def _make_card() -> (QFrame, QVBoxLayout):
     return card, layout
 
 
+class AudioTranscribeThread(QThread):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(str, str)  # final_markdown, file_name
+    error = pyqtSignal(str)
+
+    def __init__(self, file_path: str, subject_context: str = "", engine=None):
+        super().__init__()
+        self.file_path = file_path
+        self.subject_context = subject_context.strip()
+        self.engine = engine
+
+    def run(self):
+        try:
+            target_engine = self.engine
+            if target_engine is None:
+                from core.ai_pipeline import FlowLocalEngine
+                target_engine = FlowLocalEngine()
+
+            def on_progress(msg: str):
+                self.progress.emit(msg)
+
+            markdown = target_engine.transcribe_audio_file(
+                self.file_path,
+                subject_context=self.subject_context,
+                progress_callback=on_progress
+            )
+            file_name = os.path.basename(self.file_path)
+            self.finished.emit(markdown, file_name)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class FlowLocalHub(QMainWindow):
-    def __init__(self, on_device_changed: Optional[Callable] = None):
+    def __init__(self, on_device_changed: Optional[Callable] = None, engine=None):
         super().__init__()
         # API pubblica mantenuta per compatibilità con main.py / pipeline audio
         self.on_device_changed = on_device_changed
+        self.engine = engine
         self.live_volume = 0.0
+        self._transcribe_thread = None
 
         self.setWindowTitle("FlowLocal Hub")
         self.resize(960, 640)
@@ -615,9 +666,13 @@ class FlowLocalHub(QMainWindow):
         self.notes_search.textChanged.connect(self._refresh_notes)
         toolbar.addWidget(self.notes_search, 1)
 
-        export_btn = _make_button("Esporta (.md)")
-        export_btn.clicked.connect(self._export_notes)
-        toolbar.addWidget(export_btn)
+        self.sbobina_btn = _make_button("🎙️ Sbobina File Audio", "primary")
+        self.sbobina_btn.clicked.connect(self._on_sbobina_clicked)
+        toolbar.addWidget(self.sbobina_btn)
+
+        self.export_all_btn = _make_button("Esporta ▾")
+        self.export_all_btn.clicked.connect(self._show_export_all_menu)
+        toolbar.addWidget(self.export_all_btn)
         layout.addLayout(toolbar)
 
         self.notes_list = ScrollList("Nessuna nota salvata. Detta in un'app di studio (Obsidian, Notion, Overleaf…) per crearne.")
@@ -664,6 +719,10 @@ class FlowLocalHub(QMainWindow):
         copy_btn.clicked.connect(lambda _c=False, s=content: self._copy_to_clipboard(s))
         meta_row.addWidget(copy_btn)
 
+        export_single_btn = _make_button("Esporta")
+        export_single_btn.clicked.connect(lambda _c=False, note_dict=n, btn=export_single_btn: self._show_export_single_menu(note_dict, btn))
+        meta_row.addWidget(export_single_btn)
+
         del_btn = _make_button("Elimina", "danger")
         del_btn.clicked.connect(lambda _c=False, nid=n["id"]: self._delete_note(nid))
         meta_row.addWidget(del_btn)
@@ -678,30 +737,175 @@ class FlowLocalHub(QMainWindow):
         db.delete_study_note(note_id)
         self._refresh_notes()
 
-    def _export_notes(self):
+    def _on_sbobina_clicked(self):
+        if self._transcribe_thread and self._transcribe_thread.isRunning():
+            QMessageBox.information(self, "Sbobinatura in corso", "Una sbobinatura è già in fase di elaborazione.")
+            return
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Seleziona file audio o video per sbobinatura",
+            "",
+            "File Audio e Video (*.mp3 *.m4a *.wav *.ogg *.mp4 *.mov *.mkv *.webm);;File Audio (*.mp3 *.m4a *.wav *.ogg);;File Video (*.mp4 *.mov *.mkv *.webm);;Tutti i file (*.*)"
+        )
+        if not file_path:
+            return
+
+        # Prompt opzionale per contesto e glossario della materia
+        subject_context, ok = QInputDialog.getText(
+            self,
+            "Contesto / Materia della lezione",
+            "Inserisci la materia o parole chiave (es. Diritto Sanitario, tirocinio, Legge Gelli-Bianco, colpa generica, imperizia, dolo):"
+        )
+        if not ok:
+            subject_context = ""
+
+        self.sbobina_btn.setEnabled(False)
+        self.sbobina_btn.setText("⏳ Avvio sbobinatura...")
+
+        self._transcribe_thread = AudioTranscribeThread(
+            file_path=file_path,
+            subject_context=subject_context or "",
+            engine=self.engine
+        )
+        self._transcribe_thread.progress.connect(self._on_sbobina_progress)
+        self._transcribe_thread.finished.connect(self._on_sbobina_finished)
+        self._transcribe_thread.error.connect(self._on_sbobina_error)
+        self._transcribe_thread.start()
+
+    def _on_sbobina_progress(self, msg: str):
+        self.sbobina_btn.setText(f"⏳ {msg[:30]}")
+
+    def _on_sbobina_finished(self, markdown: str, file_name: str):
+        self.sbobina_btn.setEnabled(True)
+        self.sbobina_btn.setText("🎙️ Sbobina File Audio")
+
+        # Salva la sbobina nella tabella study_notes del database
+        title = f"Sbobina: {file_name}"
+        db.add_study_note(
+            title=title,
+            content_markdown=markdown,
+            note_type="Sbobina",
+            tags=f"Audio, {file_name}"
+        )
+        self._refresh_notes()
+
+        QMessageBox.information(
+            self,
+            "Sbobinatura completata",
+            f"La lezione di '{file_name}' è stata sbobinata e salvata nelle tue Note con successo!"
+        )
+
+    def _on_sbobina_error(self, err_msg: str):
+        self.sbobina_btn.setEnabled(True)
+        self.sbobina_btn.setText("🎙️ Sbobina File Audio")
+        QMessageBox.critical(
+            self,
+            "Errore Sbobinatura",
+            f"Si è verificato un errore durante la sbobinatura dell'audio:\n{err_msg}"
+        )
+
+    def _show_export_all_menu(self):
         notes = self._filtered_notes()
         if not notes:
-            QMessageBox.information(self, "Esporta note", "Non ci sono note da esportare.")
+            QMessageBox.information(self, "Esporta note", "Non ci sono note o sbobine da esportare.")
             return
 
-        default_name = f"FlowLocal_Note_{datetime.now().strftime('%Y%m%d_%H%M')}.md"
-        path, _ = QFileDialog.getSaveFileName(self, "Esporta note", default_name, "Markdown (*.md)")
-        if not path:
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background-color: #1A1F29; color: #F8FAFC; border: 1px solid #2D3545; padding: 4px; border-radius: 8px; }"
+            "QMenu::item { padding: 6px 14px; border-radius: 4px; font-size: 13px; }"
+            "QMenu::item:selected { background-color: #0284C7; }"
+        )
+
+        md_act = menu.addAction("📄 Markdown (.md)")
+        docx_act = menu.addAction("📘 Documento Word (.docx)")
+        pdf_act = menu.addAction("📕 Documento PDF (.pdf)")
+
+        chosen = menu.exec(self.export_all_btn.mapToGlobal(self.export_all_btn.rect().bottomLeft()))
+        if not chosen:
             return
 
-        parts = ["# FlowLocal — Note\n"]
-        for n in notes:
-            parts.append(f"## {n.get('title') or 'Nota'}")
-            meta = " · ".join(x for x in (_format_timestamp(n.get("created_at")), n.get("note_type"), n.get("tags")) if x)
-            if meta:
-                parts.append(f"*{meta}*\n")
-            parts.append((n.get("content_markdown") or "").strip() + "\n")
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+        if chosen == md_act:
+            default_name = f"FlowLocal_Note_{timestamp}.md"
+            path, _ = QFileDialog.getSaveFileName(self, "Esporta tutte le note", default_name, "Markdown (*.md)")
+            if path:
+                try:
+                    export_to_md(notes, path)
+                    QMessageBox.information(self, "Esportazione completata", f"Tutte le note sono state esportate in:\n{path}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Errore esportazione", f"Impossibile esportare in Markdown:\n{e}")
 
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(parts))
-        except OSError as e:
-            QMessageBox.warning(self, "Esporta note", f"Impossibile salvare il file:\n{e}")
+        elif chosen == docx_act:
+            default_name = f"FlowLocal_Note_{timestamp}.docx"
+            path, _ = QFileDialog.getSaveFileName(self, "Esporta tutte le note", default_name, "Documento Word (*.docx)")
+            if path:
+                try:
+                    export_to_docx(notes, path)
+                    QMessageBox.information(self, "Esportazione completata", f"Tutte le note sono state esportate in:\n{path}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Errore esportazione", f"Impossibile esportare in Word:\n{e}")
+
+        elif chosen == pdf_act:
+            default_name = f"FlowLocal_Note_{timestamp}.pdf"
+            path, _ = QFileDialog.getSaveFileName(self, "Esporta tutte le note", default_name, "Documento PDF (*.pdf)")
+            if path:
+                try:
+                    export_to_pdf(notes, path)
+                    QMessageBox.information(self, "Esportazione completata", f"Tutte le note sono state esportate in:\n{path}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Errore esportazione", f"Impossibile esportare in PDF:\n{e}")
+
+    def _show_export_single_menu(self, note_dict: Dict, btn_widget: QWidget):
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            "QMenu { background-color: #1A1F29; color: #F8FAFC; border: 1px solid #2D3545; padding: 4px; border-radius: 8px; }"
+            "QMenu::item { padding: 6px 14px; border-radius: 4px; font-size: 13px; }"
+            "QMenu::item:selected { background-color: #0284C7; }"
+        )
+
+        md_act = menu.addAction("📄 Markdown (.md)")
+        docx_act = menu.addAction("📘 Documento Word (.docx)")
+        pdf_act = menu.addAction("📕 Documento PDF (.pdf)")
+
+        chosen = menu.exec(btn_widget.mapToGlobal(btn_widget.rect().bottomLeft()))
+        if not chosen:
+            return
+
+        raw_title = (note_dict.get("title") or "Nota").replace("Sbobina: ", "").strip()
+        safe_title = re.sub(r'[\/:*?"<>|]', '_', raw_title)[:40] or "Sbobina"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M')
+
+        if chosen == md_act:
+            default_name = f"{safe_title}_{timestamp}.md"
+            path, _ = QFileDialog.getSaveFileName(self, "Esporta nota", default_name, "Markdown (*.md)")
+            if path:
+                try:
+                    export_to_md(note_dict, path)
+                    QMessageBox.information(self, "Esportazione completata", f"Nota esportata in:\n{path}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Errore esportazione", f"Impossibile esportare in Markdown:\n{e}")
+
+        elif chosen == docx_act:
+            default_name = f"{safe_title}_{timestamp}.docx"
+            path, _ = QFileDialog.getSaveFileName(self, "Esporta nota", default_name, "Documento Word (*.docx)")
+            if path:
+                try:
+                    export_to_docx(note_dict, path)
+                    QMessageBox.information(self, "Esportazione completata", f"Nota esportata in Word:\n{path}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Errore esportazione", f"Impossibile esportare in Word:\n{e}")
+
+        elif chosen == pdf_act:
+            default_name = f"{safe_title}_{timestamp}.pdf"
+            path, _ = QFileDialog.getSaveFileName(self, "Esporta nota", default_name, "Documento PDF (*.pdf)")
+            if path:
+                try:
+                    export_to_pdf(note_dict, path)
+                    QMessageBox.information(self, "Esportazione completata", f"Nota esportata in PDF:\n{path}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Errore esportazione", f"Impossibile esportare in PDF:\n{e}")
 
     # -----------------------------------------------------------------
     # 3. DIZIONARIO
