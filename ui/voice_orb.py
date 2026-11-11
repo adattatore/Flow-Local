@@ -16,7 +16,7 @@ from typing import Callable, Optional
 from PyQt6.QtWidgets import QApplication, QWidget, QMenu
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal, QObject
 from PyQt6.QtGui import (
-    QPainter, QColor, QPainterPath, QRadialGradient, QPen, QAction, QFont
+    QPainter, QColor, QPainterPath, QRadialGradient, QPen, QAction, QFont, QFontMetrics
 )
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -64,6 +64,7 @@ class OrbSignalBridge(QObject):
     change_state = pyqtSignal(str)
     feed_audio_signal = pyqtSignal(object)
     set_locked_signal = pyqtSignal(bool)
+    set_badge_signal = pyqtSignal(str)
 
 
 class VoiceOrbOverlay(QWidget):
@@ -82,6 +83,10 @@ class VoiceOrbOverlay(QWidget):
         self.state = "IDLE"  # IDLE, LISTENING, COMMAND_MODE, STUDY_MODE, WHISPER, QWEN
         self.is_locked = False
         self.lock_start_time = 0.0
+
+        # Badge Contesto Attivo ("{app_label} • {mode_label}")
+        self.badge_text = ""
+        self.badge_opacity = 0.0
 
         # Animazioni e interpolazioni (lerp)
         self.wave_envelope = 0.0     # 0.0 = nascosta, 1.0 = visibile
@@ -106,6 +111,7 @@ class VoiceOrbOverlay(QWidget):
         self.bridge.change_state.connect(self._set_state_slot)
         self.bridge.feed_audio_signal.connect(self._feed_audio_slot)
         self.bridge.set_locked_signal.connect(self._set_locked_slot)
+        self.bridge.set_badge_signal.connect(self._set_badge_slot)
 
         self._setup_window()
 
@@ -118,7 +124,8 @@ class VoiceOrbOverlay(QWidget):
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.Tool |
-            Qt.WindowType.WindowDoesNotAcceptFocus
+            Qt.WindowType.WindowDoesNotAcceptFocus |
+            Qt.WindowType.WindowTransparentForInput
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -134,7 +141,24 @@ class VoiceOrbOverlay(QWidget):
         if state == "IDLE":
             w, h = self.IDLE_W, self.IDLE_H
         else:
-            w, h = self.ACTIVE_W, self.ACTIVE_H
+            if self.badge_text:
+                f_app = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
+                f_mode = QFont("Segoe UI", 9, QFont.Weight.Normal)
+                fm_app = QFontMetrics(f_app)
+                fm_mode = QFontMetrics(f_mode)
+                if " • " in self.badge_text:
+                    p1, p2 = self.badge_text.split(" • ", 1)
+                    text_w = fm_app.horizontalAdvance(p1) + fm_app.horizontalAdvance(" • ") + fm_mode.horizontalAdvance(p2)
+                else:
+                    text_w = fm_app.horizontalAdvance(self.badge_text)
+
+                badge_w = text_w + 36
+                gap = 12
+                orb_w = 140
+                w = int(orb_w + gap + badge_w + 14)
+                h = self.ACTIVE_H
+            else:
+                w, h = self.ACTIVE_W, self.ACTIVE_H
 
         self.setGeometry(
             int(self.anchor_x - w / 2),
@@ -142,6 +166,15 @@ class VoiceOrbOverlay(QWidget):
             w,
             h
         )
+
+    def set_badge_text(self, text: str):
+        self.bridge.set_badge_signal.emit(text)
+
+    def _set_badge_slot(self, text: str):
+        self.badge_text = text
+        if self.state != "IDLE":
+            self._apply_geometry_for_state(self.state)
+        self.update()
 
     def set_state(self, new_state: str):
         self.bridge.change_state.emit(new_state)
@@ -205,9 +238,11 @@ class VoiceOrbOverlay(QWidget):
 
         target_wave = 1.0 if is_listening else 0.0
         target_spin = 1.0 if is_processing else 0.0
+        target_badge = 1.0 if (self.state != "IDLE" and self.badge_text) else 0.0
 
         self.wave_envelope += (target_wave - self.wave_envelope) * 0.22
         self.spinner_opacity += (target_spin - self.spinner_opacity) * 0.22
+        self.badge_opacity += (target_badge - self.badge_opacity) * 0.22
 
         # Colore in base allo stato attivo
         if self.state == "LISTENING":
@@ -301,6 +336,12 @@ class VoiceOrbOverlay(QWidget):
         # =========================================================
         # 2. STATI ATTIVI: VOICE ORB (140x140 px)
         # =========================================================
+        if self.badge_text:
+            cx = 70.0
+            cy = self.height() / 2.0
+        else:
+            cx, cy = self.width() / 2.0, self.height() / 2.0
+
         core_radius = 26.0  # Raggio cerchio centrale (diametro 52px)
         is_active = self.state in ("LISTENING", "COMMAND_MODE", "STUDY_MODE")
         levels = self.analyzer.update(active=is_active)
@@ -395,6 +436,75 @@ class VoiceOrbOverlay(QWidget):
             start_angle = int(-self.spinner_angle * 16)
             span_angle = int(-110 * 16)
             painter.drawArc(spin_rect, start_angle, span_angle)
+            painter.restore()
+
+        # =========================================================
+        # 3. BADGE ACCANTO AL VOICE ORB: "{app_label} • {mode_label}"
+        # =========================================================
+        if self.badge_text and self.badge_opacity > 0.01:
+            painter.save()
+            painter.setOpacity(self.badge_opacity)
+
+            gap = 12.0
+            badge_h = 28.0
+            badge_x = 140.0 + gap
+            badge_y = cy - (badge_h / 2.0)
+            badge_w = max(40.0, self.width() - badge_x - 12.0)
+            badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
+            radius = badge_h / 2.0
+
+            # 1. Pill Background (Obsidian Glass dark semi-transparent)
+            painter.setBrush(QColor(15, 17, 24, 220))
+            border_col = QColor(self.current_color)
+            border_col.setAlpha(int(110 * self.badge_opacity))
+            painter.setPen(QPen(border_col, 1.2))
+            painter.drawRoundedRect(badge_rect, radius, radius)
+
+            # 2. Glowing Dot Indicator
+            dot_radius = 3.5
+            dot_cx = badge_x + 13.0
+            dot_cy = cy
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(self.current_color)
+            painter.drawEllipse(QPointF(dot_cx, dot_cy), dot_radius, dot_radius)
+
+            # 3. Text Formatting
+            text_x = dot_cx + 9.0
+            avail_text_w = badge_rect.right() - text_x - 10.0
+            text_rect = QRectF(text_x, badge_y, avail_text_w, badge_h)
+
+            if " • " in self.badge_text:
+                app_part, mode_part = self.badge_text.split(" • ", 1)
+                f_app = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
+                f_mode = QFont("Segoe UI", 9, QFont.Weight.Normal)
+                fm_app = QFontMetrics(f_app)
+                fm_mode = QFontMetrics(f_mode)
+                bullet_str = " • "
+
+                total_content_w = fm_app.horizontalAdvance(app_part) + fm_app.horizontalAdvance(bullet_str) + fm_mode.horizontalAdvance(mode_part)
+                start_x = text_x + max(0.0, (avail_text_w - total_content_w) / 2.0)
+                base_y = badge_y + (badge_h + fm_app.ascent() - fm_app.descent()) / 2.0
+
+                # App Label (Crisp White #F8FAFC)
+                painter.setFont(f_app)
+                painter.setPen(QColor("#F8FAFC"))
+                painter.drawText(QPointF(start_x, base_y), app_part)
+                start_x += fm_app.horizontalAdvance(app_part)
+
+                # Bullet Dot (Current mode accent color)
+                painter.setPen(self.current_color)
+                painter.drawText(QPointF(start_x, base_y), bullet_str)
+                start_x += fm_app.horizontalAdvance(bullet_str)
+
+                # Mode Label (#94A3B8 soft slate)
+                painter.setFont(f_mode)
+                painter.setPen(QColor("#94A3B8"))
+                painter.drawText(QPointF(start_x, base_y), mode_part)
+            else:
+                painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+                painter.setPen(QColor("#F8FAFC"))
+                painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, self.badge_text)
+
             painter.restore()
 
     def contextMenuEvent(self, event):

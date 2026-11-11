@@ -9,5 +9,12 @@ wheels/
 # Virtual environments
 .venv
 
-#databases
+# Databases
+*.db
+*.db-shm
+*.db-wal
 *flow_hub.db*
+
+# Scratch & Test scripts
+test_*.py
+scratch_*.py
