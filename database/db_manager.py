@@ -135,6 +135,15 @@ class DatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_note_links_source ON note_links(source_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_note_links_target ON note_links(target_id);")
 
+        # 7. Tabella Impostazioni Applicazione & Cloud Sync
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
         conn.commit()
         self._seed_default_data()
         self._ensure_updated_defaults()
@@ -805,6 +814,26 @@ class DatabaseManager:
             "saved_minutes": saved_minutes,
             "avg_latency_ms": avg_ms,
         }
+
+    # --- IMPOSTAZIONI APPLICAZIONE ---
+    def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Recupera un parametro di configurazione dal DB."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM app_settings WHERE key = ? LIMIT 1", (key,))
+        row = cursor.fetchone()
+        return row["value"] if row else default
+
+    def set_setting(self, key: str, value: str):
+        """Imposta o aggiorna un parametro di configurazione nel DB."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+        """, (key, str(value)))
+        conn.commit()
 
 
 db = DatabaseManager()

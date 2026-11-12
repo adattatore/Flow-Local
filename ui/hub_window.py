@@ -50,6 +50,7 @@ from PyQt6.QtWidgets import (
 
 from database import db
 from core.exporter import export_to_md, export_to_docx, export_to_pdf
+from core.cloud_sync import cloud_sync
 
 # Rilevamento GPU tramite NVML (opzionale, senza warning)
 GPU_AVAILABLE = False
@@ -200,6 +201,21 @@ QPushButton[variant="primary"] {
 QPushButton[variant="primary"]:hover {
     background-color: #0369A1;
     border: 1px solid #0369A1;
+}
+QPushButton[variant="success"] {
+    background-color: #059669;
+    border: 1px solid #10B981;
+    color: #FFFFFF;
+    font-weight: 600;
+}
+QPushButton[variant="success"]:hover {
+    background-color: #10B981;
+    border: 1px solid #34D399;
+}
+QPushButton[variant="success"]:disabled {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    color: #64748B;
 }
 QPushButton[variant="danger"] {
     background-color: transparent;
@@ -490,6 +506,69 @@ class ExtractFlashcardsThread(QThread):
                     )
                     count += 1
             self.finished.emit(count, self.note_title)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class CloudQueueProcessThread(QThread):
+    progress = pyqtSignal(str, int)  # status_msg, percent
+    finished = pyqtSignal(int, list)  # count, results
+    error = pyqtSignal(str)
+    cancelled = pyqtSignal()
+
+    def __init__(self, engine=None):
+        super().__init__()
+        self.engine = engine
+        self.cancel_requested = False
+
+    def cancel(self):
+        self.cancel_requested = True
+
+    def run(self):
+        try:
+            from core.cloud_sync import cloud_sync
+            target_engine = self.engine
+            if target_engine is None:
+                from core.ai_pipeline import FlowLocalEngine
+                target_engine = FlowLocalEngine()
+
+            pending = cloud_sync.get_pending_queue()
+            if not pending:
+                self.finished.emit(0, [])
+                return
+
+            total = len(pending)
+            results = []
+
+            for idx, item in enumerate(pending, 1):
+                if self.cancel_requested:
+                    self.cancelled.emit()
+                    return
+
+                def on_progress(msg: str, pct: int = -1):
+                    base_pct = int(((idx - 1) / total) * 100)
+                    file_pct = pct if pct >= 0 else 0
+                    scaled_pct = int(base_pct + (file_pct / total))
+                    self.progress.emit(f"File {idx}/{total} ({item['filename']}): {msg}", scaled_pct)
+
+                def is_cancelled() -> bool:
+                    return self.cancel_requested
+
+                res = cloud_sync.process_queue_item(
+                    item=item,
+                    engine=target_engine,
+                    progress_callback=on_progress,
+                    cancel_check=is_cancelled
+                )
+                results.append(res)
+
+            # Rigenerazione indice library.json per la PWA Mobile
+            self.progress.emit("Rigenerazione indice library.json per PWA Mobile...", 99)
+            cloud_sync.generate_library_json()
+            self.progress.emit("Elaborazione coda completata!", 100)
+            self.finished.emit(len(results), results)
+        except InterruptedError:
+            self.cancelled.emit()
         except Exception as e:
             self.error.emit(str(e))
 
@@ -1256,6 +1335,10 @@ class FlowLocalHub(QMainWindow):
         self._current_mode_name = MODE_TABS[0][1]
         self._last_transcription_marker = None
 
+        # Inizializzazione Gestore Coda Cloud Controllata (Anti-Lag Gaming)
+        self.cloud_sync = cloud_sync
+        self._cloud_queue_thread = None
+
         self._build_ui()
         self._refresh_current_page()
 
@@ -1263,6 +1346,12 @@ class FlowLocalHub(QMainWindow):
         self.poll_timer = QTimer(self)
         self.poll_timer.timeout.connect(self._poll_new_transcriptions)
         self.poll_timer.start(2500)
+
+        # Timer leggero Coda Cloud (ogni 10s, sola lettura disco, 0 CPU / 0 GPU)
+        self.cloud_poll_timer = QTimer(self)
+        self.cloud_poll_timer.timeout.connect(self._poll_cloud_queue)
+        self.cloud_poll_timer.start(10000)
+        self._poll_cloud_queue()
 
     # -----------------------------------------------------------------
     # API pubblica
@@ -1520,6 +1609,44 @@ class FlowLocalHub(QMainWindow):
         self.export_all_btn.clicked.connect(self._show_export_all_menu)
         toolbar.addWidget(self.export_all_btn)
         layout.addLayout(toolbar)
+
+        # Barra Coda Cloud Controllata (Anti-Lag Gaming)
+        cloud_bar = QHBoxLayout()
+        cloud_bar.setSpacing(8)
+        cloud_bar.setContentsMargins(0, 0, 0, 2)
+
+        self.cloud_badge = QLabel("☁️ Coda Cloud (0 in attesa)")
+        self.cloud_badge.setObjectName("CloudBadge")
+        self.cloud_badge.setStyleSheet("""
+            QLabel {
+                background-color: #131722;
+                color: #64748B;
+                border: 1px solid #1E293B;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-size: 12px;
+                font-weight: 500;
+            }
+        """)
+        cloud_bar.addWidget(self.cloud_badge)
+
+        self.cloud_process_btn = _make_button("▶️ Elabora Coda", "success")
+        self.cloud_process_btn.setEnabled(False)
+        self.cloud_process_btn.clicked.connect(self._on_process_cloud_queue_clicked)
+        cloud_bar.addWidget(self.cloud_process_btn)
+
+        self.cloud_sync_btn = _make_button("🔄 Aggiorna Cloud")
+        self.cloud_sync_btn.setToolTip("Rigenera outbox_study/library.json con note e flashcard del PC")
+        self.cloud_sync_btn.clicked.connect(self._on_sync_cloud_clicked)
+        cloud_bar.addWidget(self.cloud_sync_btn)
+
+        self.cloud_folder_btn = _make_button("📁 Cartella Sync")
+        self.cloud_folder_btn.setToolTip("Imposta o visualizza la cartella Google Drive Desktop sincronizzata")
+        self.cloud_folder_btn.clicked.connect(self._on_cloud_folder_clicked)
+        cloud_bar.addWidget(self.cloud_folder_btn)
+
+        cloud_bar.addStretch(1)
+        layout.addLayout(cloud_bar)
 
         # Barra di filtro a pillole mutuamente esclusive
         filter_bar = QHBoxLayout()
@@ -2176,9 +2303,190 @@ class FlowLocalHub(QMainWindow):
 
     def _on_cancel_sbobina_clicked(self):
         if self._transcribe_thread and self._transcribe_thread.isRunning():
-            self.sbobina_status_label.setText("Annullamento in corso...")
+            self.sbobina_status_label.setText("Annullamento sbobinatura in corso...")
             self.sbobina_cancel_btn.setEnabled(False)
             self._transcribe_thread.cancel()
+        if self._cloud_queue_thread and self._cloud_queue_thread.isRunning():
+            self.sbobina_status_label.setText("Annullamento coda cloud in corso...")
+            self.sbobina_cancel_btn.setEnabled(False)
+            self._cloud_queue_thread.cancel()
+
+    # -----------------------------------------------------------------
+    # GESTORE CODA CLOUD CONTROLLATA (ANTI-LAG GAMING)
+    # -----------------------------------------------------------------
+    def _poll_cloud_queue(self):
+        """Timer 10s: aggiorna il badge della coda cloud (sola lettura disco, zero CPU/GPU)."""
+        try:
+            count = self.cloud_sync.get_pending_count()
+            if hasattr(self, "cloud_badge"):
+                if count > 0:
+                    self.cloud_badge.setText(f"☁️ Coda Cloud ({count} in attesa)")
+                    self.cloud_badge.setStyleSheet("""
+                        QLabel {
+                            background-color: #1E3A8A;
+                            color: #60A5FA;
+                            border: 1px solid #3B82F6;
+                            border-radius: 6px;
+                            padding: 6px 14px;
+                            font-size: 12px;
+                            font-weight: 700;
+                        }
+                    """)
+                    is_busy = (
+                        (self._cloud_queue_thread and self._cloud_queue_thread.isRunning())
+                        or (self._transcribe_thread and self._transcribe_thread.isRunning())
+                    )
+                    self.cloud_process_btn.setEnabled(not is_busy)
+                else:
+                    self.cloud_badge.setText("☁️ Coda Cloud (0 in attesa)")
+                    self.cloud_badge.setStyleSheet("""
+                        QLabel {
+                            background-color: #131722;
+                            color: #64748B;
+                            border: 1px solid #1E293B;
+                            border-radius: 6px;
+                            padding: 6px 14px;
+                            font-size: 12px;
+                            font-weight: 500;
+                        }
+                    """)
+                    is_queue_running = self._cloud_queue_thread and self._cloud_queue_thread.isRunning()
+                    if not is_queue_running:
+                        self.cloud_process_btn.setEnabled(False)
+        except Exception:
+            pass
+
+    def _on_process_cloud_queue_clicked(self):
+        """Avvia l'elaborazione manuale sequenziale dei file in inbox_audio/."""
+        if (self._cloud_queue_thread and self._cloud_queue_thread.isRunning()) or (
+            self._transcribe_thread and self._transcribe_thread.isRunning()
+        ):
+            QMessageBox.information(
+                self, "Elaborazione in corso", "Un'altra operazione acustica o di coda è già attiva."
+            )
+            return
+
+        pending = self.cloud_sync.get_pending_queue()
+        if not pending:
+            QMessageBox.information(
+                self,
+                "Coda vuota",
+                f"Nessun file audio trovato in attesa nella cartella:\n{self.cloud_sync.get_inbox_audio_dir()}",
+            )
+            return
+
+        total = len(pending)
+        reply = QMessageBox.question(
+            self,
+            "Avvia Elaborazione Coda Cloud",
+            f"Trovati {total} file audio in attesa.\n\n"
+            f"Verranno sbobinati sequenzialmente con Qwen 2.5 7B, salvati nel DB, "
+            f"esportati in PDF/DOCX e archiviati in processed/.\n\n"
+            f"Vuoi procedere ora?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self.cloud_process_btn.setEnabled(False)
+        self.cloud_process_btn.setText("⏳ In elaborazione...")
+        self.sbobina_btn.setEnabled(False)
+
+        self.sbobina_status_label.setText(f"Avvio Coda Cloud: 0/{total} completati...")
+        self.sbobina_progress_bar.setValue(0)
+        self.sbobina_cancel_btn.setEnabled(True)
+        self.sbobina_progress_box.show()
+
+        self._cloud_queue_thread = CloudQueueProcessThread(engine=self.engine)
+        self._cloud_queue_thread.progress.connect(self._on_cloud_queue_progress)
+        self._cloud_queue_thread.finished.connect(self._on_cloud_queue_finished)
+        self._cloud_queue_thread.error.connect(self._on_cloud_queue_error)
+        self._cloud_queue_thread.cancelled.connect(self._on_cloud_queue_cancelled)
+        self._cloud_queue_thread.start()
+
+    def _on_cloud_queue_progress(self, msg: str, percent: int = -1):
+        self.sbobina_status_label.setText(msg)
+        if percent >= 0:
+            self.sbobina_progress_bar.setValue(percent)
+
+    def _on_cloud_queue_finished(self, count: int, results: list):
+        self.sbobina_progress_box.hide()
+        self.cloud_process_btn.setEnabled(True)
+        self.cloud_process_btn.setText("▶️ Elabora Coda")
+        self.sbobina_btn.setEnabled(True)
+        self._poll_cloud_queue()
+        self._refresh_notes()
+
+        msg = (
+            f"Elaborazione completata per {count} lezioni audio dalla Coda Cloud!\n\n"
+            f"• Sbobine e Flashcard d'esame registrate nel DB\n"
+            f"• File PDF e DOCX esportati in 'outbox_study/'\n"
+            f"• Indice 'library.json' aggiornato per la PWA Mobile\n"
+            f"• File audio spostati in 'inbox_audio/processed/'"
+        )
+        QMessageBox.information(self, "Coda Cloud Completata", msg)
+
+    def _on_cloud_queue_error(self, err_msg: str):
+        self.sbobina_progress_box.hide()
+        self.cloud_process_btn.setEnabled(True)
+        self.cloud_process_btn.setText("▶️ Elabora Coda")
+        self.sbobina_btn.setEnabled(True)
+        self._poll_cloud_queue()
+        QMessageBox.critical(
+            self, "Errore Coda Cloud", f"Si è verificato un errore durante l'elaborazione:\n{err_msg}"
+        )
+
+    def _on_cloud_queue_cancelled(self):
+        self.sbobina_progress_box.hide()
+        self.cloud_process_btn.setEnabled(True)
+        self.cloud_process_btn.setText("▶️ Elabora Coda")
+        self.sbobina_btn.setEnabled(True)
+        self._poll_cloud_queue()
+        self._refresh_notes()
+        QMessageBox.information(self, "Coda Annullata", "L'elaborazione della coda cloud è stata interrotta.")
+
+    def _on_sync_cloud_clicked(self):
+        """Rigenera manualmente outbox_study/library.json."""
+        try:
+            data = self.cloud_sync.generate_library_json()
+            out_path = os.path.join(self.cloud_sync.get_outbox_study_dir(), "library.json")
+            total_notes = data["stats"]["total_notes"]
+            total_fc = data["stats"]["total_flashcards"]
+            QMessageBox.information(
+                self,
+                "Cloud Sincronizzato",
+                f"Indice libreria per PWA Mobile aggiornato con successo!\n\n"
+                f"• Percorso: {out_path}\n"
+                f"• Note & Sbobine: {total_notes}\n"
+                f"• Flashcard: {total_fc}\n\n"
+                f"Google Drive Desktop sincronizzerà il file sul cloud.",
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Errore Aggiornamento Cloud", f"Impossibile aggiornare library.json:\n{e}"
+            )
+
+    def _on_cloud_folder_clicked(self):
+        """Permette di visualizzare o cambiare la cartella sincronizzata da Google Drive."""
+        current_dir = self.cloud_sync.get_sync_base_dir()
+        chosen = QFileDialog.getExistingDirectory(
+            self,
+            "Seleziona cartella sincronizzata Google Drive (FlowLocal_Sync)",
+            current_dir,
+        )
+        if chosen and os.path.exists(chosen):
+            self.cloud_sync.set_sync_base_dir(chosen)
+            self._poll_cloud_queue()
+            QMessageBox.information(
+                self,
+                "Cartella Cloud Impostata",
+                f"Cartella principale impostata su:\n{chosen}\n\n"
+                f"Sottocartelle verificate:\n"
+                f"• inbox_audio/\n"
+                f"• inbox_audio/processed/\n"
+                f"• outbox_study/",
+            )
 
     def _on_sbobina_cancelled(self):
         self.sbobina_progress_box.hide()

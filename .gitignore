@@ -18,3 +18,9 @@ wheels/
 # Scratch & Test scripts
 test_*.py
 scratch_*.py
+
+# Local Cloud Sync folder
+FlowLocal_Sync/
+
+# Local Cloud Sync folder
+FlowLocal_Sync/
