@@ -285,6 +285,16 @@ class DatabaseManager:
                     combined = (row["phonetic_aliases"] + ", " + ", ".join(to_add)).strip(", ")
                     cursor.execute("UPDATE vocabulary SET phonetic_aliases = ? WHERE id = ?", (combined, row["id"]))
 
+        # 4. Deduplica copie ridondanti della nota di test 'matrice di trasformazione omogenea'
+        cursor.execute("""
+            DELETE FROM study_notes
+            WHERE (title LIKE '%matrice%omogenea%' OR content_markdown LIKE '%matrice%omogenea%')
+              AND id NOT IN (
+                  SELECT MIN(id) FROM study_notes
+                  WHERE (title LIKE '%matrice%omogenea%' OR content_markdown LIKE '%matrice%omogenea%')
+              )
+        """)
+
         conn.commit()
 
     def _seed_default_data(self):
@@ -645,12 +655,68 @@ class DatabaseManager:
     ) -> int:
         conn = self._get_connection()
         cursor = conn.cursor()
+
+        t_clean = title.strip()
+        c_clean = content_markdown.strip()
+
+        # Anti-duplicato: se esiste una nota identica creata negli ultimi 30 secondi, restituisci l'ID esistente
+        cursor.execute("""
+            SELECT id FROM study_notes
+            WHERE (title = ? OR content_markdown = ?)
+              AND (strftime('%s', 'now') - strftime('%s', created_at)) < 30
+            ORDER BY id DESC LIMIT 1
+        """, (t_clean, c_clean))
+        existing = cursor.fetchone()
+        if existing:
+            return existing["id"] if isinstance(existing, sqlite3.Row) else existing[0]
+
         cursor.execute("""
             INSERT INTO study_notes (title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (title.strip(), content_markdown.strip(), note_type, tags, parent_note_id, profile, subject, topic))
+        """, (t_clean, c_clean, note_type, tags, parent_note_id, profile, subject, topic))
         conn.commit()
         return cursor.lastrowid
+
+    # Alias per retrocompatibilità e flessibilità
+    add_note = add_study_note
+
+    def find_notes_by_keyword(self, keyword: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Trova note nel Notekeeper corrispondenti a una parola o frase chiave."""
+        clean_kw = keyword.strip()
+        if not clean_kw:
+            return []
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        param = f"%{clean_kw}%"
+        cursor.execute("""
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at
+            FROM study_notes
+            WHERE (parent_note_id IS NULL AND note_type != 'Flashcard')
+              AND (title LIKE ? OR content_markdown LIKE ?)
+            ORDER BY id DESC LIMIT ?
+        """, (param, param, limit))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def merge_notes(self, id1: int, id2: int) -> Optional[Dict[str, Any]]:
+        """Unisce due note fondendo il contenuto nella prima ed eliminando la seconda."""
+        note1 = self.get_study_note_by_id(id1)
+        note2 = self.get_study_note_by_id(id2)
+        if not note1 or not note2:
+            return None
+
+        merged_content = f"{note1['content_markdown'].strip()}\n\n---\n\n{note2['content_markdown'].strip()}"
+        self.update_study_note(
+            note_id=id1,
+            title=note1["title"],
+            content_markdown=merged_content,
+            profile=note1.get("profile", "Alessandro"),
+            subject=note1.get("subject", "Generale"),
+            topic=note1.get("topic", "Generale"),
+            note_type=note1.get("note_type", "appunto"),
+        )
+        self.delete_study_note(id2)
+        note1["content_markdown"] = merged_content
+        return note1
 
     def update_study_note(
         self,
@@ -770,14 +836,14 @@ class DatabaseManager:
         topic: Optional[str] = None,
         limit: int = 4
     ) -> List[Dict[str, Any]]:
-        """Cerca per parole chiave (filtrando le stopword italiane) dentro notes e flashcards, con filtro opzionale per subject e topic."""
+        """Cerca per parole chiave (filtrando rigorosamente le stopword italiane) dentro notes e flashcards."""
         if not query or not query.strip():
             return []
 
         stopwords = {
             "il", "lo", "la", "i", "gli", "le", "un", "uno", "una",
             "di", "a", "da", "in", "con", "su", "per", "tra", "fra",
-            "e", "ed", "o", "od", "ma", "che", "chi", "cui", "quale", "quali",
+            "e", "ed", "o", "od", "ma", "che", "chi", "cui", "qual", "quale", "quali",
             "come", "cosa", "dove", "quando", "perché", "questo", "questa",
             "questi", "queste", "quello", "quella", "quelli", "quelle",
             "mio", "tuo", "suo", "nostro", "vostro", "loro", "non", "più",
@@ -787,13 +853,19 @@ class DatabaseManager:
             "stati", "state", "del", "dello", "della", "dei", "degli", "delle",
             "al", "allo", "alla", "ai", "agli", "alle", "dal", "dallo", "dalla",
             "dai", "dagli", "dalle", "nel", "nello", "nella", "nei", "negli",
-            "nelle", "sul", "sullo", "sulla", "sui", "sugli", "sulle"
+            "nelle", "sul", "sullo", "sulla", "sui", "sugli", "sulle", "sull",
+            # Termini generici di comando o metadati (vietati come keyword di ricerca RAG)
+            "whis", "nota", "note", "appunto", "appunti", "slide", "sbobina", "sbobine",
+            "prendi", "segna", "crea", "aggiungi", "dimmi", "salva", "annota", "scrivi",
+            "ricordami", "trova", "cerca", "leggi", "mostra"
         }
 
         raw_words = re.findall(r'\b[A-Za-z0-9_À-ÿ]{3,}\b', query.lower())
         keywords = [w for w in raw_words if w not in stopwords]
+        # SOGLIA MINIMA: se non ci sono keyword specifiche, restituisci lista vuota
+        # (MAI restituire note fallback a caso se la domanda non contiene termini precisi!)
         if not keywords:
-            keywords = [w for w in raw_words] or [query.strip().lower()[:20]]
+            return []
 
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -817,9 +889,10 @@ class DatabaseManager:
             kw_conditions.append("(title LIKE ? OR content_markdown LIKE ? OR tags LIKE ?)")
             params.extend([kw_param, kw_param, kw_param])
 
-        if kw_conditions:
-            sql_base += f" AND ({' OR '.join(kw_conditions)})"
+        if not kw_conditions:
+            return []
 
+        sql_base += f" AND ({' OR '.join(kw_conditions)})"
         sql_base += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
 

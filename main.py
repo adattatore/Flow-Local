@@ -38,6 +38,7 @@ import signal
 import threading
 import subprocess
 import urllib.request
+from typing import Optional
 
 import core.ai_pipeline as aip
 
@@ -71,6 +72,7 @@ from ui.voice_orb import VoiceOrbOverlay
 from ui.hub_window import FlowLocalHub
 from ui.whis_hud import WhisHUD
 from core.ai_pipeline import FlowLocalEngine
+from core.wake_listener import WhisWakeListener
 
 VK_CAPITAL = 0x14  # Caps Lock (Bloc Maiusc)
 VK_SHIFT = 0x10    # Shift
@@ -78,6 +80,7 @@ VK_F8 = 0x77       # Tasto F8
 
 keyboard_lock = threading.Lock()
 last_release_time = 0.0
+active_wake_listener: Optional[WhisWakeListener] = None
 
 
 def is_shift_down() -> bool:
@@ -89,6 +92,8 @@ def is_shift_down() -> bool:
 
 
 def safe_handle_press(engine: FlowLocalEngine):
+    if active_wake_listener and not active_wake_listener.is_paused:
+        active_wake_listener.set_paused(True)
     with keyboard_lock:
         engine.handle_key_press()
 
@@ -201,7 +206,62 @@ def main():
     hub.whis_hud = whis_hud
     orb.on_click_toggle = engine.toggle_recording_click
     orb.on_change_mode = engine.set_mode
-    hub.on_device_changed = engine.change_device
+
+    # 3b. Hands-free Wake Word Listener ("Whis...")
+    global active_wake_listener
+    wake_listener = WhisWakeListener(
+        whisper_instance=engine,
+        sample_rate=engine.sample_rate,
+        device_index=engine.dev_index,
+    )
+    active_wake_listener = wake_listener
+
+    def on_wake_word(command: str):
+        clean_cmd = (command or "").strip()
+        if not clean_cmd:
+            clean_cmd = "Ciao Whis, come puoi aiutarmi?"
+        print(f"[FlowLocal] Wake word rilevata! Inoltro comando a Whis: '{clean_cmd}'")
+        whis_hud.request_invoke.emit(clean_cmd, "")
+
+    wake_listener.wake_word_detected.connect(on_wake_word)
+    wake_listener.wake_activated.connect(whis_hud.show_wake_listening)
+    wake_listener.command_timeout.connect(whis_hud.dismiss_wake)
+    wake_listener.status_message.connect(whis_hud.set_listening_status)
+    hub.set_wake_listener(wake_listener)
+
+    # Avvio di default: Attivo (ON) subito all'apertura
+    if getattr(hub, "is_handsfree_enabled", False):
+        wake_listener.start()
+        wake_listener.set_paused(False)
+
+    # Gestione automatica della pausa: quando l'utente usa Caps Lock / F8,
+    # il listener hands-free si mette istantaneamente in pausa per evitare conflitti audio
+    _orig_start_rec = engine.start_recording
+    _orig_stop_rec = engine.stop_recording_and_process
+
+    def _wrapped_start_rec(*args, **kwargs):
+        if wake_listener and not wake_listener.is_paused:
+            wake_listener.set_paused(True)
+        return _orig_start_rec(*args, **kwargs)
+
+    def _wrapped_stop_rec(*args, **kwargs):
+        res = _orig_stop_rec(*args, **kwargs)
+        if wake_listener and getattr(hub, "is_handsfree_enabled", False):
+            def _delayed_resume():
+                time.sleep(0.400)
+                if not engine.is_recording and getattr(hub, "is_handsfree_enabled", False):
+                    wake_listener.set_paused(False)
+            threading.Thread(target=_delayed_resume, daemon=True).start()
+        return res
+
+    engine.start_recording = _wrapped_start_rec
+    engine.stop_recording_and_process = _wrapped_stop_rec
+
+    def on_device_changed(new_dev_idx):
+        engine.change_device(new_dev_idx)
+        if wake_listener:
+            wake_listener.device_index = new_dev_idx
+    hub.on_device_changed = on_device_changed
 
     # Modalità Fantasma: l'orb resta nascosto in IDLE e compare solo durante la dettatura
     orb.hide()
@@ -227,6 +287,24 @@ def main():
     whis_act.triggered.connect(lambda: whis_hud.start_query("Ciao Whis, dimmi come puoi aiutarmi."))
     menu.addAction(whis_act)
 
+    handsfree_act = QAction("🎙️ Attiva Mani Libere (\"Di' Whis...\")", menu)
+    handsfree_act.setCheckable(True)
+    handsfree_act.setChecked(hub.is_handsfree_enabled)
+
+    def on_toggle_handsfree(checked: bool):
+        if hasattr(hub, "handsfree_switch"):
+            hub.handsfree_switch.setChecked(checked)
+
+    handsfree_act.toggled.connect(on_toggle_handsfree)
+
+    def on_hub_handsfree_changed(active: bool):
+        handsfree_act.blockSignals(True)
+        handsfree_act.setChecked(active)
+        handsfree_act.blockSignals(False)
+
+    hub.on_handsfree_changed = on_hub_handsfree_changed
+    menu.addAction(handsfree_act)
+
     menu.addSeparator()
 
     pause_act = QAction("⏸️ Sospendi Dettatura", menu)
@@ -247,6 +325,8 @@ def main():
             orb.hide()
             hub.hide()
             whis_hud.hide()
+            if wake_listener:
+                wake_listener.stop()
             if engine.stream:
                 engine.stream.stop()
                 engine.stream.close()

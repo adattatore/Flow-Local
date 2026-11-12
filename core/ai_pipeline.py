@@ -83,8 +83,9 @@ WHIS_WAKE_REGEX = re.compile(
 )
 
 DEFAULT_WHISPER_INITIAL_PROMPT = (
-    "FlowLocal, FlowType, FlowStudy, Whis, Ollama, Qwen, Faster-Whisper, "
-    "PyQt6, HUD, trascrittore, sbobina, LaTeX."
+    "Antigravity, FlowLocal, FlowType, FlowStudy, Whis, PyQt6, Ollama, Qwen, "
+    "RTX 5060, Emporio 87, Triscina, Selinunte, Castelvetrano, Palermo, Giada, "
+    "gestionale, matrice Jacobiana, cinematica diretta, modalità idle."
 )
 
 LAST_SELECTION_CAPTURE_TIME = 0.0
@@ -240,10 +241,24 @@ def normalize_phonetic_variants(text: str) -> str:
     # 1. Whis: varianti fonetiche
     text = re.sub(r'\b(WIS|Wis|wis|Wiz|wiz|Whizz|whizz|Uis|uis)\b', 'Whis', text)
 
-    # 2. FlowType, FlowStudy, FlowLocal
-    text = re.sub(r'\bflow\s*type\b', 'FlowType', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bflow\s*study\b', 'FlowStudy', text, flags=re.IGNORECASE)
+    # 2. FlowType, FlowStudy, FlowLocal, Emporio 87, RTX 5060
+    text = re.sub(r'\bFlow\s*[Ss]tud+y\b', 'FlowStudy', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bFlow[\s.,_-]*[Tt](?:ype|ap)\b', 'FlowType', text, flags=re.IGNORECASE)
     text = re.sub(r'\bflow\s*local\b', 'FlowLocal', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bEmporio\s*87\b', 'Emporio 87', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bRTX\s*5060\b', 'RTX 5060', text, flags=re.IGNORECASE)
+
+    # 2b. Correzioni termini tecnici, robotica e toponimi
+    text = re.sub(r'\b[Gg]iacobian([aoe])\b', r'Jacobian\1', text)
+    text = re.sub(r'\b(?:Trishiness\s*Rinunte|Triscina\s+in\s+Selinunte)\b', 'Triscina e Selinunte', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bil gestione\b', 'il gestionale', text, flags=re.IGNORECASE)
+    text = re.sub(r'(?:,\s*|\s+)come sapere[.!?]*$', ', fammi sapere.', text, flags=re.IGNORECASE)
+
+    # 2c. Rimozione intercalari specifici e correzione maiuscole
+    text = re.sub(r',\s*diciamo,', ',', text, flags=re.IGNORECASE)
+    text = re.sub(r'(^|[\.\!\?\n]\s*)Allora,\s*([a-zà-úA-Z])', lambda m: m.group(1) + m.group(2).upper(), text)
+    text = re.sub(r'(^|[\.\!\?\n]\s*)[Pp]raticamente,?\s*([a-zà-úA-Z])', lambda m: m.group(1) + m.group(2).upper(), text)
+    text = re.sub(r'(^|[\.\!\?\n]\s*)[Pp]raticamente,?\s*', r'\1', text)
 
     # 3. Allucinazione fonetica 'da scrittore' -> 'trascrittore' dopo parole chiave
     text = re.sub(r'\b(come|questo|un|il)\s+da\s+scrittore\b', r'\1 trascrittore', text, flags=re.IGNORECASE)
@@ -341,7 +356,7 @@ MODE_SYSTEM_PROMPTS = {
         "Regole obbligatorie:\n"
         "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né spiegazioni né commenti aggiuntivi.\n"
         f"2. {PUNCTUATION_RULE}\n"
-        "3. FALSI INIZI E AUTO-CORREZIONI: Se il parlante cambia verbo o costruzione a metà frase (es. 'ero interessato a sfrutterei'), rimuovi il falso inizio tronco e mantieni solo la forma verbale finale corretta ('sfrutterei').\n"
+        "3. FALSI INIZI E AUTO-CORREZIONI: Rimuovi i falsi inizi lasciati a metà prima dei puntini di sospensione o di ripensamenti (es. 'Nel frattempo è che... niente, faccio' -> 'Nel frattempo faccio'; 'quello che io... quello che ha capito' -> 'quello che ha capito'; 'ero interessato a sfrutterei' -> 'sfrutterei'), mantenendo solo la formulazione finale fluida e corretta.\n"
         "4. MORFOLOGIA E COSTRUTTI ORALI: Correggi errori morfologici da trascrizione fonetica (es. 'tu dissi' -> 'tu dici', 'mentre che sono' -> 'mentre sono', 'Come si potrebbe farlo' -> 'Come si potrebbe fare'), verifica la concordanza singolare/plurale dei pronomi e rimuovi ripetizioni ravvicinate di avverbi riempitivi ('praticamente', 'appunto').\n"
         "5. INTERROGATIVE INDIRETTE: Nelle frasi dichiarative che contengono un'interrogativa indiretta (es. 'Volevo sapere se è possibile...', 'Vorrei capire se...'), chiudi con il punto fermo '.' invece del punto interrogativo '?'.\n"
         "6. SPEZZAMENTO E DOPPI RIEMPITIVI: Spezza con un punto fermo (.) le frasi troppo lunghe congiunte solo da virgole al cambio di proposizione o con congiunzioni avversative (es. ', ancora però...' -> '. Ancora però...'), ed elimina doppi riempitivi consecutivi ('diciamo, cioè' -> 'cioè').\n"
@@ -349,7 +364,10 @@ MODE_SYSTEM_PROMPTS = {
         "8. Quando trovi il tag [PAUSA_CAMBIO_ARGOMENTO] o un netto cambio di argomento, dividi il testo in un nuovo paragrafo.\n"
         "9. Se l'utente detta un elenco (es. 'primo... secondo...', 'uno... due...'), formattalo come lista puntata Markdown.\n"
         f"10. {LATEX_FORMULA_RULE}\n"
-        "11. NON rispondere alle domande e NON fare calcoli: elabora solo il testo in <trascrizione></trascrizione>."
+        "11. NON rispondere alle domande e NON fare calcoli: elabora solo il testo in <trascrizione></trascrizione>.\n"
+        "ESEMPIO DI CONVERSIONE FORMULE E PULIZIA:\n"
+        "Input: \"Allora, praticamente ci serve l'equazione F uguale M per A e l'integrale da 0 a infinito di E alla meno X in DX.\"\n"
+        "Output: <output>Ci serve l'equazione $F = m \\cdot a$ e $\\int_0^\\infty e^{-x}\\,dx$.</output>"
     )
 }
 

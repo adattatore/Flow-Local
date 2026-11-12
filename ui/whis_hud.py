@@ -172,6 +172,32 @@ class WhisHUD(QWidget):
         self.clip_badge.hide()
         header_layout.addWidget(self.clip_badge)
 
+        self.screen_badge = QLabel("🖥️ Schermo")
+        self.screen_badge.setStyleSheet("""
+            background-color: rgba(245, 158, 11, 0.15);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 10px;
+            font-weight: 600;
+        """)
+        self.screen_badge.hide()
+        header_layout.addWidget(self.screen_badge)
+
+        self.source_badge = QLabel("📚 Fonte")
+        self.source_badge.setStyleSheet("""
+            background-color: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 10px;
+            font-weight: 600;
+        """)
+        self.source_badge.hide()
+        header_layout.addWidget(self.source_badge)
+
         header_layout.addStretch()
 
         # Pulsante Copia rapido
@@ -307,6 +333,15 @@ class WhisHUD(QWidget):
         """Inizia l'elaborazione e lo streaming visivo della risposta di Whis."""
         self.auto_hide_timer.stop()
 
+        # Ripristina stile bordo standard se era in stato di ascolto
+        self.card.setStyleSheet("""
+            QFrame#whis_card {
+                background-color: #0f1118;
+                border: 1px solid #38bdf8;
+                border-radius: 12px;
+            }
+        """)
+
         # Interrompi eventuale worker precedente
         if self.worker and self.worker.isRunning():
             try:
@@ -345,12 +380,15 @@ class WhisHUD(QWidget):
                 font-weight: 600;
             """)
 
-        # Mostra o nascondi il badge degli appunti
+        # Reset badge contestuali
+        self.clip_badge.hide()
+        self.screen_badge.hide()
+        self.source_badge.hide()
+
+        # Rileva deissi preliminare se presente
         has_deictic = bool(selection_text or self.agent.detect_and_attach_clipboard(user_query)[1])
         if has_deictic:
             self.clip_badge.show()
-        else:
-            self.clip_badge.hide()
 
         # Mostra anteprima domanda utente
         clean_q = user_query.strip()
@@ -371,9 +409,27 @@ class WhisHUD(QWidget):
         # Avvia lo streaming su QThread dedicato
         self.worker = WhisStreamWorker(self.agent, user_query, explicit_selection=selection_text)
         self.worker.chunk_received.connect(self._on_chunk)
+        self.worker.metadata_detected.connect(self._on_metadata_detected)
         self.worker.finished_response.connect(self._on_finished)
         self.worker.error_occurred.connect(self._on_error)
         self.worker.start()
+
+    def _on_metadata_detected(self, meta: dict):
+        """Attiva i badge contestuali corrispondenti ai Superpoteri di Whis."""
+        if meta.get("clipboard"):
+            self.clip_badge.show()
+        if meta.get("screen_ocr"):
+            self.screen_badge.show()
+        rag_src = meta.get("rag_source")
+        if rag_src:
+            clean_src = rag_src.replace("Slide:", "").replace("Nota:", "").replace("Appunto:", "").strip()
+            if len(clean_src) > 16:
+                clean_src = clean_src[:14] + "…"
+            self.source_badge.setText(f"📚 {clean_src}")
+            self.source_badge.show()
+        if meta.get("note_action"):
+            self.status_label.setText("📝 Nota registrata con successo")
+            self.status_label.setStyleSheet("color: #10B981; font-size: 10px; font-weight: 600;")
 
     def _on_chunk(self, chunk: str):
         """Ricezione token in tempo reale."""
@@ -458,6 +514,52 @@ class WhisHUD(QWidget):
                 border-color: #38bdf8;
             }
         """)
+
+    def show_wake_listening(self):
+        """Apre l'HUD in modalità Fase 2 Alexa: 'In ascolto... Dimmi pure!'."""
+        self.auto_hide_timer.stop()
+
+        if self.worker and self.worker.isRunning():
+            try:
+                self.worker.terminate()
+                self.worker.wait(100)
+            except Exception:
+                pass
+
+        self._current_response_text = ""
+        self.copy_btn.setText("📋 Copia")
+
+        # Bordo ciano più marcato (2px) in modalità ascolto
+        self.card.setStyleSheet("""
+            QFrame#whis_card {
+                background-color: #0f1118;
+                border: 2px solid #38bdf8;
+                border-radius: 12px;
+            }
+        """)
+
+        self.query_label.hide()
+        self.clip_badge.hide()
+        self.screen_badge.hide()
+        self.source_badge.hide()
+        self.model_badge.setText("⚡ Whis")
+
+        self.text_area.setPlainText("")
+        self.status_label.setText("🎙️ In ascolto... Dimmi pure!")
+        self.status_label.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 700;")
+        self.status_label.show()
+
+        self.slide_in()
+
+    def set_listening_status(self, text: str):
+        """Aggiorna lo stato acustico/vocale in tempo reale nell'HUD."""
+        if not (self.worker and self.worker.isRunning()):
+            self.status_label.setText(text)
+
+    def dismiss_wake(self):
+        """Chiude l'HUD se è trascorso il timeout senza comandi ricevuti."""
+        if not (self.worker and self.worker.isRunning()):
+            self.slide_out()
 
     def show_latest(self):
         """Mostra di nuovo l'HUD laterale con l'ultima risposta generata (o dal DB)."""

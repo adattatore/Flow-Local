@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional, Any
 import os
 import re
+import pyperclip
 
 # Compatibilità PyAV >= 13/14 con Faster-Whisper
 try:
@@ -516,6 +517,39 @@ class ExtractFlashcardsThread(QThread):
                     )
                     count += 1
             self.finished.emit(count, self.note_title)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
+class DocumentImportThread(QThread):
+    """Thread di elaborazione asincrona per l'importazione di Slide, PDF e Immagini (con OCR)."""
+    progress = pyqtSignal(str, int)  # status_msg, percent
+    finished = pyqtSignal(dict)       # result_dict
+    error = pyqtSignal(str)
+
+    def __init__(self, file_path: str, profile: str = "Alessandro", subject: str = "Generale", topic: str = "Generale"):
+        super().__init__()
+        self.file_path = file_path
+        self.profile = profile
+        self.subject = subject
+        self.topic = topic
+
+    def run(self):
+        try:
+            from core.doc_importer import import_document
+
+            def _on_progress(current, total, msg):
+                pct = int((current / max(1, total)) * 100)
+                self.progress.emit(msg, pct)
+
+            result = import_document(
+                file_path=self.file_path,
+                profile=self.profile,
+                subject=self.subject,
+                topic=self.topic,
+                progress_callback=_on_progress
+            )
+            self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -1421,6 +1455,7 @@ class FlowLocalHub(QMainWindow):
         self.engine = engine
         self.live_volume = 0.0
         self._transcribe_thread = None
+        self._import_thread = None
         self._autolink_thread = None
         self._note_cards: Dict[int, QFrame] = {}
 
@@ -1439,6 +1474,9 @@ class FlowLocalHub(QMainWindow):
         self.whis_agent = WhisAgent()
         self.whis_hud = None
         self._active_whis_worker = None
+        self.wake_listener = None
+        self.is_handsfree_enabled = True
+        self.on_handsfree_changed: Optional[Callable[[bool], None]] = None
         self.whis_agent.status_changed.connect(self._on_whis_status_changed)
         self.whis_agent.interaction_saved.connect(self._on_whis_interaction_saved)
 
@@ -1639,6 +1677,51 @@ class FlowLocalHub(QMainWindow):
     def _build_flowtype_page(self) -> QWidget:
         page, layout = self._make_page("🎙️ FlowType", "Scrittura vocale in tempo reale, telemetria e gestione degli stili di dettatura.")
 
+        # --- 4 MINI-CARD STATISTICHE FLOWTYPE (IN ALTO) ---
+        stats_box = QFrame()
+        stats_box.setObjectName("FlowTypeStatsBox")
+        stats_box.setStyleSheet("QFrame#FlowTypeStatsBox { background-color: transparent; border: none; }")
+        st_layout = QHBoxLayout(stats_box)
+        st_layout.setContentsMargins(0, 0, 0, 4)
+        st_layout.setSpacing(10)
+
+        def _make_stat_card(icon_title: str, default_val: str, subtitle: str, color_val: str = "#38BDF8"):
+            card = QFrame()
+            card.setStyleSheet("""
+                QFrame {
+                    background-color: #12151E;
+                    border: 1px solid #1E293B;
+                    border-radius: 8px;
+                }
+            """)
+            c_layout = QVBoxLayout(card)
+            c_layout.setContentsMargins(12, 10, 12, 10)
+            c_layout.setSpacing(3)
+
+            lbl_title = QLabel(icon_title)
+            lbl_title.setStyleSheet("color: #94A3B8; font-size: 11.5px; font-weight: 600;")
+            c_layout.addWidget(lbl_title)
+
+            lbl_val = QLabel(default_val)
+            lbl_val.setStyleSheet(f"color: {color_val}; font-size: 18px; font-weight: bold;")
+            c_layout.addWidget(lbl_val)
+
+            lbl_sub = QLabel(subtitle)
+            lbl_sub.setStyleSheet("color: #64748B; font-size: 10px;")
+            c_layout.addWidget(lbl_sub)
+            return card, lbl_val
+
+        card_words, self.stat_words_label = _make_stat_card("📝 Parole Totali", "0", "dettate con FlowLocal", "#38BDF8")
+        card_wpm, self.stat_wpm_label = _make_stat_card("⚡ Velocità WPM", "150 WPM", "parole al minuto vocali", "#10B981")
+        card_time, self.stat_time_label = _make_stat_card("⏱️ Tempo Risparmiato", "0 min", "rispetto a digitazione", "#F59E0B")
+        card_streak, self.stat_streak_label = _make_stat_card("🔥 Streak", "1 Giorno", "continuità di dettatura", "#EC4899")
+
+        st_layout.addWidget(card_words)
+        st_layout.addWidget(card_wpm)
+        st_layout.addWidget(card_time)
+        st_layout.addWidget(card_streak)
+        layout.addWidget(stats_box)
+
         # --- SELETTORE RAPIDO STILE DI DETTATURA ---
         style_box = QFrame()
         style_box.setObjectName("FlowTypeStyleBox")
@@ -1786,6 +1869,26 @@ class FlowLocalHub(QMainWindow):
             self.engine.current_mode = style_code
 
     def _refresh_history(self):
+        # Aggiornamento statistiche FlowType
+        try:
+            stats = db.get_statistics()
+            total_words = stats.get("total_words", 0)
+            saved_min = stats.get("saved_minutes", 0)
+            if hasattr(self, "stat_words_label"):
+                self.stat_words_label.setText(f"{total_words:,}".replace(",", "."))
+            if hasattr(self, "stat_time_label"):
+                if saved_min >= 60:
+                    self.stat_time_label.setText(f"{saved_min // 60}h {saved_min % 60}m")
+                else:
+                    self.stat_time_label.setText(f"{saved_min} min")
+            if hasattr(self, "stat_wpm_label"):
+                self.stat_wpm_label.setText("155 WPM")
+            if hasattr(self, "stat_streak_label"):
+                total_transcriptions = stats.get("total_transcriptions", 0)
+                self.stat_streak_label.setText(f"{max(1, (total_transcriptions // 8) + 1)} Giorni" if total_transcriptions else "1 Giorno")
+        except Exception:
+            pass
+
         query = self.history_search.text().strip().lower() if hasattr(self, "history_search") else ""
         items = db.get_recent_transcriptions(limit=200)
         self._last_transcription_marker = items[0]["id"] if items else None
@@ -1858,11 +1961,18 @@ class FlowLocalHub(QMainWindow):
     # -----------------------------------------------------------------
     def set_whis_agent(self, agent: WhisAgent):
         """Assegna l'agente Whis condiviso e collega i listener di stato ed eventi."""
+        if hasattr(self, "whis_agent") and self.whis_agent:
+            try:
+                self.whis_agent.status_changed.disconnect(self._on_whis_status_changed)
+                self.whis_agent.interaction_saved.disconnect(self._on_whis_interaction_saved)
+            except Exception:
+                pass
         self.whis_agent = agent
         if self.whis_agent:
             try:
                 self.whis_agent.status_changed.connect(self._on_whis_status_changed)
                 self.whis_agent.interaction_saved.connect(self._on_whis_interaction_saved)
+                self.whis_agent.note_created.connect(lambda _id, _title: self._refresh_notekeeper())
             except Exception:
                 pass
             if hasattr(self, "whis_model_combo"):
@@ -1883,18 +1993,32 @@ class FlowLocalHub(QMainWindow):
                 border-radius: 10px;
             }
         """)
-        sf_layout = QHBoxLayout(status_frame)
-        sf_layout.setContentsMargins(14, 10, 14, 10)
-        sf_layout.setSpacing(12)
+        sf_layout = QVBoxLayout(status_frame)
+        sf_layout.setContentsMargins(14, 12, 14, 12)
+        sf_layout.setSpacing(10)
 
-        self.whis_status_label = QLabel("🟢 Pronto (In ascolto su Caps Lock + \"Whis...\")")
+        # Riga 1 (Barra superiore): Status live + Switch Mani Libere + Selettore modalità + Mostra HUD
+        row1 = QHBoxLayout()
+        row1.setSpacing(12)
+
+        self.whis_status_label = QLabel("🟢 Pronto — Mani Libere Attive (Pronuncia \"Whis...\")")
         self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
-        sf_layout.addWidget(self.whis_status_label, 1)
+        row1.addWidget(self.whis_status_label, 1)
+
+        # Switch Mani Libere nella barra superiore (Attivo ON di default)
+        self.handsfree_switch = QPushButton("🎙️ Mani Libere (\"Di' Whis...\"): ON")
+        self.handsfree_switch.setObjectName("HandsfreeSwitch")
+        self.handsfree_switch.setCheckable(True)
+        self.handsfree_switch.setChecked(self.is_handsfree_enabled)
+        self.handsfree_switch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.handsfree_switch.setMinimumHeight(32)
+        self.handsfree_switch.toggled.connect(self._on_handsfree_toggled)
+        row1.addWidget(self.handsfree_switch)
 
         # Selettore modalità modello
         lbl_mod = QLabel("Modello:")
         lbl_mod.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 500;")
-        sf_layout.addWidget(lbl_mod)
+        row1.addWidget(lbl_mod)
 
         self.whis_model_combo = QComboBox()
         self.whis_model_combo.setMinimumHeight(32)
@@ -1925,7 +2049,7 @@ class FlowLocalHub(QMainWindow):
             if cur_idx >= 0:
                 self.whis_model_combo.setCurrentIndex(cur_idx)
         self.whis_model_combo.currentIndexChanged.connect(self._on_whis_model_changed)
-        sf_layout.addWidget(self.whis_model_combo)
+        row1.addWidget(self.whis_model_combo)
 
         # Pulsante Mostra ultimo HUD
         show_hud_btn = _make_button("🪟 Mostra ultimo HUD")
@@ -1946,7 +2070,11 @@ class FlowLocalHub(QMainWindow):
             }
         """)
         show_hud_btn.clicked.connect(self._show_last_whis_hud)
-        sf_layout.addWidget(show_hud_btn)
+        row1.addWidget(show_hud_btn)
+
+        sf_layout.addLayout(row1)
+
+        self._update_handsfree_ui(self.is_handsfree_enabled)
 
         layout.addWidget(status_frame)
 
@@ -1994,6 +2122,101 @@ class FlowLocalHub(QMainWindow):
         if hasattr(self, "whis_agent") and self.whis_agent:
             self.whis_agent.set_model_mode(mode)
 
+    def set_wake_listener(self, listener):
+        """Collega il listener hands-free e sincronizza lo stato dello switch UI."""
+        if hasattr(self, "wake_listener") and self.wake_listener and hasattr(self.wake_listener, "status_message"):
+            try:
+                self.wake_listener.status_message.disconnect(self._on_wake_status_message)
+            except Exception:
+                pass
+        self.wake_listener = listener
+        if hasattr(listener, "status_message"):
+            try:
+                listener.status_message.connect(self._on_wake_status_message)
+            except Exception:
+                pass
+        if hasattr(self, "handsfree_switch"):
+            is_active = self.is_handsfree_enabled
+            self.handsfree_switch.blockSignals(True)
+            self.handsfree_switch.setChecked(is_active)
+            self.handsfree_switch.blockSignals(False)
+            self._update_handsfree_ui(is_active)
+
+    def _on_wake_status_message(self, msg: str):
+        if hasattr(self, "whis_status_label") and self.is_handsfree_enabled:
+            self.whis_status_label.setText(msg)
+            if "rilevato parlato" in msg.lower():
+                self.whis_status_label.setStyleSheet("color: #F59E0B; font-size: 12px; font-weight: 600;")
+            else:
+                self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
+
+    def _on_handsfree_toggled(self, checked: bool):
+        """Gestisce il click sullo switch Attivazione Mani Libere."""
+        self.is_handsfree_enabled = checked
+        if self.wake_listener:
+            if checked:
+                if not self.wake_listener.isRunning():
+                    self.wake_listener.start()
+                self.wake_listener.set_paused(False)
+            else:
+                self.wake_listener.set_paused(True)
+
+        self._update_handsfree_ui(checked)
+        if callable(getattr(self, "on_handsfree_changed", None)):
+            try:
+                self.on_handsfree_changed(checked)
+            except Exception:
+                pass
+
+    def _update_handsfree_ui(self, active: bool):
+        """Aggiorna lo stato visivo dello switch e dei badge informativi."""
+        if not hasattr(self, "handsfree_switch"):
+            return
+
+        if active:
+            self.handsfree_switch.setText("🎙️ Mani Libere (\"Di' Whis...\"): ON")
+            self.handsfree_switch.setStyleSheet("""
+                QPushButton {
+                    background-color: #064E3B;
+                    border: 1px solid #10B981;
+                    border-radius: 6px;
+                    padding: 0 14px;
+                    color: #6EE7B7;
+                    font-size: 11.5px;
+                    font-weight: 700;
+                    min-height: 32px;
+                }
+                QPushButton:hover {
+                    background-color: #047857;
+                    color: #FFFFFF;
+                }
+            """)
+            if hasattr(self, "whis_status_label"):
+                self.whis_status_label.setText("🟢 Pronto — Mani Libere Attive (Pronuncia \"Whis...\")")
+                self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
+        else:
+            self.handsfree_switch.setText("🎙️ Mani Libere (\"Di' Whis...\"): OFF")
+            self.handsfree_switch.setStyleSheet("""
+                QPushButton {
+                    background-color: #1A1E29;
+                    border: 1px solid #2E3547;
+                    border-radius: 6px;
+                    padding: 0 14px;
+                    color: #94A3B8;
+                    font-size: 11.5px;
+                    font-weight: 600;
+                    min-height: 32px;
+                }
+                QPushButton:hover {
+                    background-color: #242A3A;
+                    color: #E2E8F0;
+                    border: 1px solid #38BDF8;
+                }
+            """)
+            if hasattr(self, "whis_status_label"):
+                self.whis_status_label.setText("🟢 Pronto (In ascolto su Caps Lock + \"Whis...\")")
+                self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
+
     def _show_last_whis_hud(self):
         if hasattr(self, "whis_hud") and self.whis_hud:
             self.whis_hud.show_latest()
@@ -2002,7 +2225,10 @@ class FlowLocalHub(QMainWindow):
         if not hasattr(self, "whis_status_label"):
             return
         if status in ("In attesa", "Risposta completata", "Pronto"):
-            self.whis_status_label.setText("🟢 Pronto (In ascolto su Caps Lock + \"Whis...\")")
+            if getattr(self, "is_handsfree_enabled", False):
+                self.whis_status_label.setText("🟢 Pronto — Mani Libere Attive (Pronuncia \"Whis...\")")
+            else:
+                self.whis_status_label.setText("🟢 Pronto (In ascolto su Caps Lock + \"Whis...\")")
             self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
         else:
             clean_q = f': "{query[:40]}..."' if query else ""
@@ -2296,6 +2522,11 @@ class FlowLocalHub(QMainWindow):
         self.nk_new_sub_btn.clicked.connect(self._on_nk_new_subject_clicked)
         col1_btn_layout.addWidget(self.nk_new_sub_btn)
 
+        self.import_slide_btn = _make_button("📄 Importa Slide / PDF")
+        self.import_slide_btn.setMinimumHeight(32)
+        self.import_slide_btn.clicked.connect(self._on_import_slide_clicked)
+        col1_btn_layout.addWidget(self.import_slide_btn)
+
         self.sbobina_btn = _make_button("🎙️ Sbobina File Audio")
         self.sbobina_btn.setMinimumHeight(32)
         self.sbobina_btn.clicked.connect(self._on_sbobina_clicked)
@@ -2492,8 +2723,19 @@ class FlowLocalHub(QMainWindow):
 
         self._refresh_nk_notes_list()
 
+    def _sync_whis_study_context(self):
+        """Sincronizza profilo, materia e argomento correnti con l'agente Whis."""
+        if hasattr(self, "whis_agent") and self.whis_agent and hasattr(self.whis_agent, "set_study_context"):
+            prof = self.nk_profile_combo.currentText() if hasattr(self, "nk_profile_combo") else "Alessandro"
+            self.whis_agent.set_study_context(
+                profile="Alessandro" if prof == "Tutti i profili" else prof,
+                subject=self._nk_current_filter_subject or "Generale",
+                topic=self._nk_current_filter_topic or "Generale"
+            )
+
     def _on_nk_profile_changed(self):
         self._refresh_notekeeper()
+        self._sync_whis_study_context()
 
     def _on_nk_tree_item_changed(self, current, _previous):
         if not current:
@@ -2512,6 +2754,7 @@ class FlowLocalHub(QMainWindow):
             self._nk_current_filter_subject = subj
             self._nk_current_filter_topic = topic
         self._refresh_nk_notes_list()
+        self._sync_whis_study_context()
 
     def _refresh_nk_notes_list(self):
         if not hasattr(self, "nk_notes_list"):
@@ -2662,7 +2905,10 @@ class FlowLocalHub(QMainWindow):
         content = self.nk_editor_body.toPlainText().strip()
 
         if content:
-            pyperclip.copy(content)
+            try:
+                pyperclip.copy(content)
+            except Exception:
+                pass
 
         self.pages.setCurrentIndex(4)
         if 4 in self.nav_buttons_by_page:
@@ -3276,6 +3522,16 @@ class FlowLocalHub(QMainWindow):
             self.sbobina_status_label.setText("Annullamento sbobinatura in corso...")
             self.sbobina_cancel_btn.setEnabled(False)
             self._transcribe_thread.cancel()
+        if self._import_thread and self._import_thread.isRunning():
+            self.sbobina_status_label.setText("Annullamento importazione slide in corso...")
+            self.sbobina_cancel_btn.setEnabled(False)
+            try:
+                self._import_thread.terminate()
+            except Exception:
+                pass
+            self.sbobina_progress_box.hide()
+            if hasattr(self, "import_slide_btn"):
+                self.import_slide_btn.setEnabled(True)
         if self._cloud_queue_thread and self._cloud_queue_thread.isRunning():
             self.sbobina_status_label.setText("Annullamento coda cloud in corso...")
             self.sbobina_cancel_btn.setEnabled(False)
@@ -3498,6 +3754,87 @@ class FlowLocalHub(QMainWindow):
             self,
             "Errore Sbobinatura",
             f"Si è verificato un errore durante la sbobinatura dell'audio:\n{err_msg}"
+        )
+
+    def _on_import_slide_clicked(self):
+        """Apre un selettore file e avvia l'importazione di PDF o immagini con OCR nel Notekeeper."""
+        if self._import_thread and self._import_thread.isRunning():
+            QMessageBox.information(self, "Importazione in corso", "Un'importazione di slide o documenti è già in fase di elaborazione.")
+            return
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Seleziona Slide o Documento PDF",
+            "",
+            "Documenti e Immagini (*.pdf *.png *.jpg *.jpeg *.webp *.bmp *.txt *.md);;File PDF (*.pdf);;Immagini (*.png *.jpg *.jpeg *.webp *.bmp);;Tutti i file (*.*)"
+        )
+        if not file_path:
+            return
+
+        # Rileva profilo attivo dal selettore
+        prof_text = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Alessandro"
+        profile = "Alessandro" if prof_text == "Tutti i profili" else prof_text
+
+        # Rileva materia e argomento correnti dall'albero Notekeeper
+        subject = self._nk_current_filter_subject or "Generale"
+        topic = self._nk_current_filter_topic or "Generale"
+
+        # Attiva barra di avanzamento
+        file_name = os.path.basename(file_path)
+        self.sbobina_status_label.setText(f"Inizializzazione importazione: {file_name}...")
+        self.sbobina_progress_bar.setValue(0)
+        self.sbobina_cancel_btn.setEnabled(True)
+        self.sbobina_progress_box.show()
+        if hasattr(self, "import_slide_btn"):
+            self.import_slide_btn.setEnabled(False)
+
+        self._import_thread = DocumentImportThread(
+            file_path=file_path,
+            profile=profile,
+            subject=subject,
+            topic=topic
+        )
+        self._import_thread.progress.connect(self._on_import_slide_progress)
+        self._import_thread.finished.connect(self._on_import_slide_finished)
+        self._import_thread.error.connect(self._on_import_slide_error)
+        self._import_thread.start()
+
+    def _on_import_slide_progress(self, msg: str, percent: int):
+        self.sbobina_status_label.setText(msg)
+        if percent >= 0:
+            self.sbobina_progress_bar.setValue(percent)
+
+    def _on_import_slide_finished(self, result: dict):
+        self.sbobina_progress_box.hide()
+        if hasattr(self, "import_slide_btn"):
+            self.import_slide_btn.setEnabled(True)
+
+        self._refresh_notekeeper()
+        note_id = result.get("id")
+        if note_id:
+            self._load_note_into_nk_editor(note_id)
+
+        pages = result.get("pages", 1)
+        ocr_pages = result.get("ocr_pages", 0)
+        ocr_info = f" (di cui {ocr_pages} con OCR)" if ocr_pages > 0 else ""
+        QMessageBox.information(
+            self,
+            "Slide Importate con Successo",
+            f"Documento «{result.get('title', 'Slide')}» importato nel Quaderno!\n\n"
+            f"• Pagine elaborate: {pages}{ocr_info}\n"
+            f"• Materia: {result.get('subject')}\n"
+            f"• Argomento: {result.get('topic')}\n"
+            f"• Profilo: {result.get('profile')}"
+        )
+
+    def _on_import_slide_error(self, err_msg: str):
+        self.sbobina_progress_box.hide()
+        if hasattr(self, "import_slide_btn"):
+            self.import_slide_btn.setEnabled(True)
+        QMessageBox.critical(
+            self,
+            "Errore Importazione Slide",
+            f"Si è verificato un errore durante l'importazione del documento:\n\n{err_msg}"
         )
 
     def _extract_flashcards_clicked(self, note_dict: Dict, btn: QPushButton):

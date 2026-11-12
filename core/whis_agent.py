@@ -14,11 +14,35 @@ Caratteristiche:
 import time
 import re
 import json
+import ctypes
 import urllib.request
 import urllib.error
 import pyperclip
-from typing import Callable, Optional, List, Dict, Tuple
+from typing import Callable, Optional, List, Dict, Tuple, Any
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
+
+# Import per Screen OCR e Visione Schermo
+try:
+    import mss
+except ImportError:
+    mss = None
+
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
+try:
+    from rapidocr_onnxruntime import RapidOCR
+    _ocr_engine_whis: Optional[RapidOCR] = None
+
+    def _get_ocr():
+        global _ocr_engine_whis
+        if _ocr_engine_whis is None:
+            _ocr_engine_whis = RapidOCR()
+        return _ocr_engine_whis
+except ImportError:
+    _get_ocr = lambda: None
 
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
 
@@ -33,15 +57,164 @@ DEEP_ANALYSIS_KEYWORDS = re.compile(
     re.IGNORECASE
 )
 
-DEICTIC_KEYWORDS = re.compile(
+CLIPBOARD_TRIGGER_KEYWORDS = re.compile(
     r'\b('
-    r'questo errore|quest\'errore|questo codice|questo testo|'
-    r'spiegami questo|correggi questo|analizza questo|guarda questo|'
-    r'su questo|questo script|questi dati|questa funzione|questa classe|'
+    r'questo codice|quest\'errore|questo errore|questo testo|questo snippet|'
+    r'quello che ho copiato|cosa ho copiato|nella clipboard|negli appunti|'
+    r'dagli appunti|appunti di windows|correggi questo|spiegami questo|'
+    r'traduci questo|analizza questo|guarda questo|su questo|'
+    r'questo script|questi dati|questa funzione|questa classe|'
     r'questa eccezione|questo traceback|questo log|questa riga'
     r')\b',
     re.IGNORECASE
 )
+DEICTIC_KEYWORDS = CLIPBOARD_TRIGGER_KEYWORDS
+
+# Trigger per Screen OCR: regex ampliata per intercettare qualsiasi domanda su schermo, slide, monitor, finestra, visione
+SCREEN_TRIGGER_KEYWORDS = re.compile(
+    r"\b(schermo|monitor|slide|pagina|finestr[ae]|ved[ieo]|vedendo|guarda\w*|legg[ie]\w*|mostr\w*|davanti)\b",
+    re.IGNORECASE
+)
+
+# Trigger per Azioni DB avanzate sul Quaderno di Studio (Crea, Unisci, Elimina, Modifica)
+NOTE_MERGE_KEYWORDS = re.compile(
+    r'\b(?:unisci|fondi|aggrega)\b.*?\b(?:la\s+)?nota\b\s+(?:di|su|chiamata|intitolata)?\s*(.*?)\s+(?:a|con|ed?)\s+(?:quella|la\s+nota)\s+(?:di|su|chiamata|intitolata)?\s*(.*)$',
+    re.IGNORECASE
+)
+
+NOTE_DELETE_KEYWORDS = re.compile(
+    r'\b(?:elimina|cancella|rimuovi)\b.*?\b(?:la\s+)?nota\b\s+(?:di|su|chiamata|intitolata)?\s*(.*)$',
+    re.IGNORECASE
+)
+
+NOTE_APPEND_KEYWORDS = re.compile(
+    r'\b(?:aggiungi|accoda|modifica)\b.*?\b(?:alla|nella|la)\s+nota\b\s+(?:di|su|chiamata)?\s*(.*?)(?:\s*:\s*|\s+il\s+testo\s+|\s+con\s+)(.*)$',
+    re.IGNORECASE
+)
+
+# Regex di cattura ampia per l'intento CREATE_NOTE:
+# "Prendi un appunto...", "Segna un appunto...", "Prendi nota...", "Segna negli appunti...",
+# "Crea una nota...", "Aggiungi un appunto...", "Salva una nota...", "Scrivi una nota...",
+# "Annota che...", "Appunta che...", "Ricordami di..."
+NOTE_CREATE_KEYWORDS = re.compile(
+    r'\b(?:(?:prendi|segna|crea|aggiungi|scrivi|salva|annota|ricordami)\s+(?:un\s+|una\s+|negli\s+|nelle\s+)?(?:appunt[oi]|not[ae])|(?:annota|appunta)\s+che)\b(?:\s*:\s*|\s+)?(.*)',
+    re.IGNORECASE | re.DOTALL
+)
+NOTE_ACTION_KEYWORDS = NOTE_CREATE_KEYWORDS
+
+
+def extract_clean_note_content(raw_text: str) -> str:
+    """
+    Estrae e ripulisce il testo effettivo di un appunto da frasi parlate.
+    Es. "sull'acqua che è trasparente" -> "L'acqua è trasparente"
+    Es. "che domani c'è lezione" -> "Domani c'è lezione"
+    """
+    text = (raw_text or "").strip()
+    if not text:
+        return ""
+
+    # Rimuove punteggiatura introduttiva
+    text = re.sub(r'^[:,\-\s]+', '', text)
+
+    # Gestione preposizioni articolate all'inizio
+    articled_prepositions = [
+        (r"^sull['’]\s*", "l'"),
+        (r"^sullo\s+", "lo "),
+        (r"^sulla\s+", "la "),
+        (r"^sul\s+", "il "),
+        (r"^sui\s+", "i "),
+        (r"^sugli\s+", "gli "),
+        (r"^sulle\s+", "le "),
+        (r"^dell['’]\s*", "l'"),
+        (r"^dello\s+", "lo "),
+        (r"^della\s+", "la "),
+        (r"^del\s+", "il "),
+        (r"^dei\s+", "i "),
+        (r"^degli\s+", "gli "),
+        (r"^delle\s+", "le "),
+        (r"^(?:su|di|a|che|in|per)\s+", ""),
+    ]
+    for pattern, repl in articled_prepositions:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            text = re.sub(pattern, repl, text, count=1, flags=re.IGNORECASE)
+            break
+
+    # Se dopo la preposizione compare 'che è' / 'che ha' / 'che sono' / 'che era':
+    # es: "l'acqua che è trasparente" -> "l'acqua è trasparente"
+    text = re.sub(r'^(l[\'’]\w+|[iIlL][oaie]\s+\w+)\s+che\s+(è|e|ha|sono|hanno|era|erano|fu|sarà)\b', r'\1 \2', text, flags=re.IGNORECASE)
+
+    text = text.strip()
+    if text:
+        if text.lower().startswith("l'") and len(text) > 2:
+            text = "L'" + text[2:]
+        elif text.lower().startswith("l’") and len(text) > 2:
+            text = "L’" + text[2:]
+        else:
+            text = text[0].upper() + text[1:]
+    return text
+
+
+def get_active_window_title() -> str:
+    """Recupera il titolo della finestra attiva in primo piano su Windows."""
+    try:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if hwnd:
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length > 0:
+                buf = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buf, length + 1)
+                title = buf.value.strip()
+                if title:
+                    return title
+    except Exception as e:
+        print(f"[Whis Active Window Warning] {e}")
+    try:
+        from core.context_detector import get_foreground_window_info
+        title, exe = get_foreground_window_info()
+        if title:
+            return f"{title} ({exe})" if exe else title
+        if exe:
+            return exe
+    except Exception:
+        pass
+    return "Finestra Attiva Sconosciuta"
+
+
+def capture_screen_text() -> str:
+    """Cattura lo schermo intero e ne estrae il testo visibile tramite RapidOCR."""
+    ocr = _get_ocr()
+    if ocr is None:
+        print("[Whis Screen OCR] Modulo OCR locale non disponibile (RapidOCR non inizializzato).")
+        return ""
+
+    # Metodo 1: mss.MSS() ad altissime prestazioni
+    if mss is not None and np is not None:
+        try:
+            with mss.MSS() as sct:
+                mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                shot = sct.grab(mon)
+                arr = np.array(shot)[:, :, :3]
+                res, _ = ocr(arr)
+                if res:
+                    lines = [line[1].strip() for line in res if len(line) > 1 and line[1] and line[1].strip()]
+                    return "\n".join(lines)
+        except Exception as e:
+            print(f"[Whis Screen OCR mss warning] {e}")
+
+    # Metodo 2: Fallback Pillow ImageGrab
+    try:
+        from PIL import ImageGrab
+        img = ImageGrab.grab()
+        arr = np.array(img)
+        res, _ = ocr(arr)
+        if res:
+            lines = [line[1].strip() for line in res if len(line) > 1 and line[1] and line[1].strip()]
+            return "\n".join(lines)
+    except Exception as e:
+        print(f"[Whis Screen OCR ImageGrab fallback warning] {e}")
+
+    return ""
 
 WHIS_SYSTEM_PROMPT = (
     "Sei Whis, l'assistente virtuale integrato di FlowLocal. "
@@ -63,6 +236,7 @@ class WhisAgent(QObject):
 
     status_changed = pyqtSignal(str, str)     # (status_text, current_query)
     interaction_saved = pyqtSignal(dict)      # (saved_interaction_dict)
+    note_created = pyqtSignal(int, str)       # (note_id, title)
 
     def __init__(self, default_model: str = "qwen2.5:3b", deep_model: str = "qwen2.5:7b", parent=None):
         super().__init__(parent)
@@ -72,6 +246,16 @@ class WhisAgent(QObject):
         self.history: List[Dict[str, str]] = []
         self.current_status = "In attesa"
         self.last_query = ""
+        self.current_profile = "Alessandro"
+        self.current_subject = "Generale"
+        self.current_topic = "Generale"
+
+    def set_study_context(self, profile: str = "Alessandro", subject: str = "Generale", topic: str = "Generale"):
+        """Aggiorna il contesto accademico corrente per Whis (Materia, Argomento, Profilo)."""
+        if profile and profile.strip().lower() not in ("tutti i profili", "tutti", "all", ""):
+            self.current_profile = profile.strip()
+        self.current_subject = (subject or "Generale").strip()
+        self.current_topic = (topic or "Generale").strip()
 
     def set_model_mode(self, mode: str):
         """Imposta la modalità di selezione del modello: 'auto', '3b', '7b'."""
@@ -103,28 +287,224 @@ class WhisAgent(QObject):
             self.last_query = query
         self.status_changed.emit(status, self.last_query)
 
+    def detect_and_attach_screen(self, prompt: str) -> Tuple[str, bool, str]:
+        """
+        Superpotere Vista Schermo: Se la richiesta cita schermo, monitor, slide, pagina, finestra, vedi, ecc.,
+        cattura il monitor con mss + RapidOCR e include il titolo della finestra attiva in primo piano.
+        """
+        if SCREEN_TRIGGER_KEYWORDS.search(prompt):
+            self.set_status("Cattura schermo (OCR)...", prompt)
+            window_title = get_active_window_title()
+            screen_txt = capture_screen_text()
+            clean_ocr = (screen_txt or "").strip()[:6000]
+            if clean_ocr:
+                enhanced = (
+                    f"[FINESTRA ATTIVA IN PRIMO PIANO]:\n{window_title}\n\n"
+                    f"[TESTO SULLO SCHERMO (Screen OCR)]:\n"
+                    f"```\n{clean_ocr}\n```\n\n"
+                    f"[Richiesta dell'utente]:\n{prompt}"
+                )
+            else:
+                enhanced = (
+                    f"[FINESTRA ATTIVA IN PRIMO PIANO]:\n{window_title}\n\n"
+                    f"[TESTO SULLO SCHERMO (Screen OCR)]:\n"
+                    f"*(Nessun testo rilevato su schermo o applicazione grafica - Titolo finestra: {window_title})*\n\n"
+                    f"[Richiesta dell'utente]:\n{prompt}"
+                )
+            return enhanced, True, clean_ocr
+        return prompt, False, ""
+
+    def is_note_command(self, prompt: str) -> bool:
+        """Restituisce True se la richiesta dell'utente è un comando di creazione o gestione appunti."""
+        return bool(
+            NOTE_CREATE_KEYWORDS.search(prompt)
+            or NOTE_MERGE_KEYWORDS.search(prompt)
+            or NOTE_DELETE_KEYWORDS.search(prompt)
+            or NOTE_APPEND_KEYWORDS.search(prompt)
+        )
+
+    def detect_and_attach_rag(self, prompt: str) -> Tuple[str, Optional[str], Optional[dict]]:
+        """
+        Superpotere RAG sugli Appunti: Cerca nella knowledge base locale di studio note/slide pertinenti.
+        """
+        # NON chiamare il RAG e NON iniettare vecchie note quando l'intento dell'utente è creare/gestire una nota!
+        if self.is_note_command(prompt):
+            return prompt, None, None
+
+        try:
+            from database.db_manager import db
+            # Prima tenta con filtro su materia corrente se non generale
+            notes = []
+            if self.current_subject and self.current_subject != "Generale":
+                notes = db.search_knowledge_base(
+                    query=prompt,
+                    subject=self.current_subject,
+                    topic=self.current_topic if self.current_topic != "Generale" else None,
+                    limit=2
+                )
+            # Se nessun risultato, cerca globalmente
+            if not notes:
+                notes = db.search_knowledge_base(query=prompt, limit=2)
+
+            if notes:
+                top_note = notes[0]
+                source_title = top_note.get("title") or "Appunto di studio"
+                content_snip = (top_note.get("content_markdown") or "")[:2200].strip()
+                enhanced = (
+                    f"[CONTESTO DAGLI APPUNTI DI STUDIO (Fonte: {source_title})]:\n"
+                    f"```markdown\n{content_snip}\n```\n\n"
+                    f"[Domanda dell'utente]:\n{prompt}"
+                )
+                return enhanced, source_title, top_note
+        except Exception as e:
+            print(f"[WhisAgent RAG Search Warning] {e}")
+        return prompt, None, None
+
+    def execute_note_action(self, prompt: str, clip_context: str = "") -> Optional[str]:
+        """
+        Superpotere Azioni DB: Esegue comandi diretti di gestione appunti sul database SQLite:
+        - Creazione: 'segna negli appunti...', 'crea una nota...', 'appunta...'
+        - Unione: 'unisci la nota X a quella Y'
+        - Eliminazione: 'elimina la nota X'
+        - Modifica/Accodamento: 'aggiungi alla nota X il testo Y'
+        """
+        try:
+            from database.db_manager import db
+
+            # 1. Unione di due note
+            match_merge = NOTE_MERGE_KEYWORDS.search(prompt)
+            if match_merge:
+                kw1 = match_merge.group(1).strip()
+                kw2 = match_merge.group(2).strip()
+                clean_kw1 = re.sub(r'^(?:di|su|chiamata|intitolata)\s+', '', kw1, flags=re.IGNORECASE).strip('"\',. ')
+                clean_kw2 = re.sub(r'^(?:di|su|chiamata|intitolata)\s+', '', kw2, flags=re.IGNORECASE).strip('"\',. ')
+
+                res1 = db.find_notes_by_keyword(clean_kw1) if clean_kw1 else []
+                res2 = db.find_notes_by_keyword(clean_kw2) if clean_kw2 else []
+
+                if res1 and res2:
+                    n1 = res1[0]
+                    n2 = res2[0]
+                    if n1["id"] == n2["id"]:
+                        if len(res2) > 1:
+                            n2 = res2[1]
+                        elif len(res1) > 1:
+                            n1 = res1[1]
+
+                    if n1["id"] != n2["id"]:
+                        merged = db.merge_notes(n1["id"], n2["id"])
+                        self.note_created.emit(n1["id"], n1["title"])
+                        self.set_status("Note unite nel Quaderno", prompt)
+                        return (
+                            f"✅ Ho unito le due note nel Quaderno:\n\n"
+                            f"**Nota finale:** `{n1['title']}`\n\n"
+                            f"> {n1['title']} + {n2['title']}\n\n"
+                            f"*(Aggiornato Notekeeper #{n1['id']})*"
+                        )
+
+                return f"Non sono riuscito a trovare due note distinte corrispondenti a '{clean_kw1}' e '{clean_kw2}' per l'unione."
+
+            # 2. Eliminazione nota
+            match_del = NOTE_DELETE_KEYWORDS.search(prompt)
+            if match_del:
+                kw = match_del.group(1).strip()
+                clean_kw = re.sub(r'^(?:di|su|chiamata|intitolata)\s+', '', kw, flags=re.IGNORECASE).strip('"\',. ')
+                res = db.find_notes_by_keyword(clean_kw) if clean_kw else []
+                if res:
+                    target = res[0]
+                    db.delete_study_note(target["id"])
+                    self.note_created.emit(target["id"], "deleted")
+                    self.set_status("Nota eliminata", prompt)
+                    return (
+                        f"🗑️ Ho eliminato la nota dal Quaderno:\n\n"
+                        f"**Titolo:** `{target['title']}`\n\n"
+                        f"*(ID rimosso: #{target['id']})*"
+                    )
+                return f"Non ho trovato alcuna nota corrispondente a '{clean_kw}' da eliminare."
+
+            # 3. Aggiunta/Modifica nota
+            match_append = NOTE_APPEND_KEYWORDS.search(prompt)
+            if match_append:
+                kw_note = match_append.group(1).strip()
+                extra_text = match_append.group(2).strip()
+                clean_kw = re.sub(r'^(?:di|su|chiamata|intitolata)\s+', '', kw_note, flags=re.IGNORECASE).strip('"\',. ')
+                res = db.find_notes_by_keyword(clean_kw) if clean_kw else []
+                if res:
+                    target = res[0]
+                    new_content = f"{target['content_markdown'].strip()}\n\n{extra_text}"
+                    db.update_study_note(
+                        note_id=target["id"],
+                        title=target["title"],
+                        content_markdown=new_content,
+                        profile=target.get("profile", "Alessandro"),
+                        subject=target.get("subject", "Generale"),
+                        topic=target.get("topic", "Generale"),
+                        note_type=target.get("note_type", "appunto"),
+                    )
+                    self.note_created.emit(target["id"], target["title"])
+                    self.set_status("Nota aggiornata", prompt)
+                    return (
+                        f"📝 Ho aggiornato la nota `{target['title']}` aggiungendo:\n\n"
+                        f"> {extra_text}\n\n"
+                        f"*(Aggiornato Notekeeper #{target['id']})*"
+                    )
+                return f"Non ho trovato la nota '{clean_kw}' a cui aggiungere il testo."
+
+            # 4. Creazione nuova nota / appunto
+            match_create = NOTE_CREATE_KEYWORDS.search(prompt)
+            if not match_create:
+                return None
+
+            raw_body = (match_create.group(1) or "").strip()
+            if not raw_body and clip_context:
+                raw_body = clip_context.strip()
+            elif not raw_body:
+                raw_body = prompt.strip()
+
+            body = extract_clean_note_content(raw_body)
+            first_line = body.splitlines()[0][:45].strip()
+            title = f"Nota: {first_line}" if first_line else "Nota da Whis"
+            note_id = db.add_study_note(
+                title=title,
+                content_markdown=body,
+                note_type="appunto",
+                tags="whis,voce,appunto",
+                profile=self.current_profile,
+                subject=self.current_subject,
+                topic=self.current_topic
+            )
+            self.note_created.emit(note_id, title)
+            self.set_status("Appunto salvato", prompt)
+            return (
+                f"✅ Appunto salvato in [{self.current_subject} -> {self.current_topic}]:\n"
+                f"«{body}»"
+            )
+        except Exception as e:
+            return f"Si è verificato un errore durante la gestione della nota: {e}"
+        except Exception as e:
+            return f"Si è verificato un errore durante la gestione della nota: {e}"
+
     def detect_and_attach_clipboard(self, prompt: str, explicit_selection: Optional[str] = None) -> Tuple[str, bool, str]:
         """
-        Intercetta riferimenti deittici ('questo codice', 'questo errore') o selezioni attive
-        e include automaticamente il contenuto degli appunti nel prompt inviato al modello.
-        Restituisce: (prompt_con_contesto, clipboard_allegata_bool, raw_context_text).
+        Allega la Clipboard (📋) SOLO ED ESCLUSIVAMENTE quando l'utente si riferisce ad essa
+        usando espressioni dedicate ('questo codice', 'questo testo', 'quello che ho copiato', 'nella clipboard', ecc.).
+        Per tutte le altre domande (note del DB, schermo OCR, query generali), la clipboard viene IGNORATA.
         """
-        attached = False
-        context_text = ""
+        if not CLIPBOARD_TRIGGER_KEYWORDS.search(prompt):
+            return prompt, False, ""
 
+        context_text = ""
         if explicit_selection and explicit_selection.strip():
             context_text = explicit_selection.strip()[:8000]
-            attached = True
-        elif DEICTIC_KEYWORDS.search(prompt):
+        else:
             try:
                 clip = pyperclip.paste()
                 if clip and clip.strip():
                     context_text = clip.strip()[:8000]
-                    attached = True
             except Exception:
                 pass
 
-        if attached and context_text:
+        if context_text:
             enhanced_prompt = (
                 f"[Contesto dagli appunti / testo selezionato]:\n"
                 f"```\n{context_text}\n```\n\n"
@@ -142,25 +522,73 @@ class WhisAgent(QObject):
         self,
         user_prompt: str,
         on_chunk: Callable[[str], None],
-        on_done: Optional[Callable[[str, str], None]] = None,
+        on_done: Optional[Callable[..., None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
-        explicit_selection: Optional[str] = None
+        explicit_selection: Optional[str] = None,
+        on_metadata: Optional[Callable[[dict], None]] = None
     ) -> str:
         """
-        Invia la richiesta in streaming a Ollama gestendo il fallback del modello,
-        lo stato in tempo reale e il salvataggio automatico nel database locale.
+        Invia la richiesta in streaming a Ollama gestendo superpoteri (Screen OCR, Azioni DB, RAG),
+        il fallback del modello, lo stato in tempo reale e il salvataggio automatico.
         """
         self.set_status("Analisi richiesta...", user_prompt)
-        selected_model = self.select_model(user_prompt)
+        metadata = {
+            "screen_ocr": False,
+            "clipboard": False,
+            "rag_source": None,
+            "note_action": False
+        }
 
-        # Deissi / Lettura Clipboard
+        # 1. Deissi / Lettura Clipboard preliminare
         prompt_with_context, clip_attached, clip_context = self.detect_and_attach_clipboard(user_prompt, explicit_selection)
         if clip_attached:
+            metadata["clipboard"] = True
             self.set_status("Lettura Clipboard...", user_prompt)
 
+        # 2. SUPERPOTERE AZIONI DB: 'segna negli appunti...' o 'crea una nota...'
+        note_action_resp = self.execute_note_action(user_prompt, clip_context=clip_context)
+        if note_action_resp:
+            metadata["note_action"] = True
+            if on_metadata:
+                on_metadata(metadata)
+            on_chunk(note_action_resp)
+            if on_done:
+                try:
+                    on_done(note_action_resp, "Azioni DB", metadata)
+                except TypeError:
+                    on_done(note_action_resp, "Azioni DB")
+            return note_action_resp
+
+        # 3. SUPERPOTERE VISTA SCHERMO (Screen OCR): 'guarda lo schermo', 'leggi questa slide'
+        prompt_with_screen, screen_attached, _ = self.detect_and_attach_screen(user_prompt)
+        if screen_attached:
+            metadata["screen_ocr"] = True
+            prompt_with_context = prompt_with_screen
+
+        # 4. SUPERPOTERE RAG SUGLI APPUNTI: cerca note/slide per domande di studio
+        prompt_with_rag, rag_source, _ = self.detect_and_attach_rag(user_prompt)
+        if rag_source:
+            metadata["rag_source"] = rag_source
+            prompt_with_context = prompt_with_rag
+
+        # Notifica immediata metadata per l'HUD (badge schermo, fonte, appunti)
+        if on_metadata:
+            on_metadata(metadata)
+
+        selected_model = self.select_model(user_prompt)
         self.set_status(f"Elaborazione con {selected_model}...", user_prompt)
 
-        messages = [{"role": "system", "content": WHIS_SYSTEM_PROMPT}]
+        system_content = WHIS_SYSTEM_PROMPT
+        if metadata.get("screen_ocr"):
+            system_content = (
+                "ATTENZIONE: HAI ACCESSO VISIVO ALLO SCHERMO DELL'UTENTE TRAMITE IL MODULO OCR LOCALE. "
+                "È ASSOLUTAMENTE VIETATO dire 'Non posso vedere il tuo schermo' o 'Sono un modello testuale'. "
+                "Qui sotto trovi il titolo della finestra attiva e tutto il testo appena letto dallo schermo dell'utente: "
+                "usalo direttamente per rispondere a cosa sta guardando!\n\n"
+                + WHIS_SYSTEM_PROMPT
+            )
+
+        messages = [{"role": "system", "content": system_content}]
         # Inietta gli ultimi scambi della sessione (fino a 10 messaggi = 5 scambi)
         messages.extend(self.history[-10:])
         messages.append({"role": "user", "content": prompt_with_context})
@@ -269,7 +697,10 @@ class WhisAgent(QObject):
             print(f"[WhisAgent] Avviso salvataggio database: {db_err}")
 
         if on_done:
-            on_done(complete_text, actual_model)
+            try:
+                on_done(complete_text, actual_model, metadata)
+            except TypeError:
+                on_done(complete_text, actual_model)
 
         return complete_text
 
@@ -279,6 +710,7 @@ class WhisStreamWorker(QThread):
 
     chunk_received = pyqtSignal(str)
     finished_response = pyqtSignal(str, str)  # (full_text, model_name)
+    metadata_detected = pyqtSignal(dict)      # (metadata: {"screen_ocr": bool, "rag_source": str, "clipboard": bool})
     error_occurred = pyqtSignal(str)
 
     def __init__(self, agent: WhisAgent, user_prompt: str, explicit_selection: Optional[str] = None):
@@ -292,9 +724,10 @@ class WhisStreamWorker(QThread):
             self.agent.ask_stream(
                 user_prompt=self.user_prompt,
                 on_chunk=lambda chunk: self.chunk_received.emit(chunk),
-                on_done=lambda full_text, model: self.finished_response.emit(full_text, model),
+                on_done=lambda full_text, model, *args: self.finished_response.emit(full_text, model),
                 on_error=lambda err: self.error_occurred.emit(err),
-                explicit_selection=self.explicit_selection
+                explicit_selection=self.explicit_selection,
+                on_metadata=lambda meta: self.metadata_detected.emit(meta)
             )
         except Exception as e:
             self.error_occurred.emit(str(e))
