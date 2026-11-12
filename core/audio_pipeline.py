@@ -12,7 +12,6 @@ import json
 import ctypes
 import threading
 import collections
-import winsound
 import urllib.request
 import urllib.error
 from typing import Optional
@@ -75,32 +74,18 @@ def find_best_input_device():
     return None, 16000
 
 
-# Feedback Sonori
+# Feedback Sonori (Disattivati per silenzio totale su Caps Lock / dettatura)
 def sound_start():
-    try:
-        winsound.Beep(1100, 60)
-    except Exception:
-        pass
+    pass
 
 def sound_locked():
-    try:
-        winsound.Beep(1200, 60)
-        time.sleep(0.04)
-        winsound.Beep(1600, 70)
-    except Exception:
-        pass
+    pass
 
 def sound_done():
-    try:
-        winsound.Beep(850, 80)
-    except Exception:
-        pass
+    pass
 
 def sound_toggle_pause(paused: bool):
-    try:
-        winsound.Beep(600 if paused else 1000, 100)
-    except Exception:
-        pass
+    pass
 
 
 class WindowsInjector:

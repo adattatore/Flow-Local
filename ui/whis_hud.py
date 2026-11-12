@@ -21,6 +21,7 @@ from PyQt6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer, p
 from PyQt6.QtGui import QPainter, QColor, QLinearGradient, QFont, QPen
 
 from core.whis_agent import WhisAgent, WhisStreamWorker
+from core.audio_feedback import audio_feedback, MODE_VOICE, MODE_SOFT_CHIME, MODE_MUTE
 
 
 class WhisAvatar(QWidget):
@@ -81,19 +82,30 @@ class WhisHUD(QWidget):
     MARGIN_RIGHT = 18
     MARGIN_BOTTOM = 38
 
-    def __init__(self, agent: Optional[WhisAgent] = None, parent=None):
+    def __init__(self, agent: Optional[WhisAgent] = None, orb=None, parent=None):
         super().__init__(parent)
         self.agent = agent or WhisAgent()
+        self.orb = orb
         self.worker: Optional[WhisStreamWorker] = None
         self._is_animating = False
         self._current_response_text = ""
         self._active_model_name = "qwen2.5:3b"
+        self._last_metadata = {}
+        self.wake_listener = None
 
         self._setup_window()
         self._setup_ui()
         self._setup_timers()
 
+        audio_feedback.add_mode_listener(self._sync_audio_button)
+
         self.request_invoke.connect(self._on_request_invoke)
+
+    def set_wake_listener(self, listener):
+        self.wake_listener = listener
+
+    def set_orb(self, orb):
+        self.orb = orb
 
     def _setup_window(self):
         # Flags per overlay flottante non invasivo
@@ -198,7 +210,28 @@ class WhisHUD(QWidget):
         self.source_badge.hide()
         header_layout.addWidget(self.source_badge)
 
+        self.calendar_badge = QLabel("📅 Google Calendar")
+        self.calendar_badge.setStyleSheet("""
+            background-color: rgba(56, 189, 248, 0.15);
+            color: #38bdf8;
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 10px;
+            font-weight: 600;
+        """)
+        self.calendar_badge.hide()
+        header_layout.addWidget(self.calendar_badge)
+
         header_layout.addStretch()
+
+        # Pulsante rapido Audio (Voce / Muto / Ferma voce)
+        self.audio_btn = QPushButton("🔊")
+        self.audio_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.audio_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.audio_btn.clicked.connect(self._on_audio_btn_clicked)
+        header_layout.addWidget(self.audio_btn)
+        self._sync_audio_button(audio_feedback.get_mode())
 
         # Pulsante Copia rapido
         self.copy_btn = QPushButton("📋 Copia")
@@ -332,6 +365,7 @@ class WhisHUD(QWidget):
     def start_query(self, user_query: str, selection_text: Optional[str] = None):
         """Inizia l'elaborazione e lo streaming visivo della risposta di Whis."""
         self.auto_hide_timer.stop()
+        audio_feedback.stop()
 
         # Ripristina stile bordo standard se era in stato di ascolto
         self.card.setStyleSheet("""
@@ -384,6 +418,7 @@ class WhisHUD(QWidget):
         self.clip_badge.hide()
         self.screen_badge.hide()
         self.source_badge.hide()
+        self.calendar_badge.hide()
 
         # Rileva deissi preliminare se presente
         has_deictic = bool(selection_text or self.agent.detect_and_attach_clipboard(user_query)[1])
@@ -403,8 +438,11 @@ class WhisHUD(QWidget):
         self.status_label.setStyleSheet("color: #38bdf8; font-size: 10px; font-weight: 500;")
         self.status_label.show()
 
-        # Mostra la finestra se nascosta con animazione fluida dal bordo destro
-        self.slide_in()
+        # Se l'Orb è presente, impostiamo il suo stato su THINKING senza aprire il popup laterale
+        if self.orb:
+            self.orb.set_whis_state("THINKING")
+        else:
+            self.slide_in()
 
         # Avvia lo streaming su QThread dedicato
         self.worker = WhisStreamWorker(self.agent, user_query, explicit_selection=selection_text)
@@ -416,6 +454,7 @@ class WhisHUD(QWidget):
 
     def _on_metadata_detected(self, meta: dict):
         """Attiva i badge contestuali corrispondenti ai Superpoteri di Whis."""
+        self._last_metadata = meta or {}
         if meta.get("clipboard"):
             self.clip_badge.show()
         if meta.get("screen_ocr"):
@@ -430,6 +469,10 @@ class WhisHUD(QWidget):
         if meta.get("note_action"):
             self.status_label.setText("📝 Nota registrata con successo")
             self.status_label.setStyleSheet("color: #10B981; font-size: 10px; font-weight: 600;")
+        if meta.get("calendar"):
+            self.calendar_badge.show()
+            self.status_label.setText("📅 Google Calendar")
+            self.status_label.setStyleSheet("color: #38BDF8; font-size: 10px; font-weight: 600;")
 
     def _on_chunk(self, chunk: str):
         """Ricezione token in tempo reale."""
@@ -461,11 +504,41 @@ class WhisHUD(QWidget):
         else:
             self.model_badge.setText("⚡ 3B Fast")
 
-        self.status_label.setText("Risposta completata • Auto-hide in 18s")
+        self.status_label.setText("Risposta completata")
         self.status_label.setStyleSheet("color: #64748b; font-size: 10px; font-weight: 400;")
 
-        # Avvia auto-hide
-        self.auto_hide_timer.start(18000)
+        # Avvia auto-hide garantendo tempo adeguato per la lettura vocale se attiva
+        auto_hide_ms = 18000
+        if audio_feedback.get_mode() == MODE_VOICE and full_text:
+            auto_hide_ms = max(18000, len(full_text) * 75 + 4000)
+        self.auto_hide_timer.start(auto_hide_ms)
+
+        # Riproduce vocalmente la risposta in modalità 'voce'
+        audio_feedback.speak_response(full_text)
+
+        # Mostra la pillola di risposta dinamica sopra il Voice Orb
+        if self.orb:
+            self.orb.show_whis_response(full_text, self._last_metadata)
+
+        # Se Whis è in attesa di risposta interattiva (es. titolo appuntamento),
+        # resta attivamente in ascolto senza che l'utente debba ripetere 'Whis' o toccare tasti
+        if self._last_metadata and self._last_metadata.get("waiting_for_title"):
+            self.auto_hide_timer.stop()
+
+            def _arm_interactive_listening():
+                import time
+                # Attendi che la sintesi vocale di Whis abbia terminato di pronunciare la domanda
+                while audio_feedback.is_speaking():
+                    time.sleep(0.08)
+                time.sleep(0.25)
+                if hasattr(self, "wake_listener") and self.wake_listener:
+                    self.wake_listener.open_command_listening(
+                        prompt_status="🎙️ Ti ascolto... dimmi il titolo!",
+                        timeout=14.0
+                    )
+
+            import threading
+            threading.Thread(target=_arm_interactive_listening, daemon=True).start()
 
     def _on_error(self, err_msg: str):
         """Gestione errori durante la richiesta a Ollama."""
@@ -473,6 +546,91 @@ class WhisHUD(QWidget):
         self.status_label.setText("Errore di connessione")
         self.status_label.setStyleSheet("color: #f43f5e; font-size: 10px;")
         self.auto_hide_timer.start(12000)
+
+        if self.orb:
+            self.orb.show_whis_response(f"⚠️ Impossibile completare la risposta:\n{err_msg}", {"error": True})
+
+    def _on_audio_btn_clicked(self):
+        """Pulsante rapido: ferma la voce se sta parlando, altrimenti alterna tra Voce e Muto."""
+        if audio_feedback.is_speaking():
+            audio_feedback.stop()
+            return
+        cur_mode = audio_feedback.get_mode()
+        if cur_mode == MODE_MUTE:
+            audio_feedback.set_mode(MODE_VOICE)
+        else:
+            audio_feedback.set_mode(MODE_MUTE)
+
+    def _sync_audio_button(self, mode: str):
+        """Aggiorna l'icona, il colore e il tooltip del pulsante audio rapido."""
+        if not hasattr(self, "audio_btn") or not self.audio_btn:
+            return
+        if mode == MODE_MUTE:
+            self.audio_btn.setText("🔇")
+            self.audio_btn.setToolTip("Audio Muto (clicca per attivare Voce TTS)")
+            self.audio_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #1a1d28;
+                    color: #94a3b8;
+                    border: 1px solid #2d3345;
+                    border-radius: 6px;
+                    padding: 3px 8px;
+                    font-size: 11px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    background-color: #262a3a;
+                    color: #f8fafc;
+                    border-color: #f43f5e;
+                }
+                QPushButton:pressed {
+                    background-color: #0f1118;
+                }
+            """)
+        elif mode == MODE_SOFT_CHIME:
+            self.audio_btn.setText("🔔")
+            self.audio_btn.setToolTip("Suono Morbido (clicca per passare a Muto)")
+            self.audio_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #1a1d28;
+                    color: #fbbf24;
+                    border: 1px solid #2d3345;
+                    border-radius: 6px;
+                    padding: 3px 8px;
+                    font-size: 11px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    background-color: #262a3a;
+                    color: #f8fafc;
+                    border-color: #fbbf24;
+                }
+                QPushButton:pressed {
+                    background-color: #0f1118;
+                }
+            """)
+        else:
+            self.audio_btn.setText("🔊")
+            self.audio_btn.setToolTip("Voce (TTS) attiva (clicca per silenziare o fermare)")
+            self.audio_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #1a1d28;
+                    color: #38bdf8;
+                    border: 1px solid #2d3345;
+                    border-radius: 6px;
+                    padding: 3px 8px;
+                    font-size: 11px;
+                    font-weight: 500;
+                }
+                QPushButton:hover {
+                    background-color: #262a3a;
+                    color: #f8fafc;
+                    border-color: #38bdf8;
+                }
+                QPushButton:pressed {
+                    background-color: #0f1118;
+                }
+            """)
 
     def _on_copy_clicked(self):
         """Copia la risposta negli appunti con feedback visivo temporaneo."""
@@ -515,9 +673,28 @@ class WhisHUD(QWidget):
             }
         """)
 
+    def show_followup_listening(self, prompt_text: str = "🎙️ Ti ascolto... dimmi il titolo!"):
+        """Attiva l'ascolto per la risposta dell'utente preservando la domanda di Whis a schermo."""
+        self.auto_hide_timer.stop()
+        self.card.setStyleSheet("""
+            QFrame#whis_card {
+                background-color: #0f1118;
+                border: 2px solid #38bdf8;
+                border-radius: 12px;
+            }
+        """)
+        self.status_label.setText(prompt_text)
+        self.status_label.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 700;")
+        self.status_label.show()
+        if self.orb:
+            self.orb.set_whis_state("LISTENING")
+        else:
+            self.slide_in()
+
     def show_wake_listening(self):
         """Apre l'HUD in modalità Fase 2 Alexa: 'In ascolto... Dimmi pure!'."""
         self.auto_hide_timer.stop()
+        audio_feedback.stop()
 
         if self.worker and self.worker.isRunning():
             try:
@@ -542,6 +719,7 @@ class WhisHUD(QWidget):
         self.clip_badge.hide()
         self.screen_badge.hide()
         self.source_badge.hide()
+        self.calendar_badge.hide()
         self.model_badge.setText("⚡ Whis")
 
         self.text_area.setPlainText("")
@@ -549,7 +727,10 @@ class WhisHUD(QWidget):
         self.status_label.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: 700;")
         self.status_label.show()
 
-        self.slide_in()
+        if self.orb:
+            self.orb.set_whis_state("LISTENING")
+        else:
+            self.slide_in()
 
     def set_listening_status(self, text: str):
         """Aggiorna lo stato acustico/vocale in tempo reale nell'HUD."""
@@ -558,6 +739,9 @@ class WhisHUD(QWidget):
 
     def dismiss_wake(self):
         """Chiude l'HUD se è trascorso il timeout senza comandi ricevuti."""
+        audio_feedback.stop()
+        if self.orb:
+            self.orb.dismiss_whis()
         if not (self.worker and self.worker.isRunning()):
             self.slide_out()
 
@@ -605,6 +789,7 @@ class WhisHUD(QWidget):
     def slide_out(self):
         """Fa rientrare la finestra nel bordo destro e la nasconde."""
         self.auto_hide_timer.stop()
+        audio_feedback.stop()
         hidden_x, _, target_y = self._get_target_geometry()
 
         self.anim_out = QPropertyAnimation(self, b"pos")
@@ -617,4 +802,9 @@ class WhisHUD(QWidget):
 
     def _on_slide_out_finished(self):
         self.hide()
+
+    def closeEvent(self, event):
+        audio_feedback.remove_mode_listener(self._sync_audio_button)
+        audio_feedback.stop()
+        super().closeEvent(event)
 

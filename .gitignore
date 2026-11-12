@@ -22,5 +22,7 @@ scratch_*.py
 # Local Cloud Sync folder
 FlowLocal_Sync/
 
-# Local Cloud Sync folder
-FlowLocal_Sync/
+# Google OAuth Credentials & Tokens
+credentials*.json
+token*.json
+token_calendar.json

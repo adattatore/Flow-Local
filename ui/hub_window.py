@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional, Any
 import os
 import re
+import threading
 import pyperclip
 
 # Compatibilità PyAV >= 13/14 con Faster-Whisper
@@ -53,6 +54,10 @@ from database import db
 from core.exporter import export_to_md, export_to_docx, export_to_pdf
 from core.cloud_sync import cloud_sync
 from core.whis_agent import WhisAgent, WhisStreamWorker
+from core.audio_feedback import (
+    audio_feedback, MODE_VOICE, MODE_SOFT_CHIME, MODE_MUTE,
+    VOICE_PRESETS, DEFAULT_VOICE_KEY, TEST_PHRASE
+)
 
 # Rilevamento GPU tramite NVML (opzionale, senza warning)
 GPU_AVAILABLE = False
@@ -1618,13 +1623,13 @@ class FlowLocalHub(QMainWindow):
 
         key_row = QHBoxLayout()
         key_row.setContentsMargins(0, 0, 0, 0)
-        key = QLabel("Caps Lock")
+        key = QLabel("Shift Destro")
         key.setObjectName("ShortcutKey")
         key_row.addWidget(key)
         key_row.addStretch(1)
         sb_layout.addLayout(key_row)
 
-        hint = QLabel("Dettatura rapida: premi o tieni premuto.\nDoppio tocco: mani libere.\nShift+Caps: Bloc Maiusc.")
+        hint = QLabel("Dettatura rapida: premi o tieni premuto Shift Destro.\nDoppio tocco: mani libere.\nF8: tasto secondario.")
         hint.setObjectName("ShortcutHint")
         hint.setWordWrap(True)
         sb_layout.addWidget(hint)
@@ -1714,7 +1719,7 @@ class FlowLocalHub(QMainWindow):
         card_words, self.stat_words_label = _make_stat_card("📝 Parole Totali", "0", "dettate con FlowLocal", "#38BDF8")
         card_wpm, self.stat_wpm_label = _make_stat_card("⚡ Velocità WPM", "150 WPM", "parole al minuto vocali", "#10B981")
         card_time, self.stat_time_label = _make_stat_card("⏱️ Tempo Risparmiato", "0 min", "rispetto a digitazione", "#F59E0B")
-        card_streak, self.stat_streak_label = _make_stat_card("🔥 Streak", "1 Giorno", "continuità di dettatura", "#EC4899")
+        card_streak, self.stat_streak_label = _make_stat_card("🔥 Streak", "0 Giorni", "continuità di dettatura", "#EC4899")
 
         st_layout.addWidget(card_words)
         st_layout.addWidget(card_wpm)
@@ -1807,7 +1812,7 @@ class FlowLocalHub(QMainWindow):
         s_layout.addLayout(pills_layout)
         layout.addWidget(style_box)
 
-        # --- STATO HOTKEY CAPS LOCK ---
+        # --- STATO HOTKEY SHIFT DESTRO ---
         hotkey_box = QFrame()
         hotkey_box.setStyleSheet("""
             QFrame {
@@ -1820,7 +1825,7 @@ class FlowLocalHub(QMainWindow):
         h_layout.setContentsMargins(12, 10, 12, 10)
         h_layout.setSpacing(12)
 
-        key_badge = QLabel("Caps Lock")
+        key_badge = QLabel("Shift Destro")
         key_badge.setStyleSheet("""
             background-color: #1E293B;
             border: 1px solid #38BDF8;
@@ -1832,8 +1837,8 @@ class FlowLocalHub(QMainWindow):
         """)
         h_layout.addWidget(key_badge)
 
-        h_info = QLabel("<b>Push-to-Talk principale:</b> tieni premuto per dettare live, rilascia per incollare con zero focus steal.<br>"
-                        "<b>Doppio tocco:</b> modalità mani libere. <b>Shift+Caps Lock:</b> attiva/disattiva regolarmente il Bloc Maiusc.")
+        h_info = QLabel("<b>Push-to-Talk principale:</b> tieni premuto Shift Destro (sotto Invio) per dettare live, rilascia per incollare con zero focus steal.<br>"
+                        "<b>Doppio tocco:</b> modalità mani libere. <b>Shift Sinistro:</b> resta 100% libero per le maiuscole ordinarie.")
         h_info.setWordWrap(True)
         h_info.setStyleSheet("color: #94A3B8; font-size: 12px;")
         h_layout.addWidget(h_info, 1)
@@ -1855,7 +1860,7 @@ class FlowLocalHub(QMainWindow):
         layout.addLayout(toolbar)
 
         # --- LISTA TRASCRIZIONI RECENTI ---
-        self.history_list = ScrollList("Nessuna trascrizione ancora. Tieni premuto Caps Lock per iniziare a dettare.")
+        self.history_list = ScrollList("Nessuna trascrizione ancora. Tieni premuto Shift Destro per iniziare a dettare.")
         layout.addWidget(self.history_list, 1)
         return page
 
@@ -1882,10 +1887,12 @@ class FlowLocalHub(QMainWindow):
                 else:
                     self.stat_time_label.setText(f"{saved_min} min")
             if hasattr(self, "stat_wpm_label"):
-                self.stat_wpm_label.setText("155 WPM")
+                wpm = stats.get("speaking_wpm", 150)
+                self.stat_wpm_label.setText(f"{wpm} WPM")
             if hasattr(self, "stat_streak_label"):
-                total_transcriptions = stats.get("total_transcriptions", 0)
-                self.stat_streak_label.setText(f"{max(1, (total_transcriptions // 8) + 1)} Giorni" if total_transcriptions else "1 Giorno")
+                streak_days = stats.get("streak_days", 0)
+                streak_txt = f"{streak_days} Giorno" if streak_days == 1 else f"{streak_days} Giorni"
+                self.stat_streak_label.setText(streak_txt)
         except Exception:
             pass
 
@@ -2051,6 +2058,109 @@ class FlowLocalHub(QMainWindow):
         self.whis_model_combo.currentIndexChanged.connect(self._on_whis_model_changed)
         row1.addWidget(self.whis_model_combo)
 
+        # Selettore modalità audio feedback Whis (Voce TTS / Suono Morbido / Muto)
+        lbl_audio = QLabel("Audio:")
+        lbl_audio.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 500;")
+        row1.addWidget(lbl_audio)
+
+        self.whis_audio_combo = QComboBox()
+        self.whis_audio_combo.setMinimumHeight(32)
+        self.whis_audio_combo.setStyleSheet("""
+            QComboBox {
+                min-height: 30px;
+                background-color: #1A1E29;
+                border: 1px solid #2E3547;
+                border-radius: 6px;
+                padding: 0 10px;
+                color: #F1F5F9;
+                font-size: 11px;
+                font-weight: 500;
+            }
+            QComboBox:focus { border: 1px solid #38BDF8; }
+            QComboBox QAbstractItemView {
+                background-color: #12141D;
+                color: #F1F5F9;
+                selection-background-color: #0284C7;
+                border: 1px solid #2E3547;
+            }
+        """)
+        self.whis_audio_combo.addItem("🔇 Muto (Default)", MODE_MUTE)
+        self.whis_audio_combo.addItem("🔔 Suono Morbido", MODE_SOFT_CHIME)
+        self.whis_audio_combo.addItem("🗣️ Voce (TTS)", MODE_VOICE)
+
+        cur_audio_mode = audio_feedback.get_mode()
+        cur_audio_idx = self.whis_audio_combo.findData(cur_audio_mode)
+        if cur_audio_idx >= 0:
+            self.whis_audio_combo.setCurrentIndex(cur_audio_idx)
+
+        self.whis_audio_combo.currentIndexChanged.connect(self._on_whis_audio_mode_changed)
+        audio_feedback.add_mode_listener(self._sync_whis_audio_combo)
+        row1.addWidget(self.whis_audio_combo)
+
+        # Selettore profilo vocale Whis
+        lbl_voice = QLabel("Voce:")
+        lbl_voice.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 500;")
+        row1.addWidget(lbl_voice)
+
+        self.whis_voice_combo = QComboBox()
+        self.whis_voice_combo.setMinimumHeight(32)
+        self.whis_voice_combo.setStyleSheet("""
+            QComboBox {
+                min-height: 30px;
+                background-color: #1A1E29;
+                border: 1px solid #2E3547;
+                border-radius: 6px;
+                padding: 0 10px;
+                color: #F1F5F9;
+                font-size: 11px;
+                font-weight: 500;
+            }
+            QComboBox:focus { border: 1px solid #38BDF8; }
+            QComboBox QAbstractItemView {
+                background-color: #12141D;
+                color: #F1F5F9;
+                selection-background-color: #0284C7;
+                border: 1px solid #2E3547;
+            }
+        """)
+        for k, v in VOICE_PRESETS.items():
+            self.whis_voice_combo.addItem(v["label"], k)
+
+        cur_voice = audio_feedback.get_voice_profile()
+        cur_v_idx = self.whis_voice_combo.findData(cur_voice)
+        if cur_v_idx >= 0:
+            self.whis_voice_combo.setCurrentIndex(cur_v_idx)
+
+        self.whis_voice_combo.currentIndexChanged.connect(self._on_whis_voice_changed)
+        audio_feedback.add_voice_listener(self._sync_whis_voice_combo)
+        row1.addWidget(self.whis_voice_combo)
+
+        # Pulsante Prova Voce
+        self.whis_voice_test_btn = _make_button("▶️ Prova")
+        self.whis_voice_test_btn.setStyleSheet("""
+            QPushButton {
+                min-height: 30px;
+                padding: 0 11px;
+                background-color: #1A1E29;
+                border: 1px solid #10B981;
+                border-radius: 6px;
+                color: #10B981;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: rgba(16, 185, 129, 0.15);
+                color: #FFFFFF;
+                border-color: #34D399;
+            }
+            QPushButton:pressed {
+                background-color: #0F172A;
+            }
+        """)
+        self.whis_voice_test_btn.setToolTip("Ascolta un'anteprima vocale con il profilo selezionato")
+        self.whis_voice_test_btn.clicked.connect(self._on_whis_voice_test_clicked)
+        row1.addWidget(self.whis_voice_test_btn)
+
         # Pulsante Mostra ultimo HUD
         show_hud_btn = _make_button("🪟 Mostra ultimo HUD")
         show_hud_btn.setStyleSheet("""
@@ -2074,6 +2184,44 @@ class FlowLocalHub(QMainWindow):
 
         sf_layout.addLayout(row1)
 
+        # Riga 2: Integrazione Google Calendar e Sincronizzazione Agenda
+        row2 = QHBoxLayout()
+        row2.setSpacing(10)
+
+        self.whis_cal_btn = QPushButton("📅 Connetti Google Calendar")
+        self.whis_cal_btn.setMinimumHeight(30)
+        self.whis_cal_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.whis_cal_btn.setStyleSheet("""
+            QPushButton {
+                min-height: 28px;
+                padding: 0 12px;
+                background-color: #1A1E29;
+                border: 1px solid #38BDF8;
+                border-radius: 6px;
+                color: #38BDF8;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: rgba(56, 189, 248, 0.15);
+                color: #FFFFFF;
+                border-color: #7DD3FC;
+            }
+            QPushButton:pressed {
+                background-color: #0F172A;
+            }
+        """)
+        self.whis_cal_btn.clicked.connect(self._on_connect_calendar_clicked)
+        row2.addWidget(self.whis_cal_btn)
+
+        self.whis_cal_status = QLabel()
+        self.whis_cal_status.setStyleSheet("font-size: 11px; font-weight: 500;")
+        row2.addWidget(self.whis_cal_status)
+        self._update_calendar_status_ui()
+
+        row2.addStretch()
+        sf_layout.addLayout(row2)
+
         self._update_handsfree_ui(self.is_handsfree_enabled)
 
         layout.addWidget(status_frame)
@@ -2095,7 +2243,7 @@ class FlowLocalHub(QMainWindow):
         layout.addLayout(search_row)
 
         # 3. Feed Cronologia Conversazioni
-        self.whis_list = ScrollList("Nessuna conversazione con Whis ancora. Usa Caps Lock dicendo 'Whis...' oppure scrivi qui sotto.")
+        self.whis_list = ScrollList("Nessuna conversazione con Whis ancora. Usa Shift Destro dicendo 'Whis...' oppure scrivi qui sotto.")
         layout.addWidget(self.whis_list, 1)
 
         # 4. Input Testuale Rapido in Basso
@@ -2121,6 +2269,96 @@ class FlowLocalHub(QMainWindow):
         mode = self.whis_model_combo.currentData()
         if hasattr(self, "whis_agent") and self.whis_agent:
             self.whis_agent.set_model_mode(mode)
+
+    def _on_whis_audio_mode_changed(self):
+        if not hasattr(self, "whis_audio_combo") or not self.whis_audio_combo:
+            return
+        mode = self.whis_audio_combo.currentData()
+        if mode and mode != audio_feedback.get_mode():
+            audio_feedback.set_mode(mode)
+
+    def _sync_whis_audio_combo(self, mode: str):
+        if not hasattr(self, "whis_audio_combo") or not self.whis_audio_combo:
+            return
+        idx = self.whis_audio_combo.findData(mode)
+        if idx >= 0 and self.whis_audio_combo.currentIndex() != idx:
+            self.whis_audio_combo.blockSignals(True)
+            self.whis_audio_combo.setCurrentIndex(idx)
+            self.whis_audio_combo.blockSignals(False)
+
+    def _on_whis_voice_changed(self):
+        if not hasattr(self, "whis_voice_combo") or not self.whis_voice_combo:
+            return
+        key = self.whis_voice_combo.currentData()
+        if key and key != audio_feedback.get_voice_profile():
+            audio_feedback.set_voice_profile(key)
+
+    def _sync_whis_voice_combo(self, key: str):
+        if not hasattr(self, "whis_voice_combo") or not self.whis_voice_combo:
+            return
+        idx = self.whis_voice_combo.findData(key)
+        if idx >= 0 and self.whis_voice_combo.currentIndex() != idx:
+            self.whis_voice_combo.blockSignals(True)
+            self.whis_voice_combo.setCurrentIndex(idx)
+            self.whis_voice_combo.blockSignals(False)
+
+    def _on_whis_voice_test_clicked(self):
+        """Fa pronunciare a Whis la frase di test con la voce selezionata."""
+        key = self.whis_voice_combo.currentData() if hasattr(self, "whis_voice_combo") else None
+        audio_feedback.preview_voice(key)
+
+    def _update_calendar_status_ui(self):
+        """Aggiorna lo stato visivo della connessione a Google Calendar nell'Hub."""
+        if not hasattr(self, "whis_cal_status") or not self.whis_cal_status:
+            return
+        from core.calendar_sync import calendar_manager
+        if calendar_manager.is_connected():
+            self.whis_cal_status.setText("🟢 Connesso (Pronto a creare e leggere eventi)")
+            self.whis_cal_status.setStyleSheet("color: #10B981; font-size: 11px; font-weight: 500;")
+            if hasattr(self, "whis_cal_btn") and self.whis_cal_btn:
+                self.whis_cal_btn.setText("📅 Google Calendar: Connesso")
+        elif calendar_manager.has_credentials_file():
+            self.whis_cal_status.setText("🟡 credentials.json presente — Clicca per autorizzare")
+            self.whis_cal_status.setStyleSheet("color: #F59E0B; font-size: 11px; font-weight: 500;")
+            if hasattr(self, "whis_cal_btn") and self.whis_cal_btn:
+                self.whis_cal_btn.setText("📅 Connetti Google Calendar")
+        else:
+            self.whis_cal_status.setText("⚪ credentials.json mancante nella cartella principale")
+            self.whis_cal_status.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 400;")
+            if hasattr(self, "whis_cal_btn") and self.whis_cal_btn:
+                self.whis_cal_btn.setText("📅 Connetti Google Calendar")
+
+    def _on_connect_calendar_clicked(self):
+        """Gestore clic pulsante autorizzazione Google Calendar."""
+        from core.calendar_sync import calendar_manager
+        if not calendar_manager.has_credentials_file() and not calendar_manager.has_token_file():
+            QMessageBox.information(
+                self,
+                "Google Calendar — Configurazione Richiesta",
+                "Per connettere Google Calendar a Whis:\n\n"
+                "1. Vai su Google Cloud Console e crea o scarica le credenziali OAuth (tipo 'Applicazione Desktop').\n"
+                "2. Salva il file come 'credentials.json' nella cartella principale del progetto:\n"
+                f"{os.getcwd()}\n\n"
+                "3. Clicca nuovamente su 'Connetti Google Calendar' per completare l'accesso nel browser."
+            )
+            return
+
+        self.whis_cal_status.setText("⏳ Connessione in corso nel browser...")
+        self.whis_cal_status.setStyleSheet("color: #38BDF8; font-size: 11px;")
+        QApplication.processEvents()
+
+        def _auth_thread():
+            ok, msg = calendar_manager.authenticate(interactive=True)
+            QTimer.singleShot(0, lambda: self._on_calendar_auth_finished(ok, msg))
+
+        threading.Thread(target=_auth_thread, daemon=True, name="GoogleCalendarAuthThread").start()
+
+    def _on_calendar_auth_finished(self, ok: bool, msg: str):
+        self._update_calendar_status_ui()
+        if ok:
+            QMessageBox.information(self, "Google Calendar", "✅ Google Calendar connesso con successo!\nOra puoi chiedere a Whis di creare o leggere i tuoi appuntamenti.")
+        else:
+            QMessageBox.warning(self, "Google Calendar", f"⚠️ Impossibile completare l'autenticazione:\n{msg}")
 
     def set_wake_listener(self, listener):
         """Collega il listener hands-free e sincronizza lo stato dello switch UI."""
@@ -2214,7 +2452,7 @@ class FlowLocalHub(QMainWindow):
                 }
             """)
             if hasattr(self, "whis_status_label"):
-                self.whis_status_label.setText("🟢 Pronto (In ascolto su Caps Lock + \"Whis...\")")
+                self.whis_status_label.setText("🟢 Pronto (In ascolto su Shift Destro + \"Whis...\")")
                 self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
 
     def _show_last_whis_hud(self):
@@ -2228,7 +2466,7 @@ class FlowLocalHub(QMainWindow):
             if getattr(self, "is_handsfree_enabled", False):
                 self.whis_status_label.setText("🟢 Pronto — Mani Libere Attive (Pronuncia \"Whis...\")")
             else:
-                self.whis_status_label.setText("🟢 Pronto (In ascolto su Caps Lock + \"Whis...\")")
+                self.whis_status_label.setText("🟢 Pronto (In ascolto su Shift Destro + \"Whis...\")")
             self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
         else:
             clean_q = f': "{query[:40]}..."' if query else ""
@@ -2354,6 +2592,7 @@ class FlowLocalHub(QMainWindow):
         query = self.whis_input.text().strip()
         if not query:
             return
+        audio_feedback.stop()
         self.whis_input.clear()
         self.whis_send_btn.setEnabled(False)
 
@@ -2367,6 +2606,7 @@ class FlowLocalHub(QMainWindow):
             self.whis_send_btn.setEnabled(True)
             self._on_whis_status_changed("Pronto")
             self._refresh_whis_page()
+            audio_feedback.speak_response(full_text)
         def on_error(err):
             self.whis_send_btn.setEnabled(True)
             self._on_whis_status_changed("Errore")

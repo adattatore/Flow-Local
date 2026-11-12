@@ -60,7 +60,7 @@ Tutti gli agenti AI che modificano questo repository **DEVONO** rispettare rigor
 
 ### 2. Concorrenza e Debounce Hardware
 - Mantenere la sincronizzazione thread-safe tramite `threading.Lock()` e `key_lock` durante la gestione dell'audio e dei tasti.
-- Il tasto principale Push-to-Talk è **`Caps Lock`** (con fallback su `F8`). Il comportamento nativo di cambio maiuscole viene soppresso quando usato per FlowLocal, mentre `Shift + Caps Lock` consente di attivare/disattivare regolarmente il Bloc Maiusc.
+- Il tasto principale Push-to-Talk è **`Shift Destro`** (Right Shift, posizionato sotto il tasto Invio, con fallback secondario su `F8`). Il tasto `Caps Lock` resta completamente libero e nativo. Lo Shift sinistro resta 100% libero per le normali maiuscole durante la digitazione.
 - Il debounce hardware di **350ms** sul rilascio del tasto è essenziale per evitare falsi eventi di keyup/keydown dovuti al typematic repeat di Windows. Non rimuoverlo. Supporta il doppio tocco per la modalità mani libere (Hands-Free).
 
 ### 3. Preservazione Assoluta della Lingua Italiana in Modalità `code`

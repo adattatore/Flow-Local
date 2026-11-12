@@ -9,12 +9,17 @@ VoiceOrbOverlay (PyQt6)
 
 import math
 import time
+import pyperclip
 import numpy as np
 import sounddevice as sd
 from typing import Callable, Optional
 
-from PyQt6.QtWidgets import QApplication, QWidget, QMenu
-from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal, QObject
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QMenu, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
+)
+from PyQt6.QtCore import (
+    Qt, QTimer, QPointF, QRectF, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve
+)
 from PyQt6.QtGui import (
     QPainter, QColor, QPainterPath, QRadialGradient, QPen, QAction, QFont, QFontMetrics
 )
@@ -60,12 +65,238 @@ def create_smooth_closed_path(points: list[QPointF]) -> QPainterPath:
     return path
 
 
+class WhisOrbBubble(QWidget):
+    """
+    Pillola dinamica auto-espandibile per le risposte di Whis posizionata sopra il Voice Orb.
+    - Zero furto di focus (WindowDoesNotAcceptFocus | Tool | WindowStaysOnTopHint | FramelessWindowHint).
+    - Design Obsidian Glass (#0E1118, bordo ciano celestiale #38BDF8 a 60 FPS).
+    - Si espande morbidamente in altezza/larghezza a seconda del testo.
+    - Click-to-copy, hover-to-pause e tasto ✕ rapido.
+    """
+
+    def __init__(self, orb_overlay: "VoiceOrbOverlay"):
+        super().__init__()
+        self.orb = orb_overlay
+        self._full_text = ""
+
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.WindowStaysOnTopHint |
+            Qt.WindowType.Tool |
+            Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self._build_ui()
+
+        self.dismiss_timer = QTimer(self)
+        self.dismiss_timer.setSingleShot(True)
+        self.dismiss_timer.timeout.connect(self.fade_out)
+
+        self.anim_opacity = None
+
+    def _build_ui(self):
+        self.card = QFrame(self)
+        self.card.setObjectName("WhisOrbCard")
+        self.card.setStyleSheet("""
+            QFrame#WhisOrbCard {
+                background-color: rgba(14, 17, 24, 0.96);
+                border: 1.5px solid rgba(56, 189, 248, 0.60);
+                border-radius: 12px;
+            }
+        """)
+
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(12, 9, 12, 10)
+        card_layout.setSpacing(5)
+
+        # Header row
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(6)
+
+        self.title_label = QLabel("✨ Whis")
+        self.title_label.setStyleSheet("color: #38BDF8; font-size: 11px; font-weight: bold;")
+        header.addWidget(self.title_label)
+
+        self.context_badge = QLabel("📅 Calendar")
+        self.context_badge.setStyleSheet("""
+            background-color: rgba(56, 189, 248, 0.18);
+            color: #7DD3FC;
+            border: 1px solid rgba(56, 189, 248, 0.35);
+            border-radius: 4px;
+            padding: 1px 5px;
+            font-size: 9px;
+            font-weight: 600;
+        """)
+        self.context_badge.hide()
+        header.addWidget(self.context_badge)
+
+        self.copy_feedback = QLabel("")
+        self.copy_feedback.setStyleSheet("color: #10B981; font-size: 10px; font-weight: 600;")
+        header.addWidget(self.copy_feedback)
+
+        header.addStretch()
+
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setFixedSize(18, 18)
+        self.close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent;
+                color: #64748B;
+                border: none;
+                font-size: 11px;
+                font-weight: bold;
+                border-radius: 9px;
+            }
+            QPushButton:hover {
+                background-color: rgba(244, 63, 94, 0.2);
+                color: #F43F5E;
+            }
+        """)
+        self.close_btn.clicked.connect(self.fade_out)
+        header.addWidget(self.close_btn)
+
+        card_layout.addLayout(header)
+
+        # Body label
+        self.body_label = QLabel()
+        self.body_label.setWordWrap(True)
+        self.body_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.body_label.setStyleSheet("""
+            color: #F1F5F9;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            font-size: 11px;
+            line-height: 1.4;
+        """)
+        card_layout.addWidget(self.body_label)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(self.card)
+
+    def show_response(self, text: str, metadata: Optional[dict] = None, duration_s: float = 8.5):
+        clean_text = (text or "").strip()
+        if not clean_text:
+            return
+        self._full_text = clean_text
+        self.body_label.setText(clean_text)
+        self.copy_feedback.setText("")
+
+        meta = metadata or {}
+        if meta.get("calendar"):
+            self.context_badge.setText("📅 Google Calendar")
+            self.context_badge.show()
+            self.card.setStyleSheet("""
+                QFrame#WhisOrbCard {
+                    background-color: rgba(14, 17, 24, 0.96);
+                    border: 1.5px solid rgba(56, 189, 248, 0.70);
+                    border-radius: 12px;
+                }
+            """)
+        elif meta.get("note_action"):
+            self.context_badge.setText("📝 Appunti")
+            self.context_badge.show()
+            self.card.setStyleSheet("""
+                QFrame#WhisOrbCard {
+                    background-color: rgba(14, 17, 24, 0.96);
+                    border: 1.5px solid rgba(16, 185, 129, 0.70);
+                    border-radius: 12px;
+                }
+            """)
+        else:
+            self.context_badge.hide()
+            self.card.setStyleSheet("""
+                QFrame#WhisOrbCard {
+                    background-color: rgba(14, 17, 24, 0.96);
+                    border: 1.5px solid rgba(56, 189, 248, 0.55);
+                    border-radius: 12px;
+                }
+            """)
+
+        font = self.body_label.font()
+        fm = QFontMetrics(font)
+
+        lines = clean_text.splitlines()
+        if len(clean_text) < 45 and len(lines) <= 1:
+            target_w = max(240, fm.horizontalAdvance(clean_text) + 40)
+        elif len(clean_text) < 90 and len(lines) <= 2:
+            target_w = 340
+        else:
+            target_w = 420
+
+        avail_w = target_w - 24
+        rect = fm.boundingRect(0, 0, avail_w, 2000, int(Qt.TextFlag.TextWordWrap), clean_text)
+        text_h = rect.height()
+        target_h = max(58, text_h + 46)
+        target_h = min(280, target_h)
+
+        pos_x = int(self.orb.anchor_x - target_w // 2)
+        orb_top_y = int(self.orb.anchor_y - (self.orb.ACTIVE_H // 2))
+        pos_y = int(orb_top_y - target_h - 10)
+
+        screen = QApplication.primaryScreen().availableGeometry()
+        pos_x = max(screen.x() + 10, min(pos_x, screen.x() + screen.width() - target_w - 10))
+        pos_y = max(screen.y() + 10, min(pos_y, screen.y() + screen.height() - target_h - 10))
+
+        self.setGeometry(pos_x, pos_y, target_w, target_h)
+
+        self.setWindowOpacity(0.0)
+        self.show()
+        self.raise_()
+
+        self.anim_opacity = QPropertyAnimation(self, b"windowOpacity")
+        self.anim_opacity.setDuration(160)
+        self.anim_opacity.setStartValue(0.0)
+        self.anim_opacity.setEndValue(1.0)
+        self.anim_opacity.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.anim_opacity.start()
+
+        auto_hide_ms = int(max(duration_s, len(clean_text) * 0.05 + 4.0) * 1000)
+        self.dismiss_timer.start(auto_hide_ms)
+
+    def fade_out(self):
+        self.dismiss_timer.stop()
+        if not self.isVisible():
+            return
+        self.anim_opacity = QPropertyAnimation(self, b"windowOpacity")
+        self.anim_opacity.setDuration(200)
+        self.anim_opacity.setStartValue(self.windowOpacity())
+        self.anim_opacity.setEndValue(0.0)
+        self.anim_opacity.setEasingCurve(QEasingCurve.Type.InCubic)
+        self.anim_opacity.finished.connect(self.hide)
+        self.anim_opacity.start()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self._full_text:
+                pyperclip.copy(self._full_text)
+                self.copy_feedback.setText("Copiato! ✓")
+                QTimer.singleShot(1800, lambda: self.copy_feedback.setText("") if hasattr(self, "copy_feedback") else None)
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event):
+        self.dismiss_timer.stop()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.dismiss_timer.start(3500)
+        super().leaveEvent(event)
+
+
 class OrbSignalBridge(QObject):
     change_state = pyqtSignal(str)
     feed_audio_signal = pyqtSignal(object)
     set_locked_signal = pyqtSignal(bool)
     set_badge_signal = pyqtSignal(str)
     show_toast_signal = pyqtSignal(str, float)
+    show_whis_response_signal = pyqtSignal(str, dict, float)
+    set_whis_state_signal = pyqtSignal(str)
+    dismiss_whis_signal = pyqtSignal()
 
 
 class VoiceOrbOverlay(QWidget):
@@ -119,8 +350,12 @@ class VoiceOrbOverlay(QWidget):
         self.bridge.set_locked_signal.connect(self._set_locked_slot)
         self.bridge.set_badge_signal.connect(self._set_badge_slot)
         self.bridge.show_toast_signal.connect(self._show_toast_slot)
+        self.bridge.show_whis_response_signal.connect(self._show_whis_response_slot)
+        self.bridge.set_whis_state_signal.connect(self._set_whis_state_slot)
+        self.bridge.dismiss_whis_signal.connect(self._dismiss_whis_slot)
 
         self._setup_window()
+        self.whis_bubble = WhisOrbBubble(self)
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
@@ -137,7 +372,7 @@ class VoiceOrbOverlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip("FlowLocal (Tieni premuto Caps Lock o clicca per parlare)")
+        self.setToolTip("FlowLocal (Tieni premuto Shift Destro o clicca per parlare)")
 
         avail = QApplication.primaryScreen().availableGeometry()
         self.anchor_x = avail.x() + avail.width() // 2
@@ -238,6 +473,8 @@ class VoiceOrbOverlay(QWidget):
             self.analyzer.process_chunk(audio_chunk)
 
     def show_listening(self):
+        if hasattr(self, "whis_bubble") and self.whis_bubble:
+            self.whis_bubble.fade_out()
         self.set_state("LISTENING")
 
     def show_whisper(self):
@@ -248,6 +485,46 @@ class VoiceOrbOverlay(QWidget):
 
     def hide_orb(self):
         self.set_state("IDLE")
+
+    def show_whis_response(self, text: str, metadata: Optional[dict] = None, duration_s: float = 8.5):
+        """Mostra la pillola di risposta auto-espandibile di Whis sopra il Voice Orb."""
+        self.bridge.show_whis_response_signal.emit(text, metadata or {}, duration_s)
+
+    def _show_whis_response_slot(self, text: str, metadata: dict, duration_s: float):
+        if hasattr(self, "whis_bubble"):
+            self.whis_bubble.show_response(text, metadata, duration_s)
+        self.set_badge_text("")
+        self.set_state("IDLE")
+
+    def set_whis_state(self, state: str):
+        """Imposta lo stato di Whis nel Voice Orb ('LISTENING', 'THINKING', 'IDLE')."""
+        self.bridge.set_whis_state_signal.emit(state)
+
+    def _set_whis_state_slot(self, state: str):
+        if state == "LISTENING":
+            if hasattr(self, "whis_bubble"):
+                self.whis_bubble.fade_out()
+            self.set_badge_text("✨ Whis • In ascolto...")
+            self.current_color = QColor("#38BDF8")
+            self.set_state("WHISPER")
+        elif state == "THINKING":
+            self.set_badge_text("✨ Whis • Elaborazione...")
+            self.current_color = QColor("#38BDF8")
+            self.set_state("QWEN")
+        elif state == "IDLE":
+            self.set_badge_text("")
+            self.set_state("IDLE")
+
+    def dismiss_whis(self):
+        """Chiude immediatamente la pillola di risposta di Whis."""
+        self.bridge.dismiss_whis_signal.emit()
+
+    def _dismiss_whis_slot(self):
+        if hasattr(self, "whis_bubble"):
+            self.whis_bubble.fade_out()
+        self.set_badge_text("")
+        if self.state in ("WHISPER", "QWEN"):
+            self.set_state("IDLE")
 
     def _lerp_color(self, c1: QColor, c2: QColor, t: float) -> QColor:
         return QColor(

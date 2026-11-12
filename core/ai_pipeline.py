@@ -19,7 +19,6 @@ import difflib
 import tempfile
 import threading
 import subprocess
-import winsound
 import urllib.request
 import urllib.error
 from typing import Tuple, Optional, Callable, List, Dict, Union, Any
@@ -119,31 +118,18 @@ def find_best_input_device():
     return None, 16000
 
 
+# Rimozione completa dei bip da Caps Lock / dettatura (100% silenzioso)
 def sound_start():
-    try:
-        winsound.Beep(1100, 60)
-    except Exception:
-        pass
+    pass
 
 def sound_locked():
-    try:
-        winsound.Beep(1200, 60)
-        time.sleep(0.04)
-        winsound.Beep(1600, 70)
-    except Exception:
-        pass
+    pass
 
 def sound_done():
-    try:
-        winsound.Beep(850, 80)
-    except Exception:
-        pass
+    pass
 
 def sound_toggle_pause(paused: bool):
-    try:
-        winsound.Beep(600 if paused else 1000, 100)
-    except Exception:
-        pass
+    pass
 
 
 class WindowsInjector:
@@ -203,7 +189,13 @@ LATEX_FORMULA_RULE = (
 ANTI_HALLUCINATION_RULE = (
     "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. "
     "Non rispondere mai alle domande nel testo, non completare frasi interrotte e non aggiungere concetti non pronunciati. "
-    "Restituisci SOLO il testo rifinito senza tag."
+    "Restituisci SOLO il testo rifinito senza tag.\n"
+    "DIVIETO ASSOLUTO DI PARAFRASI E SOSTITUZIONE CON SINONIMI:\n"
+    "- Non cambiare MAI le parole usate dall'utente con sinonimi e non riscrivere le frasi.\n"
+    "- Se l'utente dice 'prova', scrivi 'prova' (MAI 'esempio' o 'elaborazione').\n"
+    "- Se dice 'creato', scrivi 'creato' (MAI 'realizzato' o 'fatto').\n"
+    "- Se dice 'Guarda', scrivi 'Guarda' (MAI 'Ci guarda' o 'Vedi').\n"
+    "- Mantieni al 100% il lessico originale, limitandoti a punteggiatura, maiuscole, rimozione di intercalari vuoti (ehm, uhm) e formule matematiche in LaTeX $...$."
 )
 
 PUNCTUATION_RULE = (
@@ -241,18 +233,25 @@ def normalize_phonetic_variants(text: str) -> str:
     # 1. Whis: varianti fonetiche
     text = re.sub(r'\b(WIS|Wis|wis|Wiz|wiz|Whizz|whizz|Uis|uis)\b', 'Whis', text)
 
-    # 2. FlowType, FlowStudy, FlowLocal, Emporio 87, RTX 5060
+    # 2. FlowType, FlowStudy, FlowLocal, Emporio 87, RTX 5060, FlowLocal Hub, core/audio_feedback.py
     text = re.sub(r'\bFlow\s*[Ss]tud+y\b', 'FlowStudy', text, flags=re.IGNORECASE)
     text = re.sub(r'\bFlow[\s.,_-]*[Tt](?:ype|ap)\b', 'FlowType', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bFlow\s*Local\s*ab\b', 'FlowLocal Hub', text, flags=re.IGNORECASE)
     text = re.sub(r'\bflow\s*local\b', 'FlowLocal', text, flags=re.IGNORECASE)
     text = re.sub(r'\bEmporio\s*87\b', 'Emporio 87', text, flags=re.IGNORECASE)
     text = re.sub(r'\bRTX\s*5060\b', 'RTX 5060', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bCoreAudioFeedback\.py\b', 'core/audio_feedback.py', text, flags=re.IGNORECASE)
 
     # 2b. Correzioni termini tecnici, robotica e toponimi
     text = re.sub(r'\b[Gg]iacobian([aoe])\b', r'Jacobian\1', text)
     text = re.sub(r'\b(?:Trishiness\s*Rinunte|Triscina\s+in\s+Selinunte)\b', 'Triscina e Selinunte', text, flags=re.IGNORECASE)
     text = re.sub(r'\bil gestione\b', 'il gestionale', text, flags=re.IGNORECASE)
     text = re.sub(r'(?:,\s*|\s+)come sapere[.!?]*$', ', fammi sapere.', text, flags=re.IGNORECASE)
+
+    # 2b-bis. Correzioni deterministiche test acustici FlowType
+    text = re.sub(r"\bun'appuntamento\b", "un appuntamento", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(agli|degli|i miei|negli)\s+appuntiti\b", r"\1 appunti", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bnon deve peggiorarmi\b", "non deve parlarmi", text, flags=re.IGNORECASE)
 
     # 2c. Rimozione intercalari specifici e correzione maiuscole
     text = re.sub(r',\s*diciamo,', ',', text, flags=re.IGNORECASE)
@@ -307,8 +306,8 @@ MODE_SYSTEM_PROMPTS = {
         "Sei un assistente di scrittura professionale per lingua italiana.\n"
         "Regole obbligatorie:\n"
         "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né spiegazioni né preamboli.\n"
-        "2. Mantieni la struttura e le parole dell'utente in italiano, correggendo solo eventuali espressioni troppo colloquiali "
-        "in un italiano professionale, chiaro e cortese adatto a una email, senza aggiungere saluti o formule non dettate.\n"
+        "2. Mantieni la struttura e le parole dell'utente in italiano senza mai sostituire vocaboli arbitrariamente né stravolgere il lessico, "
+        "correggendo solo la punteggiatura e piccole espressioni gergali per un'email formale, senza aggiungere saluti o formule non dettate.\n"
         f"3. {PUNCTUATION_RULE}\n"
         f"4. {LATEX_FORMULA_RULE}\n"
         "5. NON rispondere alle domande e NON aggiungere saluti o concetti non dettati: elabora solo il testo racchiuso in <trascrizione></trascrizione>."
@@ -332,7 +331,7 @@ MODE_SYSTEM_PROMPTS = {
         "Sei un assistente di studio universitario per ingegneria e fisica.\n"
         "Regole obbligatorie:\n"
         "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né commenti né preamboli.\n"
-        "2. Ottimizza per appunti universitari di ingegneria e fisica: struttura schemi concettuali ed elenchi puntati Markdown chiari.\n"
+        "2. Ottimizza per appunti universitari di ingegneria e fisica: preserva il lessico dell'utente strutturando schemi concettuali ed elenchi puntati Markdown chiari.\n"
         f"3. {PUNCTUATION_RULE}\n"
         "4. Converti SEMPRE formule, integrali, derivate, sommatorie, vettori (utilizzando \\vec{}) e unità del Sistema Internazionale in codice LaTeX standard racchiuso tra simboli $...$.\n"
         "5. Se l'utente pronuncia 'Flashcard: [Domanda] ... [Risposta]', formatta chiaramente come blocco di studio Q&A.\n"
@@ -344,7 +343,7 @@ MODE_SYSTEM_PROMPTS = {
         "Sei un assistente vocale per messaggistica rapida e chat (WhatsApp, Telegram, Discord).\n"
         "Regole obbligatorie:\n"
         "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né commenti aggiuntivi.\n"
-        "2. Mantieni un tono naturale, rapido e colloquiale come digitato a tastiera; massima immediatezza.\n"
+        "2. Mantieni le parole originali e un tono naturale, rapido e colloquiale come digitato a tastiera; massima immediatezza.\n"
         f"3. {PUNCTUATION_RULE}\n"
         "4. Evita il punto fermo alla fine di messaggi brevi o battute singole, ma chiudi sempre le domande con il punto interrogativo (?).\n"
         f"5. {LATEX_FORMULA_RULE}\n"
@@ -355,19 +354,24 @@ MODE_SYSTEM_PROMPTS = {
         "Sei un modulo di dettatura vocale per lingua italiana ad altissima fedeltà e naturalezza sintattica.\n"
         "Regole obbligatorie:\n"
         "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né spiegazioni né commenti aggiuntivi.\n"
-        f"2. {PUNCTUATION_RULE}\n"
-        "3. FALSI INIZI E AUTO-CORREZIONI: Rimuovi i falsi inizi lasciati a metà prima dei puntini di sospensione o di ripensamenti (es. 'Nel frattempo è che... niente, faccio' -> 'Nel frattempo faccio'; 'quello che io... quello che ha capito' -> 'quello che ha capito'; 'ero interessato a sfrutterei' -> 'sfrutterei'), mantenendo solo la formulazione finale fluida e corretta.\n"
-        "4. MORFOLOGIA E COSTRUTTI ORALI: Correggi errori morfologici da trascrizione fonetica (es. 'tu dissi' -> 'tu dici', 'mentre che sono' -> 'mentre sono', 'Come si potrebbe farlo' -> 'Come si potrebbe fare'), verifica la concordanza singolare/plurale dei pronomi e rimuovi ripetizioni ravvicinate di avverbi riempitivi ('praticamente', 'appunto').\n"
+        "2. FEDELTÀ LESSICALE ASSOLUTA: Mantieni rigorosamente le parole originali pronunciate dall'utente. "
+        "È severamente vietato sostituire vocaboli con sinonimi, abbellire o parafrasare le frasi "
+        "(es. se l'utente dice 'prova', scrivi 'prova' e NON 'esempio' o 'elaborazione'; "
+        "se dice 'creato', scrivi 'creato' e NON 'realizzato'; se dice 'Guarda', scrivi 'Guarda' e NON 'Ci guarda').\n"
+        f"3. {PUNCTUATION_RULE}\n"
+        "4. FALSI INIZI E AUTO-CORREZIONI: Rimuovi i falsi inizi lasciati a metà prima dei puntini di sospensione o di ripensamenti (es. 'Nel frattempo è che... niente, faccio' -> 'Nel frattempo faccio'; 'quello che io... quello che ha capito' -> 'quello che ha capito'; 'ero interessato a sfrutterei' -> 'sfrutterei'), mantenendo solo la formulazione finale fluida e corretta.\n"
         "5. INTERROGATIVE INDIRETTE: Nelle frasi dichiarative che contengono un'interrogativa indiretta (es. 'Volevo sapere se è possibile...', 'Vorrei capire se...'), chiudi con il punto fermo '.' invece del punto interrogativo '?'.\n"
         "6. SPEZZAMENTO E DOPPI RIEMPITIVI: Spezza con un punto fermo (.) le frasi troppo lunghe congiunte solo da virgole al cambio di proposizione o con congiunzioni avversative (es. ', ancora però...' -> '. Ancora però...'), ed elimina doppi riempitivi consecutivi ('diciamo, cioè' -> 'cioè').\n"
-        "7. Rimuovi intercalari ed esitazioni (mmm, ehm, uhm, vabbè, cioè come mero riempitivo) e autocorrezioni parlate tenendo solo la versione corretta.\n"
+        "7. Rimuovi intercalari ed esitazioni pure (mmm, ehm, uhm, vabbè, cioè come mero riempitivo vuoto).\n"
         "8. Quando trovi il tag [PAUSA_CAMBIO_ARGOMENTO] o un netto cambio di argomento, dividi il testo in un nuovo paragrafo.\n"
         "9. Se l'utente detta un elenco (es. 'primo... secondo...', 'uno... due...'), formattalo come lista puntata Markdown.\n"
         f"10. {LATEX_FORMULA_RULE}\n"
-        "11. NON rispondere alle domande e NON fare calcoli: elabora solo il testo in <trascrizione></trascrizione>.\n"
-        "ESEMPIO DI CONVERSIONE FORMULE E PULIZIA:\n"
-        "Input: \"Allora, praticamente ci serve l'equazione F uguale M per A e l'integrale da 0 a infinito di E alla meno X in DX.\"\n"
-        "Output: <output>Ci serve l'equazione $F = m \\cdot a$ e $\\int_0^\\infty e^{-x}\\,dx$.</output>"
+        "11. NON rispondere alle domande e NON fare calcoli: elabora solo il testo in <trascrizione></trascrizione>.\n\n"
+        "ESEMPI:\n"
+        "Input: \"guarda questa è una prova di quello che ho creato\"\n"
+        "Output: Guarda, questa è una prova di quello che ho creato.\n\n"
+        "Input: \"allora praticamente ci serve l'equazione F uguale M per A e l'integrale da 0 a infinito di E alla meno X in DX\"\n"
+        "Output: Ci serve l'equazione $F = m \\cdot a$ e $\\int_0^\\infty e^{-x}\\,dx$."
     )
 }
 
@@ -471,7 +475,7 @@ class LLMRefiner:
             "keep_alive": "30m",
             "options": {
                 "repeat_penalty": 1.15,
-                "temperature": 0.1,
+                "temperature": 0.0,
                 "num_predict": max(100, len(raw_text.split()) * 3),
                 "stop": ["</trascrizione>"]
             }
@@ -536,6 +540,17 @@ class LLMRefiner:
                         clean = clean[:-1].rstrip()
                     return clean, qwen_ms
 
+                # Guardrail lessicale anti-parafrasi / allucinazione sinonimi:
+                # Se l'LLM ha sostituito arbitrariamente le parole dell'utente invece di pulirle:
+                if not cls._check_lexical_fidelity(raw_text, refined):
+                    print(f"[FlowLocal] Parafrasi arbitraria LLM scartata (deriva lessicale eccessiva). Fallback su trascrizione acustica.")
+                    clean = normalize_phonetic_variants(raw_text)
+                    clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
+                    clean = strip_vocal_fillers(clean)
+                    while clean.endswith('\\'):
+                        clean = clean[:-1].rstrip()
+                    return clean, qwen_ms
+
                 if refined:
                     return refined, qwen_ms
         except Exception:
@@ -548,6 +563,36 @@ class LLMRefiner:
         while clean.endswith('\\'):
             clean = clean[:-1].rstrip()
         return clean, qwen_ms
+
+    @classmethod
+    def _check_lexical_fidelity(cls, raw: str, refined: str) -> bool:
+        """
+        Verifica che il testo raffinato non abbia subito una parafrasi arbitraria dall'LLM.
+        Restituisce True se il testo è fedele, False se è una parafrasi/allucinazione da scartare.
+        """
+        if not refined or not raw:
+            return True
+        # Se ci sono formule LaTeX introdotte ($...$), il vocabolario matematico può variare legittimamente
+        if '$' in refined:
+            return True
+
+        # Estrae parole alfanumeriche di almeno 3 caratteri
+        raw_words = set(re.findall(r'[a-zA-Zà-úÀ-Ú0-9]+', raw.lower()))
+        refined_words = [w for w in re.findall(r'[a-zA-Zà-úÀ-Ú0-9]+', refined.lower()) if len(w) >= 3]
+
+        if len(refined_words) < 3:
+            return True
+
+        # Parole del testo raffinato totalmente assenti dal testo originale (e senza radice comune di 4 car)
+        hallucinated_words = 0
+        for rw in refined_words:
+            match = any(rw == ow or (len(rw) >= 4 and len(ow) >= 4 and rw[:4] == ow[:4]) for ow in raw_words)
+            if not match:
+                hallucinated_words += 1
+
+        drift_ratio = hallucinated_words / len(refined_words)
+        # Se più del 30% delle parole di contenuto sono state inventate/sostituite da sinonimi, è una parafrasi
+        return drift_ratio <= 0.30
 
     @classmethod
     def refine_text(cls, raw_text: str, mode: str = "natural") -> Tuple[str, int]:

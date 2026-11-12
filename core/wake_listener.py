@@ -30,13 +30,24 @@ DEFAULT_MIN_SPEECH_DURATION = 0.35 # Durata minima per evitare falsi positivi su
 PRE_BUFFER_CHUNKS = 6             # ~300ms di pre-buffer circolare per non tagliare l'attacco di "Whis"
 
 
+def is_pure_wake_phrase(cmd: str) -> bool:
+    """Restituisce True se la stringa contiene solo ripetizioni della wake word (es. 'ok Whis', 'Whis Whis')."""
+    if not cmd or not cmd.strip():
+        return True
+    cleaned = re.sub(
+        r'\b(?:ehi|hey|ok|ciao|allora|senti)?[\s,.;:!?]*(?:whis|wis|wiz|whizz|uis|quiz|luis|miss)\b',
+        '',
+        cmd,
+        flags=re.IGNORECASE
+    ).strip(' ,.;:!?')
+    return len(cleaned) == 0
+
+
 def _play_wake_feedback():
-    """Feedback acustico discreto e non bloccante al rilevamento della wake word."""
+    """Feedback acustico non bloccante al rilevamento della wake word gestito da AudioFeedbackManager."""
     try:
-        import winsound
-        winsound.Beep(1350, 50)
-        time.sleep(0.02)
-        winsound.Beep(1750, 65)
+        from core.audio_feedback import audio_feedback
+        audio_feedback.play_wake_feedback()
     except Exception:
         pass
 
@@ -61,6 +72,7 @@ class WhisWakeListener(QThread):
     """
 
     wake_activated = pyqtSignal()            # Ehi Whis senza comando immediato (apre HUD in ascolto)
+    followup_activated = pyqtSignal(str)     # Emesso per follow-up interattivo (mantiene la domanda a schermo)
     wake_word_detected = pyqtSignal(str)     # Comando estratto da inviare a WhisAgent
     command_timeout = pyqtSignal()           # 7s trascorsi senza parlato in Fase 2 (chiude HUD)
     speech_started = pyqtSignal()            # Voce rilevata sopra soglia
@@ -89,6 +101,7 @@ class WhisWakeListener(QThread):
 
         self.listener_state = STATE_IDLE
         self.waiting_command_start_time = 0.0
+        self.waiting_command_timeout = 7.0
 
         self._is_paused: bool = False
         self._running: bool = False
@@ -142,6 +155,18 @@ class WhisWakeListener(QThread):
         """Regola dinamicamente la soglia di energia RMS."""
         with self._lock:
             self.rms_threshold = max(0.001, float(threshold))
+
+    def open_command_listening(self, prompt_status: str = "🎙️ In ascolto... dimmi il titolo!", timeout: float = 12.0):
+        """Apre direttamente la modalità di ascolto comandi senza richiedere la wake-word (Follow-up interattivo)."""
+        with self._lock:
+            self._is_paused = False
+            self.listener_state = STATE_WAITING_FOR_COMMAND
+            self.waiting_command_start_time = time.time()
+            self.waiting_command_timeout = timeout
+        if not self.isRunning():
+            self.start()
+        self.followup_activated.emit(prompt_status)
+        self.status_message.emit(prompt_status)
 
     def stop(self):
         """Interrompe il thread in modo pulito e chiude il dispositivo audio."""
@@ -210,7 +235,8 @@ class WhisWakeListener(QThread):
             # Controllo timeout Fase 2 (Stile Alexa: attesa comando dopo 'Whis')
             current_time = time.time()
             if self.listener_state == STATE_WAITING_FOR_COMMAND:
-                if not is_speaking and (current_time - self.waiting_command_start_time > 7.0):
+                timeout_limit = getattr(self, "waiting_command_timeout", 7.0) or 7.0
+                if not is_speaking and (current_time - self.waiting_command_start_time > timeout_limit):
                     self.listener_state = STATE_IDLE
                     self.command_timeout.emit()
                     self.status_message.emit("🟢 Pronto — Mani Libere Attive (Pronuncia \"Whis...\")")
@@ -315,7 +341,8 @@ class WhisWakeListener(QThread):
                 self.listener_state = STATE_IDLE
                 # Se l'utente ha ripetuto per caso "Whis ..." togliamo il prefisso
                 match = WAKE_WORD_PATTERN.match(text)
-                command = match.group(1).strip() if match else text.strip()
+                raw_command = match.group(1).strip() if match else text.strip()
+                command = "" if is_pure_wake_phrase(raw_command) else raw_command
 
                 if len(command) >= 2:
                     self.wake_word_detected.emit(command)
@@ -328,13 +355,15 @@ class WhisWakeListener(QThread):
             # FASE 1 (STATE_IDLE): Verifica corrispondenza con la wake-word
             match = WAKE_WORD_PATTERN.match(text)
             if match:
-                command = match.group(1).strip()
+                raw_cmd = match.group(1).strip()
+                # Se il comando contiene solo ripetizioni della wake word (es. loop Whisper), scartale per entrare in ascolto
+                command = "" if is_pure_wake_phrase(raw_cmd) else raw_cmd
 
                 # Feedback acustico discreto non bloccante
                 threading.Thread(target=_play_wake_feedback, daemon=True).start()
 
-                # CASO A: L'utente dice solo "Whis" (o "Ehi Whis") e si ferma (< 2 parole o < 4 caratteri)
-                if len(command.split()) < 2 or len(command) < 4:
+                # CASO A: L'utente dice solo "Whis" (o "Ehi Whis") e si ferma (< 2 parole o < 4 caratteri o vuoto)
+                if not command or len(command.split()) < 2 or len(command) < 4:
                     self.listener_state = STATE_WAITING_FOR_COMMAND
                     self.waiting_command_start_time = time.time()
                     self.wake_activated.emit()
@@ -385,12 +414,13 @@ class WhisWakeListener(QThread):
                     temperature=0.0,
                     condition_on_previous_text=False,
                     no_speech_threshold=0.6,
+                    repetition_penalty=1.2,
                     vad_filter=True,
                     vad_parameters=dict(
                         min_silence_duration_ms=300,
                         speech_pad_ms=150,
                     ),
-                    initial_prompt="Whis, Ehi Whis, Ok Whis",
+                    initial_prompt="Whis.",
                 )
 
                 parts = []
@@ -400,6 +430,8 @@ class WhisWakeListener(QThread):
                         if t:
                             parts.append(t)
                 raw_text = " ".join(parts).strip()
+                # Deduplica loop di ripetizione (es. "ok Whis, ok Whis, ok Whis" -> "ok Whis")
+                raw_text = re.sub(r'(?i)\b((?:(?:ehi|hey|ok|ciao|allora|senti)\s+)?whis)\b(?:[\s,.;:!?]+\1\b)+', r'\1', raw_text).strip()
                 cleaned = re.sub(r'\bsullo scarbo\b', 'sullo schermo', raw_text, flags=re.IGNORECASE)
                 return cleaned.strip()
 

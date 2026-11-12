@@ -74,21 +74,12 @@ from ui.whis_hud import WhisHUD
 from core.ai_pipeline import FlowLocalEngine
 from core.wake_listener import WhisWakeListener
 
-VK_CAPITAL = 0x14  # Caps Lock (Bloc Maiusc)
-VK_SHIFT = 0x10    # Shift
-VK_F8 = 0x77       # Tasto F8
+VK_RSHIFT = 0xA1  # Shift Destro (Right Shift, tasto sotto Invio)
+VK_F8 = 0x77      # Tasto F8 (fallback secondario)
 
 keyboard_lock = threading.Lock()
 last_release_time = 0.0
 active_wake_listener: Optional[WhisWakeListener] = None
-
-
-def is_shift_down() -> bool:
-    """Verifica se il tasto Shift è attualmente premuto."""
-    try:
-        return bool(ctypes.windll.user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
-    except Exception:
-        return False
 
 
 def safe_handle_press(engine: FlowLocalEngine):
@@ -102,7 +93,7 @@ def safe_handle_release(engine: FlowLocalEngine):
     global last_release_time
     with keyboard_lock:
         now = time.time()
-        if (now - last_release_time) < 0.350:  # Debounce 350ms su rilascio Caps Lock / F8
+        if (now - last_release_time) < 0.350:  # Debounce 350ms su rilascio Shift Destro / F8
             return
         last_release_time = now
         engine.handle_key_release()
@@ -126,17 +117,15 @@ ensure_ollama_running()
 
 
 def run_keyboard_poller(engine: FlowLocalEngine):
-    """Poller hardware nativo Win32 (Livello 1) per Caps Lock e F8."""
+    """Poller hardware nativo Win32 (Livello 1) per Shift Destro e F8."""
     user32 = ctypes.windll.user32
     was_down = False
 
     while True:
         try:
-            # Se Shift è premuto con Caps Lock, lasciamo che l'utente usi la scorciatoia per attivare il Bloc Maiusc
-            shift_pressed = bool(user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
-            caps_down = bool(user32.GetAsyncKeyState(VK_CAPITAL) & 0x8000) and not shift_pressed
+            rshift_down = bool(user32.GetAsyncKeyState(VK_RSHIFT) & 0x8000)
             f8_down = bool(user32.GetAsyncKeyState(VK_F8) & 0x8000)
-            is_down = caps_down or f8_down
+            is_down = rshift_down or f8_down
 
             if is_down and not was_down:
                 was_down = True
@@ -185,8 +174,8 @@ def main():
     # 2. FlowLocalHub (Finestra Principale 1080x700)
     hub = FlowLocalHub()
 
-    # 2b. WhisHUD (HUD Assistente Peek-from-Edge da bordo destro)
-    whis_hud = WhisHUD()
+    # 2b. WhisHUD (HUD Assistente Peek-from-Edge da bordo destro) integrato con VoiceOrb
+    whis_hud = WhisHUD(orb=orb)
     hub.set_whis_agent(whis_hud.agent)
     hub.whis_hud = whis_hud
 
@@ -225,16 +214,18 @@ def main():
 
     wake_listener.wake_word_detected.connect(on_wake_word)
     wake_listener.wake_activated.connect(whis_hud.show_wake_listening)
+    wake_listener.followup_activated.connect(whis_hud.show_followup_listening)
     wake_listener.command_timeout.connect(whis_hud.dismiss_wake)
     wake_listener.status_message.connect(whis_hud.set_listening_status)
     hub.set_wake_listener(wake_listener)
+    whis_hud.set_wake_listener(wake_listener)
 
     # Avvio di default: Attivo (ON) subito all'apertura
     if getattr(hub, "is_handsfree_enabled", False):
         wake_listener.start()
         wake_listener.set_paused(False)
 
-    # Gestione automatica della pausa: quando l'utente usa Caps Lock / F8,
+    # Gestione automatica della pausa: quando l'utente usa Shift Destro / F8,
     # il listener hands-free si mette istantaneamente in pausa per evitare conflitti audio
     _orig_start_rec = engine.start_recording
     _orig_stop_rec = engine.stop_recording_and_process
@@ -270,7 +261,7 @@ def main():
     # 4. System Tray Icon nativa Qt
     tray = QSystemTrayIcon()
     tray.setIcon(create_tray_icon(active=True))
-    tray.setToolTip("FlowLocal — AI Voice & Study Workspace (Caps Lock per parlare)")
+    tray.setToolTip("FlowLocal — AI Voice & Study Workspace (Shift Destro per parlare)")
 
     menu = QMenu()
     menu.setStyleSheet(
@@ -343,24 +334,23 @@ def main():
     tray.activated.connect(lambda reason: toggle_hub() if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
     tray.show()
 
-    # 5. Dual Key Engine con Hook Globale soppressivo su Caps Lock
+    # 5. Dual Key Engine con Hook Globale soppressivo su Shift Destro
     poller_thread = threading.Thread(target=run_keyboard_poller, args=(engine,), daemon=True)
     poller_thread.start()
 
     def on_key_event(event):
-        """Intercetta ed elabora Caps Lock e F8 sopprimendo il cambio maiuscole nativo."""
+        """Intercetta ed elabora Shift Destro (Right Shift) e F8."""
         try:
             name = (event.name or "").lower()
-            if name == "caps lock":
-                # Se l'utente preme Shift + Caps Lock, lascia passare l'evento per consentire il normale toggle del Bloc Maiusc
-                if is_shift_down():
-                    return True
+            scan = getattr(event, "scan_code", None)
+            is_rshift = (scan == 54 or name in ("right shift", "maiusc (destra)", "maiusc destra", "rshift"))
 
+            if is_rshift:
                 if event.event_type == "down":
                     safe_handle_press(engine)
                 elif event.event_type == "up":
                     safe_handle_release(engine)
-                # Sopprime l'evento a livello di sistema operativo per evitare il toggle maiuscole
+                # Sopprime l'evento a livello di sistema operativo per non inserire modificatori mentre si parla
                 return False
 
             elif name == "f8":
