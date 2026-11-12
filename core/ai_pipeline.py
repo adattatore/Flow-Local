@@ -83,8 +83,8 @@ WHIS_WAKE_REGEX = re.compile(
 )
 
 DEFAULT_WHISPER_INITIAL_PROMPT = (
-    "FlowLocal, Whis, JARVIS, Ollama, Llama, Qwen, Faster-Whisper, "
-    "PyQt6, HUD, overlay, pop-up, GitHub, Antigravity, Emporio 87."
+    "FlowLocal, FlowType, FlowStudy, Whis, Ollama, Qwen, Faster-Whisper, "
+    "PyQt6, HUD, trascrittore, sbobina, LaTeX."
 )
 
 LAST_SELECTION_CAPTURE_TIME = 0.0
@@ -237,7 +237,21 @@ def normalize_phonetic_variants(text: str) -> str:
         simplified = re.sub(r'bb', 'b', word, count=1, flags=re.IGNORECASE)
         return _preserve_case(word, simplified)
 
-    # Correzione automatica varianti fonetiche sbobbina/sbobbine e forme correlate
+    # 1. Whis: varianti fonetiche
+    text = re.sub(r'\b(WIS|Wis|wis|Wiz|wiz|Whizz|whizz|Uis|uis)\b', 'Whis', text)
+
+    # 2. FlowType, FlowStudy, FlowLocal
+    text = re.sub(r'\bflow\s*type\b', 'FlowType', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bflow\s*study\b', 'FlowStudy', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bflow\s*local\b', 'FlowLocal', text, flags=re.IGNORECASE)
+
+    # 3. Allucinazione fonetica 'da scrittore' -> 'trascrittore' dopo parole chiave
+    text = re.sub(r'\b(come|questo|un|il)\s+da\s+scrittore\b', r'\1 trascrittore', text, flags=re.IGNORECASE)
+
+    # 4. 'mi sta casando' -> 'mi sta gasando'
+    text = re.sub(r'\bmi\s+sta\s+casando\b', 'mi sta gasando', text, flags=re.IGNORECASE)
+
+    # 5. Correzione automatica varianti fonetiche sbobbina/sbobbine e forme correlate
     text = re.sub(r'\b(sbobbin\w*)\b', _replace_sbobbina, text, flags=re.IGNORECASE)
     return text
 
@@ -1071,7 +1085,13 @@ class FlowLocalEngine:
             self.is_key_down = False
 
             if self.is_recording and not self.is_locked:
-                self.stop_recording_and_process()
+                # Tail-Padding Microfono (280ms) per non tagliare mai l'ultima sillaba
+                def _delayed_stop():
+                    time.sleep(0.280)
+                    with self.key_lock:
+                        if self.is_recording and not self.is_locked and not self.is_key_down:
+                            self.stop_recording_and_process()
+                threading.Thread(target=_delayed_stop, daemon=True).start()
 
     def toggle_recording_click(self):
         if self.is_recording:

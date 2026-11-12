@@ -53,8 +53,8 @@ LLM_MODEL = "qwen2.5:3b"
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
 
 DEFAULT_WHISPER_INITIAL_PROMPT = (
-    "FlowLocal, Whis, JARVIS, Ollama, Llama, Qwen, Faster-Whisper, "
-    "PyQt6, HUD, overlay, pop-up, GitHub, Antigravity, Emporio 87."
+    "FlowLocal, FlowType, FlowStudy, Whis, Ollama, Qwen, Faster-Whisper, "
+    "PyQt6, HUD, trascrittore, sbobina, LaTeX."
 )
 
 FILLER_WORDS_REGEX = re.compile(
@@ -276,7 +276,11 @@ class FlowLocalEngine:
 
     def handle_key_release(self):
         if self.is_recording and not self.is_locked:
-            self.stop_recording_and_process()
+            def _delayed_stop():
+                time.sleep(0.280)
+                if self.is_recording and not self.is_locked:
+                    self.stop_recording_and_process()
+            threading.Thread(target=_delayed_stop, daemon=True).start()
 
     def toggle_recording_click(self):
         if self.is_recording:

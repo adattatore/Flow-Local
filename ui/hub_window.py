@@ -45,7 +45,7 @@ from PyQt6.QtWidgets import (
     QApplication, QButtonGroup, QDialog, QFileDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QGraphicsView, QGraphicsScene, QGraphicsItem,
-    QComboBox
+    QComboBox, QTreeWidget, QTreeWidgetItem, QSplitter
 )
 
 from database import db
@@ -100,15 +100,24 @@ QLabel#EngineStatus {
     font-size: 11px;
     font-weight: 600;
 }
+QLabel#NavSectionHeader {
+    color: #64748B;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    padding: 8px 6px 2px 6px;
+    background-color: transparent;
+}
 QPushButton#NavButton {
-    min-height: 40px;
-    max-height: 40px;
+    min-height: 34px;
+    max-height: 34px;
     text-align: left;
-    padding: 0 14px;
+    padding: 0 12px;
     border: none;
-    border-radius: 8px;
+    border-radius: 6px;
     background-color: transparent;
     color: #94A3B8;
+    font-size: 12px;
     font-weight: 600;
 }
 QPushButton#NavButton:hover {
@@ -659,6 +668,86 @@ class QuickNoteDialog(QDialog):
         self.created_note_id = new_id
         self.created_note_title = title
         self.created_note_text = text
+        self.accept()
+
+
+class NewSubjectTopicDialog(QDialog):
+    """Dialogo compatto per creare una nuova Materia e Argomento nel Notekeeper."""
+
+    def __init__(self, parent=None, default_profile="Alessandro"):
+        super().__init__(parent)
+        self.setWindowTitle("Nuova Materia / Argomento")
+        self.setFixedWidth(440)
+        self.setStyleSheet("""
+            QDialog { background-color: #161920; color: #F8FAFC; }
+            QLabel { color: #E2E8F0; font-size: 12px; font-weight: 500; }
+            QLineEdit, QComboBox {
+                background-color: #1E2330;
+                color: #FFFFFF;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 6px 10px;
+                min-height: 32px;
+            }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title_lbl = QLabel("📚 Crea Materia & Argomento")
+        title_lbl.setStyleSheet("font-size: 15px; font-weight: bold; color: #38BDF8;")
+        layout.addWidget(title_lbl)
+
+        layout.addWidget(QLabel("Profilo Studente:"))
+        self.profile_combo = QComboBox()
+        self.profile_combo.addItems(["Alessandro", "Giada"])
+        if default_profile in ("Alessandro", "Giada"):
+            self.profile_combo.setCurrentText(default_profile)
+        layout.addWidget(self.profile_combo)
+
+        layout.addWidget(QLabel("Materia (es. Meccanica dei Robot, Fisica 1):"))
+        self.subject_input = QLineEdit()
+        self.subject_input.setPlaceholderText("Nome Materia...")
+        layout.addWidget(self.subject_input)
+
+        layout.addWidget(QLabel("Argomento (es. Cinematica Diretta, Urti):"))
+        self.topic_input = QLineEdit()
+        self.topic_input.setPlaceholderText("Nome Argomento...")
+        layout.addWidget(self.topic_input)
+
+        layout.addWidget(QLabel("Titolo Primo Appunto (opzionale):"))
+        self.note_title_input = QLineEdit()
+        self.note_title_input.setPlaceholderText("Introduzione...")
+        layout.addWidget(self.note_title_input)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        cancel_btn = _make_button("Annulla")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        save_btn = _make_button("Crea", "primary")
+        save_btn.clicked.connect(self._on_save)
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+    def _on_save(self):
+        s = self.subject_input.text().strip()
+        t = self.topic_input.text().strip() or "Generale"
+        if not s:
+            QMessageBox.warning(self, "Attenzione", "Inserisci almeno il nome della materia.")
+            return
+        p = self.profile_combo.currentText().strip()
+        ntitle = self.note_title_input.text().strip() or f"Appunto iniziale - {t}"
+        db.add_study_note(
+            title=ntitle,
+            content_markdown=f"# {ntitle}\n\nAppunti per la materia **{s}**, argomento **{t}**.",
+            note_type="appunto",
+            profile=p,
+            subject=s,
+            topic=t,
+            tags=f"Notekeeper, {s}, {t}, Profilo: {p}"
+        )
         self.accept()
 
 
@@ -1336,11 +1425,11 @@ class FlowLocalHub(QMainWindow):
         self._note_cards: Dict[int, QFrame] = {}
 
         self.setWindowTitle("FlowLocal Hub")
-        self.resize(960, 640)
-        self.setMinimumSize(820, 540)
+        self.resize(1120, 680)
+        self.setMinimumSize(920, 580)
         self.setStyleSheet(HUB_QSS)
 
-        self.note_added.connect(self._refresh_notes)
+        self.note_added.connect(self._refresh_notekeeper)
 
         self._current_mode_name = MODE_TABS[0][1]
         self._last_transcription_marker = None
@@ -1387,7 +1476,7 @@ class FlowLocalHub(QMainWindow):
         self._refresh_current_page()
 
     # -----------------------------------------------------------------
-    # Struttura principale
+    # Struttura principale (I 3 PILASTRI: FlowType, FlowStudy, Whis)
     # -----------------------------------------------------------------
     def _build_ui(self):
         root = QWidget()
@@ -1402,23 +1491,26 @@ class FlowLocalHub(QMainWindow):
 
         self.pages = QStackedWidget()
         self.pages.setObjectName("Pages")
-        self.pages.addWidget(self._build_history_page())       # Index 0
-        self.pages.addWidget(self._build_whis_page())          # Index 1
-        self.pages.addWidget(self._build_notes_page())         # Index 2
-        self.pages.addWidget(self._build_dictionary_page())    # Index 3
-        self.pages.addWidget(self._build_styles_page())        # Index 4
+        self.pages.addWidget(self._build_flowtype_page())             # Index 0: 🎙️ FlowType
+        self.pages.addWidget(self._build_flowstudy_notekeeper_page()) # Index 1: 📚 FlowStudy - Quaderno 3 Colonne
+        self.pages.addWidget(self._build_flowstudy_flashcards_page()) # Index 2: 📚 FlowStudy - Flashcard Esame
+        self.pages.addWidget(self._build_flowstudy_graph_page())      # Index 3: 📚 FlowStudy - Grafo Concettuale
+        self.pages.addWidget(self._build_whis_page())                 # Index 4: ✨ Whis
+        self.pages.addWidget(self._build_dictionary_page())           # Index 5: 📖 Dizionario & Snippet
+        self.pages.addWidget(self._build_styles_page())               # Index 6: ⚙️ Stili & Prompt
         main_layout.addWidget(self.pages, 1)
 
-        self.nav_buttons[0].setChecked(True)
+        if 0 in self.nav_buttons_by_page:
+            self.nav_buttons_by_page[0].setChecked(True)
 
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setObjectName("Sidebar")
-        sidebar.setFixedWidth(210)
+        sidebar.setFixedWidth(220)
 
         layout = QVBoxLayout(sidebar)
-        layout.setContentsMargins(14, 20, 14, 16)
-        layout.setSpacing(6)
+        layout.setContentsMargins(12, 16, 12, 14)
+        layout.setSpacing(4)
 
         title = QLabel("FlowLocal")
         title.setObjectName("AppTitle")
@@ -1437,29 +1529,54 @@ class FlowLocalHub(QMainWindow):
         status_row.addStretch(1)
         layout.addLayout(status_row)
 
-        layout.addSpacing(22)
+        layout.addSpacing(14)
 
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
         self.nav_buttons: List[QPushButton] = []
-        for idx, label in enumerate(["Cronologia", "✨ Whis", "Note", "Dizionario", "Stili && Prompt", "🕸️ Grafo"]):
-            btn = QPushButton(label)
-            btn.setObjectName("NavButton")
-            btn.setCheckable(True)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            btn.clicked.connect(lambda _checked, i=idx: self._on_nav_clicked(i))
-            self.nav_group.addButton(btn, idx)
-            self.nav_buttons.append(btn)
-            layout.addWidget(btn)
+        self.nav_buttons_by_page: Dict[int, QPushButton] = {}
+
+        nav_structure = [
+            ("🎙️ FLOWTYPE", [
+                ("🎙️ Dettatura Live", 0),
+                ("📖 Dizionario & Snippet", 5),
+                ("⚙️ Stili & Prompt", 6),
+            ]),
+            ("📚 FLOWSTUDY", [
+                ("🗂️ Quaderno & Sbobine", 1),
+                ("🃏 Flashcard Esame", 2),
+                ("🕸️ Grafo Concettuale", 3),
+            ]),
+            ("✨ WHIS", [
+                ("✨ Assistente Whis", 4),
+            ]),
+        ]
+
+        btn_seq = 0
+        for section_title, buttons in nav_structure:
+            sec_lbl = QLabel(section_title)
+            sec_lbl.setObjectName("NavSectionHeader")
+            layout.addWidget(sec_lbl)
+            for btn_label, page_idx in buttons:
+                btn = QPushButton(btn_label)
+                btn.setObjectName("NavButton")
+                btn.setCheckable(True)
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                btn.clicked.connect(lambda _checked, p=page_idx: self._on_nav_clicked(p))
+                self.nav_group.addButton(btn, btn_seq)
+                self.nav_buttons.append(btn)
+                self.nav_buttons_by_page[page_idx] = btn
+                layout.addWidget(btn)
+                btn_seq += 1
 
         layout.addStretch(1)
 
         shortcut_box = QFrame()
         shortcut_box.setObjectName("ShortcutBox")
         sb_layout = QVBoxLayout(shortcut_box)
-        sb_layout.setContentsMargins(12, 10, 12, 10)
-        sb_layout.setSpacing(6)
+        sb_layout.setContentsMargins(10, 8, 10, 8)
+        sb_layout.setSpacing(4)
 
         key_row = QHBoxLayout()
         key_row.setContentsMargins(0, 0, 0, 0)
@@ -1469,7 +1586,7 @@ class FlowLocalHub(QMainWindow):
         key_row.addStretch(1)
         sb_layout.addLayout(key_row)
 
-        hint = QLabel("Tieni premuto per dettare.\nDoppio tocco: mani libere.\nShift+Caps: Bloc Maiusc.")
+        hint = QLabel("Dettatura rapida: premi o tieni premuto.\nDoppio tocco: mani libere.\nShift+Caps: Bloc Maiusc.")
         hint.setObjectName("ShortcutHint")
         hint.setWordWrap(True)
         sb_layout.addWidget(hint)
@@ -1477,15 +1594,10 @@ class FlowLocalHub(QMainWindow):
         layout.addWidget(shortcut_box)
         return sidebar
 
-    def _on_nav_clicked(self, idx: int):
-        if idx == 5:
-            # Selezione diretta Grafo della Conoscenza dalla sidebar
-            self.pages.setCurrentIndex(2)
-            self._set_notes_view_mode(1)
-        else:
-            self.pages.setCurrentIndex(idx)
-            if idx == 2:
-                self._set_notes_view_mode(0)
+    def _on_nav_clicked(self, page_idx: int):
+        self.pages.setCurrentIndex(page_idx)
+        if page_idx in self.nav_buttons_by_page:
+            self.nav_buttons_by_page[page_idx].setChecked(True)
         self._refresh_current_page()
 
     def _refresh_current_page(self):
@@ -1493,16 +1605,17 @@ class FlowLocalHub(QMainWindow):
         if idx == 0:
             self._refresh_history()
         elif idx == 1:
-            self._refresh_whis_page()
+            self._refresh_notekeeper()
         elif idx == 2:
-            if hasattr(self, "notes_view_stack") and self.notes_view_stack.currentIndex() == 1:
-                if hasattr(self, "graph_widget"):
-                    self.graph_widget.load_data()
-            else:
-                self._refresh_notes()
+            self._refresh_flashcards_page()
         elif idx == 3:
-            self._refresh_dictionary()
+            if hasattr(self, "graph_widget"):
+                self.graph_widget.load_data()
         elif idx == 4:
+            self._refresh_whis_page()
+        elif idx == 5:
+            self._refresh_dictionary()
+        elif idx == 6:
             self._load_mode_prompt(self._current_mode_name)
 
     @staticmethod
@@ -1521,27 +1634,156 @@ class FlowLocalHub(QMainWindow):
         return page, layout
 
     # -----------------------------------------------------------------
-    # 1. CRONOLOGIA
+    # 1. PILASTRO: FLOWTYPE (SCRITTURA VOCALE & DETTATURA LIVE)
     # -----------------------------------------------------------------
-    def _build_history_page(self) -> QWidget:
-        page, layout = self._make_page("Cronologia", "Le tue ultime dettature, con modalità e app di destinazione.")
+    def _build_flowtype_page(self) -> QWidget:
+        page, layout = self._make_page("🎙️ FlowType", "Scrittura vocale in tempo reale, telemetria e gestione degli stili di dettatura.")
 
+        # --- SELETTORE RAPIDO STILE DI DETTATURA ---
+        style_box = QFrame()
+        style_box.setObjectName("FlowTypeStyleBox")
+        style_box.setStyleSheet("""
+            QFrame#FlowTypeStyleBox {
+                background-color: #11141C;
+                border: 1px solid #1E293B;
+                border-radius: 8px;
+            }
+        """)
+        s_layout = QVBoxLayout(style_box)
+        s_layout.setContentsMargins(12, 10, 12, 10)
+        s_layout.setSpacing(8)
+
+        s_header = QHBoxLayout()
+        s_title = QLabel("Stile di Dettatura Rapido:")
+        s_title.setStyleSheet("font-size: 12.5px; font-weight: 700; color: #38BDF8;")
+        s_header.addWidget(s_title)
+
+        self.flowtype_active_style_label = QLabel("Naturale")
+        self.flowtype_active_style_label.setStyleSheet("""
+            background-color: #0369A1;
+            color: #FFFFFF;
+            border-radius: 4px;
+            padding: 2px 10px;
+            font-size: 11px;
+            font-weight: bold;
+        """)
+        s_header.addWidget(self.flowtype_active_style_label)
+        s_header.addStretch(1)
+        s_layout.addLayout(s_header)
+
+        pills_layout = QHBoxLayout()
+        pills_layout.setSpacing(8)
+
+        self.flowtype_style_group = QButtonGroup(self)
+        self.flowtype_style_group.setExclusive(True)
+
+        styles_data = [
+            ("Naturale", "natural", "Riformulazione sintattica conservativa e rimozione esitazioni."),
+            ("Formale", "formal", "Registro alto per documenti ufficiali, email e relazioni."),
+            ("Code / Tech", "code", "Preserva l'italiano e i termini tecnici informatici dettati."),
+            ("Studio / LaTeX", "study_latex", "Espressioni matematiche e formule convertite in $...$ LaTeX."),
+            ("Chat", "chat", "Discorso informale, punteggiatura snella e ritmo naturale.")
+        ]
+
+        self._flowtype_style_buttons = {}
+        for s_idx, (s_label, s_code, s_desc) in enumerate(styles_data):
+            btn = QPushButton(s_label)
+            btn.setObjectName("StylePill")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setToolTip(s_desc)
+            btn.setStyleSheet("""
+                QPushButton#StylePill {
+                    background-color: #1E2330;
+                    color: #94A3B8;
+                    border: 1px solid #334155;
+                    border-radius: 6px;
+                    padding: 6px 14px;
+                    font-size: 12px;
+                    font-weight: 600;
+                    min-height: 28px;
+                }
+                QPushButton#StylePill:hover {
+                    background-color: #273042;
+                    color: #F8FAFC;
+                }
+                QPushButton#StylePill:checked {
+                    background-color: #0284C7;
+                    color: #FFFFFF;
+                    border-color: #38BDF8;
+                }
+            """)
+            btn.clicked.connect(lambda _c=False, code=s_code, lbl=s_label: self._on_flowtype_style_selected(code, lbl))
+            self.flowtype_style_group.addButton(btn, s_idx)
+            self._flowtype_style_buttons[s_code] = btn
+            pills_layout.addWidget(btn)
+            if s_idx == 0:
+                btn.setChecked(True)
+
+        pills_layout.addStretch(1)
+        s_layout.addLayout(pills_layout)
+        layout.addWidget(style_box)
+
+        # --- STATO HOTKEY CAPS LOCK ---
+        hotkey_box = QFrame()
+        hotkey_box.setStyleSheet("""
+            QFrame {
+                background-color: #11141C;
+                border: 1px solid #1E293B;
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QHBoxLayout(hotkey_box)
+        h_layout.setContentsMargins(12, 10, 12, 10)
+        h_layout.setSpacing(12)
+
+        key_badge = QLabel("Caps Lock")
+        key_badge.setStyleSheet("""
+            background-color: #1E293B;
+            border: 1px solid #38BDF8;
+            border-radius: 6px;
+            padding: 4px 10px;
+            color: #38BDF8;
+            font-size: 12px;
+            font-weight: bold;
+        """)
+        h_layout.addWidget(key_badge)
+
+        h_info = QLabel("<b>Push-to-Talk principale:</b> tieni premuto per dettare live, rilascia per incollare con zero focus steal.<br>"
+                        "<b>Doppio tocco:</b> modalità mani libere. <b>Shift+Caps Lock:</b> attiva/disattiva regolarmente il Bloc Maiusc.")
+        h_info.setWordWrap(True)
+        h_info.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        h_layout.addWidget(h_info, 1)
+
+        layout.addWidget(hotkey_box)
+
+        # --- TOOLBAR RICERCA E SVUOTA CRONOLOGIA ---
         toolbar = QHBoxLayout()
         toolbar.setSpacing(10)
         self.history_search = QLineEdit()
-        self.history_search.setPlaceholderText("Cerca nelle trascrizioni…")
+        self.history_search.setPlaceholderText("🔍 Cerca nelle trascrizioni recenti…")
         self.history_search.setMinimumHeight(36)
         self.history_search.textChanged.connect(self._refresh_history)
         toolbar.addWidget(self.history_search, 1)
 
-        clear_btn = _make_button("Svuota", "danger")
+        clear_btn = _make_button("🗑️ Svuota cronologia", "danger")
         clear_btn.clicked.connect(self._clear_history)
         toolbar.addWidget(clear_btn)
         layout.addLayout(toolbar)
 
-        self.history_list = ScrollList("Nessuna trascrizione ancora. Tieni premuto Alt Gr per iniziare.")
+        # --- LISTA TRASCRIZIONI RECENTI ---
+        self.history_list = ScrollList("Nessuna trascrizione ancora. Tieni premuto Caps Lock per iniziare a dettare.")
         layout.addWidget(self.history_list, 1)
         return page
+
+    def _build_history_page(self) -> QWidget:
+        """Retrocompatibilità: rimanda a _build_flowtype_page."""
+        return self._build_flowtype_page()
+
+    def _on_flowtype_style_selected(self, style_code: str, style_label: str):
+        self.flowtype_active_style_label.setText(style_label)
+        if self.engine:
+            self.engine.current_mode = style_code
 
     def _refresh_history(self):
         query = self.history_search.text().strip().lower() if hasattr(self, "history_search") else ""
@@ -1577,7 +1819,7 @@ class FlowLocalHub(QMainWindow):
         meta_row.addStretch(1)
 
         text = t.get("final_text") or ""
-        copy_btn = _make_button("Copia")
+        copy_btn = _make_button("📋 Copia")
         copy_btn.clicked.connect(lambda _c=False, s=text: self._copy_to_clipboard(s))
         meta_row.addWidget(copy_btn)
         layout.addLayout(meta_row)
@@ -1909,38 +2151,26 @@ class FlowLocalHub(QMainWindow):
         self._active_whis_worker.start()
 
     # -----------------------------------------------------------------
-    # 2. NOTE
+    # 2. PILASTRO: FLOWSTUDY (NOTEKEEPER A 3 COLONNE & SBOBINE)
     # -----------------------------------------------------------------
-    def _build_notes_page(self) -> QWidget:
-        page, layout = self._make_page("Note", "Appunti di studio, appunti rapidi e sbobine salvati.")
+    def _build_flowstudy_notekeeper_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("Page")
+        main_vbox = QVBoxLayout(page)
+        main_vbox.setContentsMargins(18, 16, 18, 16)
+        main_vbox.setSpacing(10)
 
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(10)
-        self.notes_search = QLineEdit()
-        self.notes_search.setPlaceholderText("Cerca nelle note…")
-        self.notes_search.setMinimumHeight(36)
-        self.notes_search.textChanged.connect(self._refresh_notes)
-        toolbar.addWidget(self.notes_search, 1)
+        # Header Notekeeper
+        header = QHBoxLayout()
+        header_text = QVBoxLayout()
+        header_text.setSpacing(2)
+        header_text.addWidget(_make_label("🗂️ Quaderno & Sbobine", "PageTitle"))
+        header_text.addWidget(_make_label("Notekeeper gerarchico: Profilo ➔ Materia ➔ Argomento con editor e flashcard.", "PageSubtitle", wrap=True))
+        header.addLayout(header_text)
+        header.addStretch(1)
 
-        self.quick_note_btn = _make_button("⚡ Appunto Rapido")
-        self.quick_note_btn.clicked.connect(self._open_quick_note_dialog)
-        toolbar.addWidget(self.quick_note_btn)
-
-        self.sbobina_btn = _make_button("🎙️ Sbobina File Audio", "primary")
-        self.sbobina_btn.clicked.connect(self._on_sbobina_clicked)
-        toolbar.addWidget(self.sbobina_btn)
-
-        self.export_all_btn = _make_button("Esporta ▾")
-        self.export_all_btn.clicked.connect(self._show_export_all_menu)
-        toolbar.addWidget(self.export_all_btn)
-        layout.addLayout(toolbar)
-
-        # Barra Coda Cloud Controllata (Anti-Lag Gaming)
-        cloud_bar = QHBoxLayout()
-        cloud_bar.setSpacing(8)
-        cloud_bar.setContentsMargins(0, 0, 0, 2)
-
-        self.cloud_badge = QLabel("☁️ Coda Cloud (0 in attesa)")
+        # Cloud sync badge & button
+        self.cloud_badge = QLabel("☁️ Coda Cloud")
         self.cloud_badge.setObjectName("CloudBadge")
         self.cloud_badge.setStyleSheet("""
             QLabel {
@@ -1948,130 +2178,30 @@ class FlowLocalHub(QMainWindow):
                 color: #64748B;
                 border: 1px solid #1E293B;
                 border-radius: 6px;
-                padding: 6px 14px;
-                font-size: 12px;
+                padding: 6px 12px;
+                font-size: 11px;
                 font-weight: 500;
             }
         """)
-        cloud_bar.addWidget(self.cloud_badge)
+        header.addWidget(self.cloud_badge)
 
         self.cloud_process_btn = _make_button("▶️ Elabora Coda", "success")
         self.cloud_process_btn.setEnabled(False)
         self.cloud_process_btn.clicked.connect(self._on_process_cloud_queue_clicked)
-        cloud_bar.addWidget(self.cloud_process_btn)
+        header.addWidget(self.cloud_process_btn)
 
         self.cloud_sync_btn = _make_button("🔄 Aggiorna Cloud")
         self.cloud_sync_btn.setToolTip("Rigenera outbox_study/library.json con note e flashcard del PC")
         self.cloud_sync_btn.clicked.connect(self._on_sync_cloud_clicked)
-        cloud_bar.addWidget(self.cloud_sync_btn)
+        header.addWidget(self.cloud_sync_btn)
 
-        self.cloud_folder_btn = _make_button("📁 Cartella Sync")
-        self.cloud_folder_btn.setToolTip("Imposta o visualizza la cartella Google Drive Desktop sincronizzata")
-        self.cloud_folder_btn.clicked.connect(self._on_cloud_folder_clicked)
-        cloud_bar.addWidget(self.cloud_folder_btn)
+        self.export_all_btn = _make_button("Esporta ▾")
+        self.export_all_btn.clicked.connect(self._show_export_all_menu)
+        header.addWidget(self.export_all_btn)
 
-        cloud_bar.addStretch(1)
-        layout.addLayout(cloud_bar)
+        main_vbox.addLayout(header)
 
-        # Barra di filtro a pillole mutuamente esclusive
-        filter_bar = QHBoxLayout()
-        filter_bar.setSpacing(8)
-        filter_bar.setContentsMargins(0, 4, 0, 4)
-
-        self.note_filter_group = QButtonGroup(self)
-        self.note_filter_group.setExclusive(True)
-
-        self.filter_all_btn = QPushButton("Tutte")
-        self.filter_all_btn.setObjectName("FilterPill")
-        self.filter_all_btn.setCheckable(True)
-        self.filter_all_btn.setChecked(True)
-        self.filter_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.filter_all_btn.clicked.connect(self._refresh_notes)
-        self.note_filter_group.addButton(self.filter_all_btn, 0)
-        filter_bar.addWidget(self.filter_all_btn)
-
-        self.filter_sbobine_btn = QPushButton("🎙️ Sbobine")
-        self.filter_sbobine_btn.setObjectName("FilterPill")
-        self.filter_sbobine_btn.setCheckable(True)
-        self.filter_sbobine_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.filter_sbobine_btn.clicked.connect(self._refresh_notes)
-        self.note_filter_group.addButton(self.filter_sbobine_btn, 1)
-        filter_bar.addWidget(self.filter_sbobine_btn)
-
-        self.filter_rapidi_btn = QPushButton("⚡ Appunti Rapidi")
-        self.filter_rapidi_btn.setObjectName("FilterPill")
-        self.filter_rapidi_btn.setCheckable(True)
-        self.filter_rapidi_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.filter_rapidi_btn.clicked.connect(self._refresh_notes)
-        self.note_filter_group.addButton(self.filter_rapidi_btn, 2)
-        filter_bar.addWidget(self.filter_rapidi_btn)
-
-        filter_bar.addStretch(1)
-
-        # Selettore vista Lista / Grafo della Conoscenza (Obsidian Style)
-        self.btn_view_list = QPushButton("📋 Lista")
-        self.btn_view_list.setCheckable(True)
-        self.btn_view_list.setChecked(True)
-        self.btn_view_list.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_view_list.setStyleSheet("""
-            QPushButton {
-                background-color: #1E293B;
-                color: #94A3B8;
-                border: 1px solid #334155;
-                border-top-left-radius: 6px;
-                border-bottom-left-radius: 6px;
-                padding: 4px 12px;
-                font-size: 11.5px;
-                font-weight: 600;
-                min-height: 26px;
-            }
-            QPushButton:checked {
-                background-color: #0284C7;
-                color: #FFFFFF;
-                border-color: #0284C7;
-            }
-            QPushButton:hover:!checked {
-                background-color: #283548;
-                color: #F8FAFC;
-            }
-        """)
-
-        self.btn_view_graph = QPushButton("🕸️ Grafo")
-        self.btn_view_graph.setCheckable(True)
-        self.btn_view_graph.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_view_graph.setStyleSheet("""
-            QPushButton {
-                background-color: #1E293B;
-                color: #94A3B8;
-                border: 1px solid #334155;
-                border-left: none;
-                border-top-right-radius: 6px;
-                border-bottom-right-radius: 6px;
-                padding: 4px 12px;
-                font-size: 11.5px;
-                font-weight: 600;
-                min-height: 26px;
-            }
-            QPushButton:checked {
-                background-color: #0284C7;
-                color: #FFFFFF;
-                border-color: #0284C7;
-            }
-            QPushButton:hover:!checked {
-                background-color: #283548;
-                color: #F8FAFC;
-            }
-        """)
-
-        self.btn_view_list.clicked.connect(lambda: self._set_notes_view_mode(0))
-        self.btn_view_graph.clicked.connect(lambda: self._set_notes_view_mode(1))
-
-        filter_bar.addWidget(self.btn_view_list)
-        filter_bar.addWidget(self.btn_view_graph)
-
-        layout.addLayout(filter_bar)
-
-        # Barra di avanzamento compatta con % e pulsante Annulla (fuori da QScrollArea)
+        # Barra di avanzamento compatta sbobina file
         self.sbobina_progress_box = QFrame()
         self.sbobina_progress_box.setStyleSheet(
             "QFrame { background-color: #131722; border: 1px solid #1E293B; border-radius: 8px; }"
@@ -2101,85 +2231,612 @@ class FlowLocalHub(QMainWindow):
         p_layout.addWidget(self.sbobina_cancel_btn)
 
         self.sbobina_progress_box.hide()
-        layout.addWidget(self.sbobina_progress_box)
+        main_vbox.addWidget(self.sbobina_progress_box)
 
-        # QStackedWidget per commutare fluidamente tra Lista Note e Vista Grafo
-        self.notes_view_stack = QStackedWidget()
+        # ---------------- LAYOUT NOTEKEEPER A 3 COLONNE ----------------
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #1E2330;
+                width: 3px;
+            }
+        """)
 
-        self.notes_list = ScrollList("Nessuna nota salvata. Clicca '⚡ Appunto Rapido' o detta con Caps Lock.")
-        self.notes_view_stack.addWidget(self.notes_list)
+        # ===== COLONNA 1: FILTRO PROFILO & ALBERO MATERIE -> ARGOMENTI =====
+        col1 = QFrame()
+        col1.setStyleSheet("QFrame { background-color: #11141C; border: 1px solid #1E293B; border-radius: 8px; }")
+        col1_layout = QVBoxLayout(col1)
+        col1_layout.setContentsMargins(10, 10, 10, 10)
+        col1_layout.setSpacing(8)
+
+        col1_header = QLabel("📚 Materie & Argomenti")
+        col1_header.setStyleSheet("font-weight: bold; font-size: 13px; color: #38BDF8; border: none;")
+        col1_layout.addWidget(col1_header)
+
+        # Filtro Profilo
+        self.nk_profile_combo = QComboBox()
+        self.nk_profile_combo.addItems(["Tutti i profili", "Alessandro", "Giada"])
+        self.nk_profile_combo.setMinimumHeight(32)
+        self.nk_profile_combo.currentIndexChanged.connect(self._on_nk_profile_changed)
+        col1_layout.addWidget(self.nk_profile_combo)
+
+        # Albero espandibile QTreeWidget
+        self.nk_tree = QTreeWidget()
+        self.nk_tree.setHeaderHidden(True)
+        self.nk_tree.setAnimated(True)
+        self.nk_tree.setStyleSheet("""
+            QTreeWidget {
+                background-color: #161A24;
+                border: 1px solid #1E2330;
+                border-radius: 6px;
+                color: #E2E8F0;
+                font-size: 12px;
+                padding: 4px;
+            }
+            QTreeWidget::item {
+                padding: 5px 6px;
+                border-radius: 4px;
+            }
+            QTreeWidget::item:hover {
+                background-color: #1E293B;
+            }
+            QTreeWidget::item:selected {
+                background-color: #0284C7;
+                color: #FFFFFF;
+            }
+        """)
+        self.nk_tree.currentItemChanged.connect(self._on_nk_tree_item_changed)
+        col1_layout.addWidget(self.nk_tree, 1)
+
+        # Azioni colonna 1
+        col1_btn_layout = QVBoxLayout()
+        col1_btn_layout.setSpacing(6)
+        self.nk_new_sub_btn = _make_button("+ Nuova Materia / Argomento", "primary")
+        self.nk_new_sub_btn.setMinimumHeight(32)
+        self.nk_new_sub_btn.clicked.connect(self._on_nk_new_subject_clicked)
+        col1_btn_layout.addWidget(self.nk_new_sub_btn)
+
+        self.sbobina_btn = _make_button("🎙️ Sbobina File Audio")
+        self.sbobina_btn.setMinimumHeight(32)
+        self.sbobina_btn.clicked.connect(self._on_sbobina_clicked)
+        col1_btn_layout.addWidget(self.sbobina_btn)
+        col1_layout.addLayout(col1_btn_layout)
+
+        splitter.addWidget(col1)
+
+        # ===== COLONNA 2: LISTA DELLE NOTE FILTRATE =====
+        col2 = QFrame()
+        col2.setStyleSheet("QFrame { background-color: #11141C; border: 1px solid #1E293B; border-radius: 8px; }")
+        col2_layout = QVBoxLayout(col2)
+        col2_layout.setContentsMargins(10, 10, 10, 10)
+        col2_layout.setSpacing(8)
+
+        # Ricerca
+        self.nk_search_input = QLineEdit()
+        self.nk_search_input.setPlaceholderText("🔍 Cerca nelle note...")
+        self.nk_search_input.setMinimumHeight(34)
+        self.nk_search_input.textChanged.connect(self._refresh_nk_notes_list)
+        col2_layout.addWidget(self.nk_search_input)
+
+        col2_actions = QHBoxLayout()
+        col2_actions.setSpacing(6)
+        self.nk_new_note_btn = _make_button("✍️ Nuovo Appunto")
+        self.nk_new_note_btn.setMinimumHeight(30)
+        self.nk_new_note_btn.clicked.connect(self._on_nk_new_note_clicked)
+        col2_actions.addWidget(self.nk_new_note_btn)
+
+        self.quick_note_btn = _make_button("⚡ Rapido")
+        self.quick_note_btn.setMinimumHeight(30)
+        self.quick_note_btn.clicked.connect(self._open_quick_note_dialog)
+        col2_actions.addWidget(self.quick_note_btn)
+        col2_layout.addLayout(col2_actions)
+
+        # Note list scroll
+        self.nk_notes_list = ScrollList("Nessuna nota per l'argomento selezionato.")
+        col2_layout.addWidget(self.nk_notes_list, 1)
+
+        splitter.addWidget(col2)
+
+        # ===== COLONNA 3: EDITOR / VIEWER COMPLETO =====
+        col3 = QFrame()
+        col3.setStyleSheet("QFrame { background-color: #11141C; border: 1px solid #1E293B; border-radius: 8px; }")
+        col3_layout = QVBoxLayout(col3)
+        col3_layout.setContentsMargins(14, 12, 14, 12)
+        col3_layout.setSpacing(8)
+
+        # Titolo edit
+        self.nk_editor_title = QLineEdit()
+        self.nk_editor_title.setPlaceholderText("Titolo della nota...")
+        self.nk_editor_title.setMinimumHeight(36)
+        self.nk_editor_title.setStyleSheet("""
+            QLineEdit {
+                background-color: #181D28;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                color: #FFFFFF;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 4px 10px;
+            }
+        """)
+        col3_layout.addWidget(self.nk_editor_title)
+
+        # Metadata bar: Profilo, Materia, Argomento, Tipo
+        meta_grid = QHBoxLayout()
+        meta_grid.setSpacing(6)
+
+        self.nk_editor_profile = QComboBox()
+        self.nk_editor_profile.addItems(["Alessandro", "Giada"])
+        self.nk_editor_profile.setMinimumHeight(32)
+        meta_grid.addWidget(self.nk_editor_profile)
+
+        self.nk_editor_subject = QLineEdit()
+        self.nk_editor_subject.setPlaceholderText("Materia...")
+        self.nk_editor_subject.setMinimumHeight(32)
+        meta_grid.addWidget(self.nk_editor_subject)
+
+        self.nk_editor_topic = QLineEdit()
+        self.nk_editor_topic.setPlaceholderText("Argomento...")
+        self.nk_editor_topic.setMinimumHeight(32)
+        meta_grid.addWidget(self.nk_editor_topic)
+
+        self.nk_editor_type = QComboBox()
+        self.nk_editor_type.addItems(["appunto", "sbobina", "slide"])
+        self.nk_editor_type.setMinimumHeight(32)
+        meta_grid.addWidget(self.nk_editor_type)
+
+        col3_layout.addLayout(meta_grid)
+
+        # Markdown Editor Body
+        self.nk_editor_body = QTextEdit()
+        self.nk_editor_body.setPlaceholderText("Scrivi o incolla qui i tuoi appunti in formato Markdown...")
+        self.nk_editor_body.setMinimumHeight(240)
+        self.nk_editor_body.setStyleSheet("""
+            QTextEdit {
+                background-color: #161A24;
+                border: 1px solid #1E293B;
+                border-radius: 6px;
+                color: #F8FAFC;
+                font-size: 13px;
+                line-height: 1.5;
+                padding: 10px;
+            }
+        """)
+        col3_layout.addWidget(self.nk_editor_body, 1)
+
+        # Bottom Actions Toolbar
+        editor_actions = QHBoxLayout()
+        editor_actions.setSpacing(8)
+
+        self.nk_save_btn = _make_button("💾 Salva Modifiche", "primary")
+        self.nk_save_btn.clicked.connect(self._on_nk_save_clicked)
+        editor_actions.addWidget(self.nk_save_btn)
+
+        self.nk_fc_btn = _make_button("🧠 Flashcard")
+        self.nk_fc_btn.clicked.connect(self._on_nk_extract_flashcards_clicked)
+        editor_actions.addWidget(self.nk_fc_btn)
+
+        self.nk_copy_btn = _make_button("📋 Copia")
+        self.nk_copy_btn.clicked.connect(lambda: self._copy_to_clipboard(self.nk_editor_body.toPlainText()))
+        editor_actions.addWidget(self.nk_copy_btn)
+
+        self.nk_del_btn = _make_button("🗑️ Elimina", "danger")
+        self.nk_del_btn.clicked.connect(self._on_nk_delete_clicked)
+        editor_actions.addWidget(self.nk_del_btn)
+
+        editor_actions.addStretch(1)
+
+        self.nk_ask_whis_btn = _make_button("✨ Chiedi a Whis", "accent")
+        self.nk_ask_whis_btn.clicked.connect(self._on_nk_ask_whis_clicked)
+        editor_actions.addWidget(self.nk_ask_whis_btn)
+
+        col3_layout.addLayout(editor_actions)
+
+        splitter.addWidget(col3)
+
+        # Imposta proporzioni splitter iniziali (22%, 33%, 45%)
+        splitter.setSizes([230, 320, 470])
+        main_vbox.addWidget(splitter, 1)
+
+        self._nk_selected_note_id = None
+        self._nk_current_filter_subject = None
+        self._nk_current_filter_topic = None
+
+        return page
+
+    def _build_notes_page(self) -> QWidget:
+        """Retrocompatibilità: rimanda a _build_flowstudy_notekeeper_page."""
+        return self._build_flowstudy_notekeeper_page()
+
+    def _refresh_notekeeper(self):
+        """Ricarica l'albero gerarchico Materie -> Argomenti e la lista note."""
+        if not hasattr(self, "nk_tree"):
+            return
+        prof_text = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Tutti i profili"
+        prof_filter = None if prof_text == "Tutti i profili" else prof_text
+
+        tree = db.get_subjects_tree(prof_filter)
+        self.nk_tree.blockSignals(True)
+        self.nk_tree.clear()
+
+        # Elemento radice Tutte le Materie
+        root_item = QTreeWidgetItem(["🌐 Tutte le Materie"])
+        root_item.setData(0, Qt.ItemDataRole.UserRole, ("all", "all"))
+        root_item.setForeground(0, QBrush(QColor("#38BDF8")))
+        font = QFont("Segoe UI", 10)
+        font.setBold(True)
+        root_item.setFont(0, font)
+        self.nk_tree.addTopLevelItem(root_item)
+
+        for subj, topic_list in tree.items():
+            s_item = QTreeWidgetItem([f"📚 {subj}"])
+            s_item.setData(0, Qt.ItemDataRole.UserRole, (subj, "all"))
+            s_font = QFont("Segoe UI", 10)
+            s_font.setBold(True)
+            s_item.setFont(0, s_font)
+            s_item.setForeground(0, QBrush(QColor("#E2E8F0")))
+
+            for t_info in topic_list:
+                t_name = t_info["topic"]
+                t_cnt = t_info["count"]
+                c_item = QTreeWidgetItem([f"🏷️ {t_name} ({t_cnt})"])
+                c_item.setData(0, Qt.ItemDataRole.UserRole, (subj, t_name))
+                c_item.setForeground(0, QBrush(QColor("#94A3B8")))
+                s_item.addChild(c_item)
+
+            self.nk_tree.addTopLevelItem(s_item)
+            s_item.setExpanded(True)
+
+        self.nk_tree.setCurrentItem(root_item)
+        self.nk_tree.blockSignals(False)
+
+        self._refresh_nk_notes_list()
+
+    def _on_nk_profile_changed(self):
+        self._refresh_notekeeper()
+
+    def _on_nk_tree_item_changed(self, current, _previous):
+        if not current:
+            return
+        data = current.data(0, Qt.ItemDataRole.UserRole)
+        if not data:
+            return
+        subj, topic = data
+        if subj == "all":
+            self._nk_current_filter_subject = None
+            self._nk_current_filter_topic = None
+        elif topic == "all":
+            self._nk_current_filter_subject = subj
+            self._nk_current_filter_topic = None
+        else:
+            self._nk_current_filter_subject = subj
+            self._nk_current_filter_topic = topic
+        self._refresh_nk_notes_list()
+
+    def _refresh_nk_notes_list(self):
+        if not hasattr(self, "nk_notes_list"):
+            return
+        prof_text = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Tutti i profili"
+        prof_filter = None if prof_text == "Tutti i profili" else prof_text
+        sq = self.nk_search_input.text().strip() if hasattr(self, "nk_search_input") else ""
+
+        notes = db.get_notes_by_hierarchy(
+            profile=prof_filter,
+            subject=self._nk_current_filter_subject,
+            topic=self._nk_current_filter_topic,
+            search_query=sq
+        )
+
+        self.nk_notes_list.clear()
+        if not notes:
+            self.nk_notes_list.show_empty("Nessuna nota per l'argomento selezionato.")
+            return
+
+        for n in notes:
+            card = self._make_nk_note_card(n)
+            self.nk_notes_list.add_card(card)
+
+        # Se nessuna nota è selezionata, carica la prima nell'editor
+        if getattr(self, "_nk_selected_note_id", None) is None and notes:
+            self._load_note_into_nk_editor(notes[0]["id"])
+
+    def _make_nk_note_card(self, note: Dict) -> QFrame:
+        card = QFrame()
+        card.setObjectName("NKNoteCard")
+        note_id = note.get("id")
+        is_selected = (note_id == getattr(self, "_nk_selected_note_id", None))
+        bg = "#1E293B" if is_selected else "#161A24"
+        border = "#0284C7" if is_selected else "#1E293B"
+        card.setStyleSheet(f"""
+            QFrame#NKNoteCard {{
+                background-color: {bg};
+                border: 1px solid {border};
+                border-radius: 6px;
+                padding: 6px;
+            }}
+            QFrame#NKNoteCard:hover {{
+                border-color: #38BDF8;
+                background-color: #1E2330;
+            }}
+        """)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(4)
+
+        nt = (note.get("note_type") or "appunto").lower()
+        badge_lbl = "🎙️ Sbobina" if nt == "sbobina" else ("📄 Slide" if nt == "slide" else "✍️ Appunto")
+        top_row.addWidget(_make_label(badge_lbl, "Badge"))
+
+        prof = note.get("profile") or "Alessandro"
+        top_row.addWidget(_make_label(prof, "BadgeMuted"))
+        top_row.addStretch(1)
+
+        dt = _format_timestamp(note.get("created_at"))
+        top_row.addWidget(_make_label(dt, "CardMeta"))
+        layout.addLayout(top_row)
+
+        t_lbl = QLabel(note.get("title") or "Senza titolo")
+        t_lbl.setWordWrap(True)
+        t_lbl.setStyleSheet("color: #FFFFFF; font-size: 13px; font-weight: bold;")
+        layout.addWidget(t_lbl)
+
+        content = (note.get("content_markdown") or "").strip()
+        preview = (content[:95].replace('\n', ' ') + "...") if len(content) > 95 else content
+        if preview:
+            p_lbl = QLabel(preview)
+            p_lbl.setWordWrap(True)
+            p_lbl.setStyleSheet("color: #94A3B8; font-size: 11.5px;")
+            layout.addWidget(p_lbl)
+
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.mousePressEvent = lambda _e, nid=note_id: self._load_note_into_nk_editor(nid)
+        return card
+
+    def _load_note_into_nk_editor(self, note_id: int):
+        note = db.get_study_note_by_id(note_id)
+        if not note:
+            return
+        self._nk_selected_note_id = note_id
+        if hasattr(self, "nk_editor_title"):
+            self.nk_editor_title.setText(note.get("title") or "")
+            self.nk_editor_profile.setCurrentText(note.get("profile") or "Alessandro")
+            self.nk_editor_subject.setText(note.get("subject") or "Generale")
+            self.nk_editor_topic.setText(note.get("topic") or "Generale")
+            ntype = (note.get("note_type") or "appunto").lower()
+            idx = self.nk_editor_type.findText(ntype, Qt.MatchFlag.MatchFixedString)
+            if idx >= 0:
+                self.nk_editor_type.setCurrentIndex(idx)
+            self.nk_editor_body.setPlainText(note.get("content_markdown") or "")
+
+    def _on_nk_save_clicked(self):
+        title = self.nk_editor_title.text().strip() or "Appunto senza titolo"
+        prof = self.nk_editor_profile.currentText().strip() or "Alessandro"
+        subj = self.nk_editor_subject.text().strip() or "Generale"
+        top = self.nk_editor_topic.text().strip() or "Generale"
+        ntype = self.nk_editor_type.currentText().strip() or "appunto"
+        content = self.nk_editor_body.toPlainText().strip()
+
+        if getattr(self, "_nk_selected_note_id", None):
+            db.update_study_note(self._nk_selected_note_id, title, content, prof, subj, top, ntype)
+        else:
+            new_id = db.add_study_note(title, content, ntype, "", None, prof, subj, top)
+            self._nk_selected_note_id = new_id
+
+        orig_text = self.nk_save_btn.text()
+        self.nk_save_btn.setText("✓ Salvato!")
+        QTimer.singleShot(1400, lambda: self.nk_save_btn.setText(orig_text))
+
+        self._refresh_notekeeper()
+
+    def _on_nk_new_note_clicked(self):
+        self._nk_selected_note_id = None
+        self.nk_editor_title.setText("")
+        self.nk_editor_subject.setText(self._nk_current_filter_subject or "Generale")
+        self.nk_editor_topic.setText(self._nk_current_filter_topic or "Generale")
+        self.nk_editor_body.setPlainText("")
+        self.nk_editor_title.setFocus()
+
+    def _on_nk_delete_clicked(self):
+        if not getattr(self, "_nk_selected_note_id", None):
+            return
+        reply = QMessageBox.question(
+            self, "Elimina Nota",
+            "Vuoi davvero eliminare questa nota e tutte le eventuali flashcard e relazioni associate?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            db.delete_study_note(self._nk_selected_note_id)
+            self._nk_selected_note_id = None
+            self.nk_editor_title.setText("")
+            self.nk_editor_body.setPlainText("")
+            self._refresh_notekeeper()
+
+    def _on_nk_ask_whis_clicked(self):
+        title = self.nk_editor_title.text().strip()
+        subj = self.nk_editor_subject.text().strip() or "Generale"
+        top = self.nk_editor_topic.text().strip() or "Generale"
+        content = self.nk_editor_body.toPlainText().strip()
+
+        if content:
+            pyperclip.copy(content)
+
+        self.pages.setCurrentIndex(4)
+        if 4 in self.nav_buttons_by_page:
+            self.nav_buttons_by_page[4].setChecked(True)
+        self._refresh_current_page()
+
+        if hasattr(self, "whis_input"):
+            self.whis_input.setText(f"Spiegami questo appunto su {subj} - {top}: {title}")
+            self.whis_input.setFocus()
+
+    def _on_nk_new_subject_clicked(self):
+        prof = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Alessandro"
+        dlg = NewSubjectTopicDialog(self, default_profile=prof)
+        if dlg.exec():
+            self._refresh_notekeeper()
+
+    def _on_nk_extract_flashcards_clicked(self):
+        if not getattr(self, "_nk_selected_note_id", None):
+            QMessageBox.warning(self, "Attenzione", "Seleziona o salva prima una nota nell'editor.")
+            return
+        note = db.get_study_note_by_id(self._nk_selected_note_id)
+        if not note:
+            return
+        self._extract_flashcards_clicked(note, self.nk_fc_btn)
+
+    # -----------------------------------------------------------------
+    # FLASHCARD ESAME (PILASTRO FLOWSTUDY - SCHEDA DEDICATA)
+    # -----------------------------------------------------------------
+    def _build_flowstudy_flashcards_page(self) -> QWidget:
+        page, layout = self._make_page("🃏 Flashcard Esame", "Ripasso attivo e interrogazione sui concetti chiave estratti dalle tue sbobine.")
+
+        toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
+        self.fc_search = QLineEdit()
+        self.fc_search.setPlaceholderText("🔍 Cerca nelle flashcard d'esame...")
+        self.fc_search.setMinimumHeight(36)
+        self.fc_search.textChanged.connect(self._refresh_flashcards_page)
+        toolbar.addWidget(self.fc_search, 1)
+
+        self.fc_profile_filter = QComboBox()
+        self.fc_profile_filter.addItems(["Tutti i profili", "Alessandro", "Giada"])
+        self.fc_profile_filter.setMinimumHeight(36)
+        self.fc_profile_filter.currentIndexChanged.connect(self._refresh_flashcards_page)
+        toolbar.addWidget(self.fc_profile_filter)
+
+        layout.addLayout(toolbar)
+
+        self.fc_list = ScrollList("Nessuna flashcard d'esame presente. Creala da un appunto cliccando '🧠 Flashcard'.")
+        layout.addWidget(self.fc_list, 1)
+        return page
+
+    def _refresh_flashcards_page(self):
+        if not hasattr(self, "fc_list"):
+            return
+        query = self.fc_search.text().strip().lower() if hasattr(self, "fc_search") else ""
+        prof = self.fc_profile_filter.currentText().strip() if hasattr(self, "fc_profile_filter") else "Tutti i profili"
+
+        all_fc = db.get_all_study_notes(note_type="Flashcard")
+        if prof != "Tutti i profili":
+            all_fc = [f for f in all_fc if (f.get("profile") or "Alessandro") == prof or (prof in (f.get("tags") or ""))]
+
+        if query:
+            all_fc = [
+                f for f in all_fc
+                if query in (f.get("title") or "").lower()
+                or query in (f.get("content_markdown") or "").lower()
+                or query in (f.get("tags") or "").lower()
+            ]
+
+        self.fc_list.clear()
+        if not all_fc:
+            self.fc_list.show_empty("Nessuna flashcard trovata con i filtri attuali.")
+            return
+
+        for fc in all_fc:
+            self.fc_list.add_card(self._make_flashcard_study_card(fc))
+
+    def _make_flashcard_study_card(self, fc: Dict) -> QFrame:
+        card, layout = _make_card()
+        fc_id = fc.get("id")
+        title = fc.get("title") or "Domanda d'esame"
+        q_text = title.replace("Flashcard:", "").strip()
+        content = fc.get("content_markdown") or ""
+
+        ans_text = content
+        if "**Domanda:**" in content and "**Risposta:**" in content:
+            parts = content.split("**Risposta:**", 1)
+            q_part = parts[0].replace("**Domanda:**", "").strip()
+            if q_part:
+                q_text = q_part
+            if len(parts) > 1:
+                ans_text = parts[1].strip()
+
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(6)
+        meta_row.addWidget(_make_label("🃏 Flashcard", "Badge"))
+        subj = fc.get("subject") or "Generale"
+        top = fc.get("topic") or "Generale"
+        if subj != "Generale":
+            meta_row.addWidget(_make_label(f"📚 {subj}", "BadgeMuted"))
+        if top != "Generale":
+            meta_row.addWidget(_make_label(f"🏷️ {top}", "BadgeMuted"))
+        meta_row.addStretch(1)
+
+        del_btn = _make_button("🗑️", "danger")
+        del_btn.setToolTip("Elimina flashcard")
+        del_btn.clicked.connect(lambda _c=False, fid=fc_id: self._delete_flashcard_from_page(fid))
+        meta_row.addWidget(del_btn)
+        layout.addLayout(meta_row)
+
+        q_label = QLabel(f"<b>Domanda:</b> {q_text}")
+        q_label.setWordWrap(True)
+        q_label.setStyleSheet("color: #38BDF8; font-size: 13.5px; font-weight: 600; margin-top: 4px;")
+        layout.addWidget(q_label)
+
+        ans_frame = QFrame()
+        ans_frame.setStyleSheet("background-color: #131722; border: 1px dashed #334155; border-radius: 6px; padding: 8px;")
+        ans_layout = QVBoxLayout(ans_frame)
+        ans_label = QLabel(ans_text)
+        ans_label.setWordWrap(True)
+        ans_label.setStyleSheet("color: #E2E8F0; font-size: 12.5px; line-height: 1.4;")
+        ans_layout.addWidget(ans_label)
+        ans_frame.hide()
+        layout.addWidget(ans_frame)
+
+        toggle_btn = _make_button("👁️ Mostra Risposta")
+        def _toggle(f=ans_frame, b=toggle_btn):
+            if f.isVisible():
+                f.hide()
+                b.setText("👁️ Mostra Risposta")
+            else:
+                f.show()
+                b.setText("🙈 Nascondi Risposta")
+        toggle_btn.clicked.connect(_toggle)
+        layout.addWidget(toggle_btn)
+
+        return card
+
+    def _delete_flashcard_from_page(self, fid: int):
+        db.delete_study_note(fid)
+        self._refresh_flashcards_page()
+
+    # -----------------------------------------------------------------
+    # GRAFO CONCETTUALE (PILASTRO FLOWSTUDY - OBSIDIAN STYLE)
+    # -----------------------------------------------------------------
+    def _build_flowstudy_graph_page(self) -> QWidget:
+        page, layout = self._make_page("🕸️ Grafo Concettuale", "Visualizzazione delle relazioni tra materie, argomenti, formule e sbobine (Obsidian Style).")
 
         self.graph_widget = KnowledgeGraphWidget(on_node_click=self._on_graph_node_clicked)
-        self.notes_view_stack.addWidget(self.graph_widget)
-
-        layout.addWidget(self.notes_view_stack, 1)
+        layout.addWidget(self.graph_widget, 1)
         return page
+
+    def _on_graph_node_clicked(self, note_id: int):
+        """Quando si clicca un nodo nel Grafo, passa al Notekeeper e carica la nota nell'editor."""
+        self.pages.setCurrentIndex(1)
+        if 1 in self.nav_buttons_by_page:
+            self.nav_buttons_by_page[1].setChecked(True)
+        self._refresh_notekeeper()
+        self._load_note_into_nk_editor(note_id)
 
     def _open_quick_note_dialog(self):
         dialog = QuickNoteDialog(self)
         if dialog.exec():
-            if hasattr(self, "filter_sbobine_btn") and self.filter_sbobine_btn.isChecked():
-                self.filter_rapidi_btn.setChecked(True)
-            self._refresh_notes()
+            self._refresh_notekeeper()
             created_id = getattr(dialog, "created_note_id", None)
             if created_id:
+                self._load_note_into_nk_editor(created_id)
                 self._start_autolinking(created_id, dialog.created_note_title, dialog.created_note_text)
 
     def _filtered_notes(self) -> List[Dict]:
-        query = self.notes_search.text().strip().lower()
-        notes = db.get_notes()
-
-        # Filtro per categoria pillola
-        if hasattr(self, "filter_sbobine_btn") and self.filter_sbobine_btn.isChecked():
-            notes = [
-                n for n in notes
-                if (n.get("note_type") or "").lower() == "sbobina"
-                or (n.get("title") or "").lower().startswith("sbobina:")
-                or "sbobina" in (n.get("tags") or "").lower()
-                or ("audio" in (n.get("tags") or "").lower() and (n.get("note_type") or "").lower() != "appunto rapido")
-            ]
-        elif hasattr(self, "filter_rapidi_btn") and self.filter_rapidi_btn.isChecked():
-            notes = [
-                n for n in notes
-                if (n.get("note_type") or "").lower() in ("appunto rapido", "appunto", "rapido")
-                or "rapido" in (n.get("note_type") or "").lower()
-                or "rapido" in (n.get("tags") or "").lower()
-            ]
-
-        if query:
-            def _matches(n):
-                t = (n.get("title") or "").lower()
-                c = (n.get("content_markdown") or "").lower()
-                tags = (n.get("tags") or "").lower()
-                nt = (n.get("note_type") or "").lower()
-                # Retrocompatibilità: ricerca per 'giada' o 'lei' interscambiabile
-                tags_norm = tags.replace("lei", "giada")
-                return query in t or query in c or query in tags or query in tags_norm or query in nt
-
-            notes = [n for n in notes if _matches(n)]
-        return notes
+        return db.get_notes()
 
     def _refresh_notes(self):
-        if not hasattr(self, "notes_list"):
-            return
-        if not hasattr(self, "_note_cards"):
-            self._note_cards = {}
-        self._note_cards.clear()
-        notes = self._filtered_notes()
-        self.notes_list.clear()
-        if not notes:
-            if self.notes_search.text().strip():
-                empty_msg = "Nessun risultato per la ricerca."
-            elif hasattr(self, "filter_rapidi_btn") and self.filter_rapidi_btn.isChecked():
-                empty_msg = "Nessun appunto rapido salvato.\nDì 'Prendi nota...' con Caps Lock o clicca '⚡ Appunto Rapido'."
-            elif hasattr(self, "filter_sbobine_btn") and self.filter_sbobine_btn.isChecked():
-                empty_msg = "Nessuna sbobina presente.\nClicca '🎙️ Sbobina File Audio' per trascrivere una lezione."
-            else:
-                empty_msg = "Nessuna nota salvata. Clicca '⚡ Appunto Rapido' o detta con Caps Lock."
-            self.notes_list.show_empty(empty_msg)
-            return
-        for n in notes:
-            self.notes_list.add_card(self._make_note_card(n))
+        self._refresh_notekeeper()
 
     def _make_note_card(self, n: Dict) -> QFrame:
         card, layout = _make_card()
@@ -2541,48 +3198,27 @@ class FlowLocalHub(QMainWindow):
         self._start_autolinking(note_id, title, content, btn=btn)
 
     def _set_notes_view_mode(self, mode: int):
-        """0 = Vista Lista, 1 = Vista Grafo della Conoscenza."""
-        if hasattr(self, "notes_view_stack"):
-            self.notes_view_stack.setCurrentIndex(mode)
-        if hasattr(self, "btn_view_list") and hasattr(self, "btn_view_graph"):
-            self.btn_view_list.setChecked(mode == 0)
-            self.btn_view_graph.setChecked(mode == 1)
-        # Sincronizza selezione bottoni sidebar se presente
-        if hasattr(self, "nav_buttons") and len(self.nav_buttons) > 5:
-            if mode == 1:
-                self.nav_buttons[5].setChecked(True)
-            elif self.pages.currentIndex() == 2:
-                self.nav_buttons[2].setChecked(True)
+        """0 = Vista Quaderno Notekeeper (Pagina 1), 1 = Vista Grafo Concettuale (Pagina 3)."""
+        target_page = 3 if mode == 1 else 1
+        self.pages.setCurrentIndex(target_page)
+        if target_page in getattr(self, "nav_buttons_by_page", {}):
+            self.nav_buttons_by_page[target_page].setChecked(True)
         if mode == 1 and hasattr(self, "graph_widget"):
             self.graph_widget.load_data()
+        elif mode == 0:
+            self._refresh_notekeeper()
 
     def _on_graph_node_clicked(self, note_id: int):
-        """Quando si clicca un nodo nel Grafo, passa alla vista Lista ed evidenzia la card."""
-        self._set_notes_view_mode(0)
-        self._scroll_to_and_highlight_note(note_id)
+        """Quando si clicca un nodo nel Grafo, passa al Notekeeper e carica la nota nell'editor."""
+        self.pages.setCurrentIndex(1)
+        if 1 in getattr(self, "nav_buttons_by_page", {}):
+            self.nav_buttons_by_page[1].setChecked(True)
+        self._refresh_notekeeper()
+        self._load_note_into_nk_editor(note_id)
 
     def _scroll_to_and_highlight_note(self, target_note_id: int):
-        """Scorre fino alla nota specificata e attiva un bagliore visivo di highlight."""
-        self._set_notes_view_mode(0)
-        if target_note_id not in self._note_cards:
-            self.notes_search.clear()
-            if hasattr(self, "filter_all_btn"):
-                self.filter_all_btn.setChecked(True)
-            self._refresh_notes()
-
-        card = self._note_cards.get(target_note_id)
-        if card and hasattr(self, "notes_list"):
-            self.notes_list.ensureWidgetVisible(card)
-            orig_style = card.styleSheet()
-            card.setStyleSheet("""
-                QFrame#Card {
-                    background-color: #172642;
-                    border: 2px solid #38BDF8;
-                    border-radius: 10px;
-                    padding: 12px 14px;
-                }
-            """)
-            QTimer.singleShot(1800, lambda: card.setStyleSheet(orig_style))
+        """Passa al Notekeeper e carica la nota nell'editor."""
+        self._on_graph_node_clicked(target_note_id)
 
     def _on_sbobina_clicked(self):
         if self._transcribe_thread and self._transcribe_thread.isRunning():

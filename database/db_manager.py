@@ -75,17 +75,43 @@ class DatabaseManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
                 content_markdown TEXT NOT NULL,
-                note_type TEXT DEFAULT 'Note', -- 'Note', 'Flashcard', 'Meeting', 'LaTeX'
+                note_type TEXT DEFAULT 'appunto', -- 'appunto', 'sbobina', 'slide', 'Flashcard'
                 tags TEXT DEFAULT '',
                 parent_note_id INTEGER DEFAULT NULL,
+                profile TEXT DEFAULT 'Alessandro',
+                subject TEXT DEFAULT 'Generale',
+                topic TEXT DEFAULT 'Generale',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
 
-        # Migrazione schema: parent_note_id per collegare le flashcard alla sbobina madre
+        # Migrazione schema Notekeeper: parent_note_id, profile, subject, topic
+        for col_name, col_sql in [
+            ("parent_note_id", "INTEGER DEFAULT NULL"),
+            ("profile", "TEXT DEFAULT 'Alessandro'"),
+            ("subject", "TEXT DEFAULT 'Generale'"),
+            ("topic", "TEXT DEFAULT 'Generale'"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE study_notes ADD COLUMN {col_name} {col_sql};")
+            except sqlite3.OperationalError:
+                pass
+
+        # View di compatibilità 'notes' -> 'study_notes'
         try:
-            cursor.execute("ALTER TABLE study_notes ADD COLUMN parent_note_id INTEGER DEFAULT NULL;")
-        except sqlite3.OperationalError:
+            cursor.execute("CREATE VIEW IF NOT EXISTS notes AS SELECT * FROM study_notes;")
+        except Exception:
+            pass
+
+        # Inferenza profilo da tag esistenti se default
+        try:
+            cursor.execute("""
+                UPDATE study_notes
+                SET profile = 'Giada'
+                WHERE (profile IS NULL OR profile = 'Alessandro')
+                  AND (tags LIKE '%Giada%' OR tags LIKE '%Lei%');
+            """)
+        except Exception:
             pass
 
         # Collegamento retroattivo flashcard esistenti alla sbobina sorgente tramite tags
@@ -605,24 +631,62 @@ class DatabaseManager:
             "is_active": 1
         }
 
-    # --- NOTE DI STUDIO & FLASHCARD ---
-    def add_study_note(self, title: str, content_markdown: str, note_type: str = "Note", tags: str = "", parent_note_id: Optional[int] = None) -> int:
+    # --- NOTE DI STUDIO & FLASHCARD (NOTEKEEPER HIERARCHY) ---
+    def add_study_note(
+        self,
+        title: str,
+        content_markdown: str,
+        note_type: str = "appunto",
+        tags: str = "",
+        parent_note_id: Optional[int] = None,
+        profile: str = "Alessandro",
+        subject: str = "Generale",
+        topic: str = "Generale"
+    ) -> int:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO study_notes (title, content_markdown, note_type, tags, parent_note_id)
-            VALUES (?, ?, ?, ?, ?)
-        """, (title.strip(), content_markdown.strip(), note_type, tags, parent_note_id))
+            INSERT INTO study_notes (title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (title.strip(), content_markdown.strip(), note_type, tags, parent_note_id, profile, subject, topic))
         conn.commit()
         return cursor.lastrowid
+
+    def update_study_note(
+        self,
+        note_id: int,
+        title: str,
+        content_markdown: str,
+        profile: str = "Alessandro",
+        subject: str = "Generale",
+        topic: str = "Generale",
+        note_type: str = "appunto"
+    ) -> bool:
+        """Aggiorna metadati e contenuto di una nota nel Notekeeper."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE study_notes
+            SET title = ?, content_markdown = ?, profile = ?, subject = ?, topic = ?, note_type = ?
+            WHERE id = ?
+        """, (title.strip(), content_markdown.strip(), profile.strip(), subject.strip(), topic.strip(), note_type.strip(), note_id))
+        conn.commit()
+        return cursor.rowcount > 0
 
     def get_all_study_notes(self, note_type: Optional[str] = None) -> List[Dict[str, Any]]:
         conn = self._get_connection()
         cursor = conn.cursor()
         if note_type:
-            cursor.execute("SELECT id, title, content_markdown, note_type, tags, parent_note_id, created_at FROM study_notes WHERE note_type = ? ORDER BY id DESC", (note_type,))
+            cursor.execute(
+                "SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at "
+                "FROM study_notes WHERE note_type = ? ORDER BY id DESC",
+                (note_type,)
+            )
         else:
-            cursor.execute("SELECT id, title, content_markdown, note_type, tags, parent_note_id, created_at FROM study_notes ORDER BY id DESC")
+            cursor.execute(
+                "SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at "
+                "FROM study_notes ORDER BY id DESC"
+            )
         return [dict(row) for row in cursor.fetchall()]
 
     def get_notes(self) -> List[Dict[str, Any]]:
@@ -630,11 +694,136 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, title, content_markdown, note_type, tags, parent_note_id, created_at
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at
             FROM study_notes
             WHERE (parent_note_id IS NULL AND note_type != 'Flashcard')
             ORDER BY id DESC
         """)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_subjects_tree(self, profile: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+        """Restituisce l'albero gerarchico {subject: [{'topic': topic_name, 'count': num_notes}, ...]}."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        query = """
+            SELECT COALESCE(NULLIF(TRIM(subject), ''), 'Generale') as subj,
+                   COALESCE(NULLIF(TRIM(topic), ''), 'Generale') as top,
+                   COUNT(*) as cnt
+            FROM study_notes
+            WHERE (parent_note_id IS NULL AND note_type != 'Flashcard')
+        """
+        params = []
+        if profile and profile.strip().lower() not in ("tutti", "all", ""):
+            query += " AND profile = ?"
+            params.append(profile.strip())
+        query += " GROUP BY subj, top ORDER BY subj ASC, top ASC"
+        cursor.execute(query, tuple(params))
+        rows = cursor.fetchall()
+
+        tree: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            s = row["subj"]
+            t = row["top"]
+            c = row["cnt"]
+            if s not in tree:
+                tree[s] = []
+            tree[s].append({"topic": t, "count": c})
+        return tree
+
+    def get_notes_by_hierarchy(
+        self,
+        profile: Optional[str] = None,
+        subject: Optional[str] = None,
+        topic: Optional[str] = None,
+        search_query: str = ""
+    ) -> List[Dict[str, Any]]:
+        """Recupera le note filtrate per profilo, materia, argomento e testo di ricerca."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        query = """
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at
+            FROM study_notes
+            WHERE (parent_note_id IS NULL AND note_type != 'Flashcard')
+        """
+        params = []
+        if profile and profile.strip().lower() not in ("tutti", "all", ""):
+            query += " AND profile = ?"
+            params.append(profile.strip())
+        if subject and subject.strip().lower() not in ("tutte", "tutti", "all", ""):
+            query += " AND subject = ?"
+            params.append(subject.strip())
+        if topic and topic.strip().lower() not in ("tutti", "tutte", "all", ""):
+            query += " AND topic = ?"
+            params.append(topic.strip())
+        if search_query and search_query.strip():
+            sq = f"%{search_query.strip()}%"
+            query += " AND (title LIKE ? OR content_markdown LIKE ? OR tags LIKE ?)"
+            params.extend([sq, sq, sq])
+        query += " ORDER BY id DESC"
+        cursor.execute(query, tuple(params))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def search_knowledge_base(
+        self,
+        query: str,
+        subject: Optional[str] = None,
+        topic: Optional[str] = None,
+        limit: int = 4
+    ) -> List[Dict[str, Any]]:
+        """Cerca per parole chiave (filtrando le stopword italiane) dentro notes e flashcards, con filtro opzionale per subject e topic."""
+        if not query or not query.strip():
+            return []
+
+        stopwords = {
+            "il", "lo", "la", "i", "gli", "le", "un", "uno", "una",
+            "di", "a", "da", "in", "con", "su", "per", "tra", "fra",
+            "e", "ed", "o", "od", "ma", "che", "chi", "cui", "quale", "quali",
+            "come", "cosa", "dove", "quando", "perché", "questo", "questa",
+            "questi", "queste", "quello", "quella", "quelli", "quelle",
+            "mio", "tuo", "suo", "nostro", "vostro", "loro", "non", "più",
+            "molto", "poco", "tutto", "tutti", "tutte", "anche", "ancora",
+            "solo", "già", "mentre", "se", "si", "ci", "vi", "ne",
+            "ha", "hanno", "ho", "hai", "è", "era", "sono", "stato", "stata",
+            "stati", "state", "del", "dello", "della", "dei", "degli", "delle",
+            "al", "allo", "alla", "ai", "agli", "alle", "dal", "dallo", "dalla",
+            "dai", "dagli", "dalle", "nel", "nello", "nella", "nei", "negli",
+            "nelle", "sul", "sullo", "sulla", "sui", "sugli", "sulle"
+        }
+
+        raw_words = re.findall(r'\b[A-Za-z0-9_À-ÿ]{3,}\b', query.lower())
+        keywords = [w for w in raw_words if w not in stopwords]
+        if not keywords:
+            keywords = [w for w in raw_words] or [query.strip().lower()[:20]]
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        sql_base = """
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at
+            FROM study_notes
+            WHERE 1=1
+        """
+        params = []
+        if subject and subject.strip().lower() not in ("tutte", "tutti", "all", ""):
+            sql_base += " AND subject = ?"
+            params.append(subject.strip())
+        if topic and topic.strip().lower() not in ("tutti", "tutte", "all", ""):
+            sql_base += " AND topic = ?"
+            params.append(topic.strip())
+
+        kw_conditions = []
+        for kw in keywords[:8]:
+            kw_param = f"%{kw}%"
+            kw_conditions.append("(title LIKE ? OR content_markdown LIKE ? OR tags LIKE ?)")
+            params.extend([kw_param, kw_param, kw_param])
+
+        if kw_conditions:
+            sql_base += f" AND ({' OR '.join(kw_conditions)})"
+
+        sql_base += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+
+        cursor.execute(sql_base, tuple(params))
         return [dict(row) for row in cursor.fetchall()]
 
     def get_flashcards_for_note(self, parent_note_id: int, note_title: str = "") -> List[Dict[str, Any]]:
@@ -642,7 +831,7 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, title, content_markdown, note_type, tags, parent_note_id, created_at
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at
             FROM study_notes
             WHERE parent_note_id = ?
                OR (note_type = 'Flashcard' AND (? != '' AND tags LIKE '%' || ? || '%'))
@@ -661,7 +850,7 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, title, content_markdown, note_type, tags, parent_note_id, created_at
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at
             FROM study_notes
             WHERE id = ?
         """, (note_id,))

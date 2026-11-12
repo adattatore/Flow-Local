@@ -230,23 +230,28 @@ class CloudSyncManager:
             created_at = str(n.get("created_at") or "")
             parent_id = n.get("parent_note_id")
 
-            # Estrazione Profilo e Materia dai tag o dal contenuto (retrocompatibilità 'Lei' -> 'Giada')
-            profile = "Alessandro"
+            # Profilo, Materia e Argomento dal database con fallback su tag
+            profile = (n.get("profile") or "Alessandro").strip()
             if "Giada" in tags_str or "Profilo: Giada" in tags_str or "Lei" in tags_str or "Profilo: Lei" in tags_str:
                 profile = "Giada"
             elif "Alessandro" in tags_str or "Profilo: Alessandro" in tags_str:
                 profile = "Alessandro"
 
-            subject = ""
-            # Cerca tag di materia tipo "Materia: XXX" oppure "Fisica", "Diritto", ecc.
-            tag_tokens = [(t or "").strip() for t in tags_str.split(",") if (t or "").strip()]
-            for tok in tag_tokens:
-                if tok.lower().startswith("materia:"):
-                    subject = (tok.split(":", 1)[1] or "").strip()
-                    break
-                elif tok.lower() not in ("audio", "sbobina", "note", "flashcard", "esame", "alessandro", "giada", "lei"):
-                    subject = tok
-                    break
+            subject = (n.get("subject") or "").strip()
+            topic = (n.get("topic") or "Generale").strip()
+            if not subject or subject == "Generale":
+                # Cerca tag di materia tipo "Materia: XXX" oppure "Fisica", "Diritto", ecc.
+                tag_tokens = [(t or "").strip() for t in tags_str.split(",") if (t or "").strip()]
+                for tok in tag_tokens:
+                    if tok.lower().startswith("materia:"):
+                        subject = (tok.split(":", 1)[1] or "").strip()
+                        break
+                    elif tok.lower() not in ("audio", "sbobina", "note", "flashcard", "esame", "alessandro", "giada", "lei"):
+                        subject = tok
+                        break
+
+            if not subject:
+                subject = "Generale"
 
             profiles_set.add(profile)
             if subject and subject != "Generale":
@@ -279,6 +284,8 @@ class CloudSyncManager:
                     "answer": a_text,
                     "profile": profile,
                     "subject": subject,
+                    "topic": topic,
+                    "note_type": "Flashcard",
                     "tags": clean_tags_str,
                     "created_at": created_at,
                 })
@@ -311,6 +318,7 @@ class CloudSyncManager:
                     "note_type": note_type,
                     "profile": profile,
                     "subject": subject,
+                    "topic": topic,
                     "tags": clean_tags_str,
                     "summary": summary_text,
                     "pdf_filename": expected_pdf if has_pdf else None,
