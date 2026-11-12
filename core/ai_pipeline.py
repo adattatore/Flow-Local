@@ -253,6 +253,23 @@ def normalize_phonetic_variants(text: str) -> str:
 
     # 5. Correzione automatica varianti fonetiche sbobbina/sbobbine e forme correlate
     text = re.sub(r'\b(sbobbin\w*)\b', _replace_sbobbina, text, flags=re.IGNORECASE)
+
+    # 6. 'mentre che' -> 'mentre' (preserva maiuscola se a inizio frase)
+    text = re.sub(r'\bMentre\s+che\b', 'Mentre', text)
+    text = re.sub(r'\bmentre\s+che\b', 'mentre', text)
+
+    # 7. 'in Idol' / 'modalità Idol' -> 'in idle' / 'modalità idle'
+    text = re.sub(r'\bmodalit[aà]\s+idol\b', 'modalità idle', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bModalit[aà]\s+idol\b', 'Modalità idle', text)
+    text = re.sub(r'\bin\s+idol\b', 'in idle', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bIn\s+idol\b', 'In idle', text)
+
+    # 8. 'caps lock' -> 'Caps Lock'
+    text = re.sub(r'\bcaps\s+lock\b', 'Caps Lock', text, flags=re.IGNORECASE)
+
+    # 9. Se una frase inizia con 'PyQt6 sta ' o 'PyQt6 ha ', sostituisci con 'Antigravity'
+    text = re.sub(r'(^|[\.\!\?\n]\s*)pyqt6(\s+(?:sta|ha)\b)', r'\1Antigravity\2', text, flags=re.IGNORECASE)
+
     return text
 
 

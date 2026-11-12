@@ -203,8 +203,8 @@ def main():
     orb.on_change_mode = engine.set_mode
     hub.on_device_changed = engine.change_device
 
-    # Mostra entrambi i componenti all'avvio
-    orb.show()
+    # Modalità Fantasma: l'orb resta nascosto in IDLE e compare solo durante la dettatura
+    orb.hide()
     hub.show()
 
     # 4. System Tray Icon nativa Qt

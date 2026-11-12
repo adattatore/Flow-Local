@@ -135,6 +135,7 @@ class VoiceOrbOverlay(QWidget):
             Qt.WindowType.WindowTransparentForInput
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("FlowLocal (Tieni premuto Caps Lock o clicca per parlare)")
 
@@ -143,6 +144,7 @@ class VoiceOrbOverlay(QWidget):
         self.anchor_y = avail.y() + avail.height() - 36
 
         self._apply_geometry_for_state("IDLE")
+        self.hide()
 
     def _apply_geometry_for_state(self, state: str):
         is_toast_active = bool(self.toast_message and time.time() < self.toast_end_time)
@@ -195,22 +197,27 @@ class VoiceOrbOverlay(QWidget):
         self.last_activity_time = time.time()
         self.ghost_opacity = 1.0
         self._apply_geometry_for_state(self.state)
+        self.show()
         self.update()
 
     def set_state(self, new_state: str):
         self.bridge.change_state.emit(new_state)
 
     def _set_state_slot(self, new_state: str):
-        old_state = self.state
         self.state = new_state
         self.last_activity_time = time.time()
         self.ghost_opacity = 1.0
 
-        # Ridimensiona il widget tra bottone sottile (54x18) e Voice Orb (140x140)
-        if old_state == "IDLE" and new_state != "IDLE":
+        if new_state == "IDLE":
+            is_toast = bool(self.toast_message and time.time() < self.toast_end_time)
+            if not is_toast:
+                self.hide()
+            else:
+                self._apply_geometry_for_state("IDLE")
+                self.show()
+        else:
             self._apply_geometry_for_state(new_state)
-        elif old_state != "IDLE" and new_state == "IDLE":
-            self._apply_geometry_for_state("IDLE")
+            self.show()
 
         self.update()
 
@@ -271,6 +278,10 @@ class VoiceOrbOverlay(QWidget):
         if not is_toast_active and self.toast_opacity < 0.03 and self.toast_message:
             self.toast_message = ""
             self._apply_geometry_for_state(self.state)
+
+        # Modalità Fantasma: in stato IDLE senza toast attivi, l'overlay resta completamente nascosto
+        if self.state == "IDLE" and not is_toast_active and self.isVisible():
+            self.hide()
 
         # Colore in base allo stato attivo
         if is_toast_active:

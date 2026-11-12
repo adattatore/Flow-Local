@@ -1012,9 +1012,9 @@ class GraphNodeItem(QGraphicsItem):
         self.preview = node_data.get("preview") or ""
         self.on_node_click = on_node_click
 
-        # Dimensioni differenziate per tipo di nodo
+        # Dimensioni differenziate per tipo di nodo (compatte per evitare sovrapposizioni)
         self.is_sbobina = (self.note_type.lower() == "sbobina" or "sbobina" in self.title.lower())
-        self.radius = 23.0 if self.is_sbobina else 18.0
+        self.radius = 15.0 if self.is_sbobina else 11.5
         self.edges: List[GraphEdgeItem] = []
 
         # Variabili fisica Force-Directed
@@ -1034,7 +1034,7 @@ class GraphNodeItem(QGraphicsItem):
 
         # Etichetta pulita e compatta
         clean_title = self.title.replace("Sbobina:", "").strip()
-        self.label_text = clean_title if len(clean_title) <= 22 else clean_title[:20] + "…"
+        self.label_text = clean_title if len(clean_title) <= 16 else clean_title[:14] + "…"
 
         # Normalizzazione retrocompatibile tag per visualizzazione ("Profilo: Lei" -> "Profilo: Giada")
         raw_tags = self.tags or ""
@@ -1054,8 +1054,8 @@ class GraphNodeItem(QGraphicsItem):
         self.edges.append(edge)
 
     def boundingRect(self) -> QRectF:
-        r = self.radius + 8.0
-        return QRectF(-r - 45, -r, (r + 45) * 2, r * 2 + 28)
+        r = self.radius + 6.0
+        return QRectF(-r - 35, -r, (r + 35) * 2, r * 2 + 22)
 
     def shape(self) -> QPainterPath:
         path = QPainterPath()
@@ -1135,25 +1135,25 @@ class GraphNodeItem(QGraphicsItem):
         painter.drawEllipse(QPointF(0, 0), self.radius, self.radius)
 
         # Icona centrale
-        font_icon = QFont("Segoe UI Emoji", 11 if self.radius < 20 else 13)
+        font_icon = QFont("Segoe UI Emoji", 8 if self.radius < 14 else 10)
         painter.setFont(font_icon)
         painter.setPen(QPen(QColor("#FFFFFF")))
         painter.drawText(QRectF(-self.radius, -self.radius, self.radius * 2, self.radius * 2), Qt.AlignmentFlag.AlignCenter, icon_char)
 
-        # Pillola titolo sotto il nodo per leggibilità su sfondo scuro
-        font_label = QFont("Segoe UI", 9)
+        # Pillola titolo sotto il nodo (font compatto 8pt) per evitare sovrapposizioni
+        font_label = QFont("Segoe UI", 8)
         font_label.setBold(True)
         painter.setFont(font_label)
 
         metrics = painter.fontMetrics()
-        text_w = metrics.horizontalAdvance(self.label_text) + 12
-        text_h = metrics.height() + 4
-        text_y = self.radius + 4
+        text_w = metrics.horizontalAdvance(self.label_text) + 8
+        text_h = metrics.height() + 2
+        text_y = self.radius + 3
 
         pill_rect = QRectF(-text_w / 2, text_y, text_w, text_h)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(QColor(15, 20, 31, 220)))
-        painter.drawRoundedRect(pill_rect, 4, 4)
+        painter.drawRoundedRect(pill_rect, 3, 3)
 
         text_color = QColor("#38BDF8") if self.is_hovered else QColor("#F8FAFC")
         painter.setPen(QPen(text_color))
@@ -1186,11 +1186,11 @@ class KnowledgeGraphScene(QGraphicsScene):
         self.iterations += 1
         total_movement = 0.0
 
-        k_rep = 3200.0     # Repulsione elettrostatica tra tutti i nodi
-        k_spring = 0.05    # Molla elastica tra nodi collegati
-        l_0 = 140.0        # Lunghezza a riposo della molla
-        k_gravity = 0.007  # Attrazione verso il baricentro (0, 0)
-        damping = 0.83     # Smorzamento della velocità
+        k_rep = 14000.0    # Repulsione elettrostatica aumentata (distanza nodi maggiore)
+        k_spring = 0.025   # Molla elastica morbida
+        l_0 = 260.0        # Lunghezza a riposo della molla aumentata (260 px)
+        k_gravity = 0.0025 # Attrazione verso il baricentro ridotta per distanziare i nodi
+        damping = 0.85     # Smorzamento della velocità
 
         n_count = len(self.nodes)
 
@@ -1209,7 +1209,7 @@ class KnowledgeGraphScene(QGraphicsScene):
                     dy = random.uniform(-2, 2)
                     dist = math.hypot(dx, dy) or 1.0
 
-                if dist < 500.0:
+                if dist < 900.0:
                     force = k_rep / (dist * dist)
                     fx = (dx / dist) * force
                     fy = (dy / dist) * force
@@ -1349,7 +1349,7 @@ class KnowledgeGraphWidget(QFrame):
     def _fit_view(self):
         rect = self.scene.itemsBoundingRect()
         if not rect.isNull() and rect.width() > 10:
-            self.view.fitInView(rect.adjusted(-60, -60, 60, 60), Qt.AspectRatioMode.KeepAspectRatio)
+            self.view.fitInView(rect.adjusted(-90, -90, 90, 90), Qt.AspectRatioMode.KeepAspectRatio)
 
     def load_data(self):
         """Carica nodi e archi dal database SQLite e avvia la disposizione force-directed."""
@@ -1379,9 +1379,9 @@ class KnowledgeGraphWidget(QFrame):
 
         nodes_map: Dict[int, GraphNodeItem] = {}
 
-        # Disposizione iniziale circolare con leggero jitter casuale
+        # Disposizione iniziale circolare con ampia spaziatura e jitter casuale
         count = len(nodes_raw)
-        radius_init = max(80.0, count * 26.0)
+        radius_init = max(180.0, count * 65.0)
         for i, n_data in enumerate(nodes_raw):
             node_item = GraphNodeItem(n_data, on_node_click=self.on_node_click)
             theta = (2.0 * math.pi * i) / count
@@ -1539,11 +1539,11 @@ class FlowLocalHub(QMainWindow):
         nav_structure = [
             ("🎙️ FLOWTYPE", [
                 ("🎙️ Dettatura Live", 0),
-                ("📖 Dizionario & Snippet", 5),
-                ("⚙️ Stili & Prompt", 6),
+                ("📖 Dizionario && Snippet", 5),
+                ("⚙️ Stili && Prompt", 6),
             ]),
             ("📚 FLOWSTUDY", [
-                ("🗂️ Quaderno & Sbobine", 1),
+                ("🗂️ Quaderno && Sbobine", 1),
                 ("🃏 Flashcard Esame", 2),
                 ("🕸️ Grafo Concettuale", 3),
             ]),
