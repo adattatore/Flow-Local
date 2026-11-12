@@ -52,6 +52,11 @@ DOUBLE_TAP_TIMEOUT = 0.35
 LLM_MODEL = "qwen2.5:3b"
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
 
+DEFAULT_WHISPER_INITIAL_PROMPT = (
+    "FlowLocal, Whis, JARVIS, Ollama, Llama, Qwen, Faster-Whisper, "
+    "PyQt6, HUD, overlay, pop-up, GitHub, Antigravity, Emporio 87."
+)
+
 FILLER_WORDS_REGEX = re.compile(
     r'\b(ehm+|uhm+|mhh+|ah+|eh+|vabbè)\b[\.\,\…]*\s*',
     flags=re.IGNORECASE
@@ -360,7 +365,10 @@ class FlowLocalEngine:
         try:
             # Biasing Whisper da database vocabolario
             vocab_prompt = db.get_vocabulary_prompt_string()
-            initial_prompt = f"Termini: {vocab_prompt}" if vocab_prompt else None
+            if vocab_prompt:
+                initial_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} {vocab_prompt}"
+            else:
+                initial_prompt = DEFAULT_WHISPER_INITIAL_PROMPT
 
             segments, info = self.model.transcribe(
                 audio_data,

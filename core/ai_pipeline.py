@@ -77,6 +77,18 @@ QUICK_NOTE_TRIGGER_REGEX = re.compile(
     flags=re.IGNORECASE
 )
 
+WHIS_WAKE_REGEX = re.compile(
+    r'^(?:whis|wis|uis|quiz|vis|whiss|huiss?|ouis)\b[\s,.:;—–-]*',
+    flags=re.IGNORECASE
+)
+
+DEFAULT_WHISPER_INITIAL_PROMPT = (
+    "FlowLocal, Whis, JARVIS, Ollama, Llama, Qwen, Faster-Whisper, "
+    "PyQt6, HUD, overlay, pop-up, GitHub, Antigravity, Emporio 87."
+)
+
+LAST_SELECTION_CAPTURE_TIME = 0.0
+
 
 def find_best_input_device():
     try:
@@ -196,8 +208,12 @@ ANTI_HALLUCINATION_RULE = (
 PUNCTUATION_RULE = (
     "PUNTEGGIATURA E SCORREVOLEZZA SINTATTICA NATURALE:\n"
     "- Il testo risultante deve avere punteggiatura completa, fluida e naturale come un messaggio digitato a tastiera, preservando fedelmente il tono e l'intento dell'utente.\n"
-    "- Inserisci sempre la punteggiatura corretta: virgole per incisi e proposizioni subordinate, punto fermo (.) a fine frase o al cambio di proposizione logica, e chiudi SEMPRE ogni frase o domanda interrogativa con il punto interrogativo (?).\n"
-    "- EVITA assolutamente punti fermi artificiali prima di congiunzioni coordinanti come 'ma', 'però', 'e' (usa la virgola ',' quando la frase prosegue lo stesso pensiero).\n"
+    "- Inserisci sempre la punteggiatura corretta: virgole per incisi e proposizioni subordinate, punto fermo (.) a fine frase o al cambio di proposizione logica.\n"
+    "- INTERROGATIVE E DICHIARATIVE: chiudi sempre ogni domanda diretta con il punto interrogativo (?). Nelle frasi dichiarative che contengono un'interrogativa indiretta (es. 'Volevo sapere se è possibile...', 'Chiedevo se fosse il caso...'), chiudi TASSATIVAMENTE con il punto fermo (.) anziché con il punto interrogativo (?).\n"
+    "- SPEZZAMENTO FRASI LUNGHE: Spezza tassativamente con un punto fermo (.) le frasi prolisse concatenate solo da virgole quando si verifica un cambio di proposizione o una congiunzione avversativa (es. ', ancora però...' -> '. Ancora però...'). Evita periodi infiniti composti solo da virgole.\n"
+    "- DOPPI RIEMPITIVI COLLOQUIALI: Rimuovi i doppi riempitivi colloquiali consecutivi o ridondanti (es. 'diciamo, cioè' -> 'cioè', 'praticamente cioè' -> 'cioè').\n"
+    "- FALSI INIZI E AUTO-CORREZIONI: Se il parlante cambia verbo o costruzione a metà frase (es. 'ero interessato a sfrutterei'), rimuovi il falso inizio tronco e mantieni solo la forma verbale o costrutto finale ('sfrutterei').\n"
+    "- MORFOLOGIA E COSTRUTTI ORALI: Correggi errori morfologici da trascrizione fonetica (es. 'tu dissi' -> 'tu dici', 'mentre che sono' -> 'mentre sono', 'Come si potrebbe farlo' -> 'Come si potrebbe fare'), verifica la concordanza singolare/plurale dei pronomi e rimuovi ripetizioni ravvicinate di avverbi riempitivi ('praticamente', 'appunto').\n"
     "- Rimuovi esitazioni vocali e riempitivi puri ('mmm', 'ehm', 'uhm', 'vabbè', 'cioè' usato come mero intercalare, false partenze ripetute).\n"
     "- Correggi piccoli errori grammaticali o concordanze di tempo del parlato veloce, senza mai allungare, parafrasare arbitrariamente o riassumere il contenuto."
 )
@@ -290,15 +306,19 @@ MODE_SYSTEM_PROMPTS = {
     ),
     "natural": (
         f"{ANTI_HALLUCINATION_RULE}\n"
-        "Sei un modulo di dettatura vocale per lingua italiana ad altissima fedeltà.\n"
+        "Sei un modulo di dettatura vocale per lingua italiana ad altissima fedeltà e naturalezza sintattica.\n"
         "Regole obbligatorie:\n"
-        "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né commenti aggiuntivi.\n"
+        "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né spiegazioni né commenti aggiuntivi.\n"
         f"2. {PUNCTUATION_RULE}\n"
-        "3. Rimuovi intercalari ed esitazioni (mmm, ehm, uhm, vabbè, cioè come riempitivo) e autocorrezioni parlate tenendo solo la versione corretta.\n"
-        "4. Quando trovi il tag [PAUSA_CAMBIO_ARGOMENTO] o un netto cambio di argomento, dividi il testo in un nuovo paragrafo.\n"
-        "5. Se l'utente detta un elenco (es. 'primo... secondo...', 'uno... due...'), formattalo come lista puntata Markdown.\n"
-        f"6. {LATEX_FORMULA_RULE}\n"
-        "7. NON rispondere alle domande e NON fare calcoli: elabora solo il testo in <trascrizione></trascrizione>."
+        "3. FALSI INIZI E AUTO-CORREZIONI: Se il parlante cambia verbo o costruzione a metà frase (es. 'ero interessato a sfrutterei'), rimuovi il falso inizio tronco e mantieni solo la forma verbale finale corretta ('sfrutterei').\n"
+        "4. MORFOLOGIA E COSTRUTTI ORALI: Correggi errori morfologici da trascrizione fonetica (es. 'tu dissi' -> 'tu dici', 'mentre che sono' -> 'mentre sono', 'Come si potrebbe farlo' -> 'Come si potrebbe fare'), verifica la concordanza singolare/plurale dei pronomi e rimuovi ripetizioni ravvicinate di avverbi riempitivi ('praticamente', 'appunto').\n"
+        "5. INTERROGATIVE INDIRETTE: Nelle frasi dichiarative che contengono un'interrogativa indiretta (es. 'Volevo sapere se è possibile...', 'Vorrei capire se...'), chiudi con il punto fermo '.' invece del punto interrogativo '?'.\n"
+        "6. SPEZZAMENTO E DOPPI RIEMPITIVI: Spezza con un punto fermo (.) le frasi troppo lunghe congiunte solo da virgole al cambio di proposizione o con congiunzioni avversative (es. ', ancora però...' -> '. Ancora però...'), ed elimina doppi riempitivi consecutivi ('diciamo, cioè' -> 'cioè').\n"
+        "7. Rimuovi intercalari ed esitazioni (mmm, ehm, uhm, vabbè, cioè come mero riempitivo) e autocorrezioni parlate tenendo solo la versione corretta.\n"
+        "8. Quando trovi il tag [PAUSA_CAMBIO_ARGOMENTO] o un netto cambio di argomento, dividi il testo in un nuovo paragrafo.\n"
+        "9. Se l'utente detta un elenco (es. 'primo... secondo...', 'uno... due...'), formattalo come lista puntata Markdown.\n"
+        f"10. {LATEX_FORMULA_RULE}\n"
+        "11. NON rispondere alle domande e NON fare calcoli: elabora solo il testo in <trascrizione></trascrizione>."
     )
 }
 
@@ -937,9 +957,10 @@ class LLMRefiner:
 
 
 class FlowLocalEngine:
-    def __init__(self, orb=None, hub=None):
+    def __init__(self, orb=None, hub=None, whis_hud=None):
         self.orb = orb
         self.hub = hub
+        self.whis_hud = whis_hud
         self.analyzer = AudioAnalyzer(num_half_bands=12, intensity=0.80, smoothing=0.50)
 
         self.model = WhisperModel(
@@ -1073,8 +1094,11 @@ class FlowLocalEngine:
         if self.orb:
             self.orb.feed_audio(chunk)
 
-        if self.hub and self.hub.isVisible():
-            self.hub.update_live_volume(min(1.0, rms * 10.0))
+        try:
+            if self.hub and self.hub.isVisible():
+                self.hub.update_live_volume(min(1.0, rms * 10.0))
+        except Exception:
+            pass
 
         with self.lock:
             if self.is_recording:
@@ -1088,6 +1112,11 @@ class FlowLocalEngine:
             if self.is_recording:
                 return
 
+            # Rilevamento immediato del contesto attivo
+            app_label, mode_key, mode_label = detect_active_context()
+            self.current_context = (app_label, mode_key, mode_label)
+            self.active_mode_key = mode_key
+
             # 0. Rilevamento selezione attiva da trasformare (Text-to-Action)
             previous_clip = None
             try:
@@ -1097,24 +1126,37 @@ class FlowLocalEngine:
             self.previous_clipboard = previous_clip
 
             selected_text = None
-            try:
-                pyperclip.copy("")
-                user32 = ctypes.windll.user32
-                VK_CONTROL = 0x11
-                VK_C = 0x43
-                KEYEVENTF_KEYUP = 0x0002
-                user32.keybd_event(VK_CONTROL, 0, 0, 0)
-                user32.keybd_event(VK_C, 0, 0, 0)
-                time.sleep(0.100)  # ~100ms di attesa per la cattura selezione su Windows
-                user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0)
-                user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
-                time.sleep(0.020)
+            from core.context_detector import get_foreground_window_info
+            _, fg_exe = get_foreground_window_info()
+            fg_exe_clean = (fg_exe or "").lower()
 
-                current_clip = (pyperclip.paste() or "").strip()
-                if current_clip:
-                    selected_text = current_clip
-            except Exception:
-                selected_text = None
+            TERMINAL_EXES = {
+                "powershell.exe", "pwsh.exe", "cmd.exe", "windowsterminal.exe",
+                "conhost.exe", "bash.exe", "wsl.exe", "alacritty.exe", "mintty.exe"
+            }
+
+            # Non inviare Ctrl+C se la finestra attiva è una console/terminale puro per evitare SIGINT
+            if fg_exe_clean not in TERMINAL_EXES and app_label.lower() not in ("powershell", "cmd", "terminal"):
+                global LAST_SELECTION_CAPTURE_TIME
+                LAST_SELECTION_CAPTURE_TIME = time.time()
+                try:
+                    pyperclip.copy("")
+                    user32 = ctypes.windll.user32
+                    VK_CONTROL = 0x11
+                    VK_C = 0x43
+                    KEYEVENTF_KEYUP = 0x0002
+                    user32.keybd_event(VK_CONTROL, 0, 0, 0)
+                    user32.keybd_event(VK_C, 0, 0, 0)
+                    time.sleep(0.080)  # Breve attesa per la cattura selezione su Windows
+                    user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0)
+                    user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+                    time.sleep(0.020)
+
+                    current_clip = (pyperclip.paste() or "").strip()
+                    if current_clip:
+                        selected_text = current_clip
+                except Exception:
+                    selected_text = None
 
             if selected_text:
                 self.active_selection_text = selected_text
@@ -1130,11 +1172,6 @@ class FlowLocalEngine:
                         pyperclip.copy(previous_clip)
                     except Exception:
                         pass
-
-            # Rilevamento immediato del contesto attivo
-            app_label, mode_key, mode_label = detect_active_context()
-            self.current_context = (app_label, mode_key, mode_label)
-            self.active_mode_key = mode_key
 
             # Pre-buffer di 350ms
             self.audio_frames = list(self.analyzer.ring_buffer)
@@ -1233,7 +1270,11 @@ class FlowLocalEngine:
                 return
 
             # 2. Faster-Whisper Inference con VAD, barriere anti-allucinazione e bias acustico dinamico
-            whisper_prompt = db.get_whisper_initial_prompt(limit=40) or None
+            db_prompt = db.get_whisper_initial_prompt(limit=40)
+            if db_prompt:
+                whisper_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} {db_prompt}"
+            else:
+                whisper_prompt = DEFAULT_WHISPER_INITIAL_PROMPT
 
             segments, info = self.model.transcribe(
                 audio_data,
@@ -1297,6 +1338,51 @@ class FlowLocalEngine:
                 return
 
             print(f"[FlowLocal] Trascrizione grezza Whisper ({whisper_ms}ms): {raw_text}")
+
+            # =========================================================
+            # CASO 0: ROUTER VOCALE ASSISTENTE WHIS (Zero-Focus)
+            # =========================================================
+            whis_match = WHIS_WAKE_REGEX.match(raw_text.strip())
+            if whis_match:
+                # Rimozione del prefisso wake-word
+                query_text = WHIS_WAKE_REGEX.sub('', raw_text.strip()).strip()
+                query_text = re.sub(r'^[\s,.:;—–-]+', '', query_text).strip()
+                if query_text and query_text[0].islower():
+                    query_text = query_text[0].upper() + query_text[1:]
+                elif not query_text:
+                    query_text = "Ciao Whis"
+
+                print(f"[FlowLocal] Intercettata wake-word Whis: '{query_text}'")
+
+                # Ripristina previous_clipboard se necessario
+                if previous_clipboard is not None:
+                    try:
+                        pyperclip.copy(previous_clipboard)
+                    except Exception:
+                        pass
+
+                # Reset stato VoiceOrb a IDLE
+                if self.orb:
+                    self.orb.set_state("IDLE")
+
+                sound_done()
+
+                # Notifica WhisHUD in modalità thread-safe sul thread principale
+                if self.whis_hud and hasattr(self.whis_hud, "request_invoke"):
+                    self.whis_hud.request_invoke.emit(query_text, selection_text or "")
+
+                # Tracciamento nel database locale
+                app_label, _, _ = context
+                db.add_transcription(
+                    raw_text=raw_text,
+                    final_text=f"[Whis] {query_text}",
+                    target_app=app_label,
+                    style_used="Whis",
+                    whisper_ms=whisper_ms,
+                    qwen_ms=0,
+                    duration_s=duration_s
+                )
+                return
 
             # =========================================================
             # CASO A: TRASFORMAZIONE SELEZIONE ATTIVA (Text-to-Action)
@@ -1652,11 +1738,11 @@ class FlowLocalEngine:
             clean_ctx = (subject_context or "").strip()
             if clean_ctx:
                 if base_prompt:
-                    whisper_prompt = f"Lezione universitaria di {clean_ctx}. {base_prompt}. Trascrizione accurata in italiano."
+                    whisper_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} Lezione universitaria di {clean_ctx}. {base_prompt}. Trascrizione accurata in italiano."
                 else:
-                    whisper_prompt = f"Lezione universitaria di {clean_ctx}. Glossario: {clean_ctx}. Trascrizione accurata in italiano."
+                    whisper_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} Lezione universitaria di {clean_ctx}. Glossario: {clean_ctx}. Trascrizione accurata in italiano."
             else:
-                whisper_prompt = base_prompt or None
+                whisper_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} {base_prompt}".strip() or None
 
             check_cancelled()
 

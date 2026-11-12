@@ -144,6 +144,19 @@ class DatabaseManager:
             );
         """)
 
+        # 8. Tabella Cronologia Interazioni Whis
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS whis_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_query TEXT NOT NULL,
+                whis_response TEXT NOT NULL,
+                model_used TEXT DEFAULT 'qwen2.5:3b',
+                clipboard_context TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_whis_created_at ON whis_history(created_at);")
+
         conn.commit()
         self._seed_default_data()
         self._ensure_updated_defaults()
@@ -814,6 +827,57 @@ class DatabaseManager:
             "saved_minutes": saved_minutes,
             "avg_latency_ms": avg_ms,
         }
+
+    # --- CRONOLOGIA INTERAZIONI WHIS ---
+    def add_whis_interaction(self, user_query: str, whis_response: str, model_used: str = "qwen2.5:3b", clipboard_context: str = "") -> int:
+        """Salva una conversazione/scambio con l'assistente Whis."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO whis_history (user_query, whis_response, model_used, clipboard_context)
+            VALUES (?, ?, ?, ?)
+        """, (user_query.strip(), whis_response.strip(), model_used.strip(), clipboard_context.strip()))
+        conn.commit()
+        return cursor.lastrowid
+
+    def get_whis_history(self, search_query: str = "", limit: int = 100) -> List[Dict[str, Any]]:
+        """Recupera la cronologia delle interazioni con Whis, filtrando opzionalmente per testo."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        clean_q = (search_query or "").strip().lower()
+        if clean_q:
+            like_pattern = f"%{clean_q}%"
+            cursor.execute("""
+                SELECT id, user_query, whis_response, model_used, clipboard_context, created_at
+                FROM whis_history
+                WHERE LOWER(user_query) LIKE ? OR LOWER(whis_response) LIKE ?
+                ORDER BY id DESC
+                LIMIT ?
+            """, (like_pattern, like_pattern, limit))
+        else:
+            cursor.execute("""
+                SELECT id, user_query, whis_response, model_used, clipboard_context, created_at
+                FROM whis_history
+                ORDER BY id DESC
+                LIMIT ?
+            """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+    def delete_whis_interaction(self, interaction_id: int) -> bool:
+        """Elimina una singola interazione dalla cronologia di Whis."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM whis_history WHERE id = ?", (interaction_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def clear_whis_history(self) -> bool:
+        """Elimina l'intera cronologia di Whis."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM whis_history")
+        conn.commit()
+        return True
 
     # --- IMPOSTAZIONI APPLICAZIONE ---
     def get_setting(self, key: str, default: Optional[str] = None) -> Optional[str]:

@@ -51,6 +51,7 @@ from PyQt6.QtWidgets import (
 from database import db
 from core.exporter import export_to_md, export_to_docx, export_to_pdf
 from core.cloud_sync import cloud_sync
+from core.whis_agent import WhisAgent, WhisStreamWorker
 
 # Rilevamento GPU tramite NVML (opzionale, senza warning)
 GPU_AVAILABLE = False
@@ -1343,6 +1344,14 @@ class FlowLocalHub(QMainWindow):
 
         self._current_mode_name = MODE_TABS[0][1]
         self._last_transcription_marker = None
+        self._last_whis_marker = None
+
+        # Assistente Whis condiviso e monitoraggio
+        self.whis_agent = WhisAgent()
+        self.whis_hud = None
+        self._active_whis_worker = None
+        self.whis_agent.status_changed.connect(self._on_whis_status_changed)
+        self.whis_agent.interaction_saved.connect(self._on_whis_interaction_saved)
 
         # Inizializzazione Gestore Coda Cloud Controllata (Anti-Lag Gaming)
         self.cloud_sync = cloud_sync
@@ -1393,10 +1402,11 @@ class FlowLocalHub(QMainWindow):
 
         self.pages = QStackedWidget()
         self.pages.setObjectName("Pages")
-        self.pages.addWidget(self._build_history_page())
-        self.pages.addWidget(self._build_notes_page())
-        self.pages.addWidget(self._build_dictionary_page())
-        self.pages.addWidget(self._build_styles_page())
+        self.pages.addWidget(self._build_history_page())       # Index 0
+        self.pages.addWidget(self._build_whis_page())          # Index 1
+        self.pages.addWidget(self._build_notes_page())         # Index 2
+        self.pages.addWidget(self._build_dictionary_page())    # Index 3
+        self.pages.addWidget(self._build_styles_page())        # Index 4
         main_layout.addWidget(self.pages, 1)
 
         self.nav_buttons[0].setChecked(True)
@@ -1432,7 +1442,7 @@ class FlowLocalHub(QMainWindow):
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
         self.nav_buttons: List[QPushButton] = []
-        for idx, label in enumerate(["Cronologia", "Note", "Dizionario", "Stili && Prompt", "🕸️ Grafo"]):
+        for idx, label in enumerate(["Cronologia", "✨ Whis", "Note", "Dizionario", "Stili && Prompt", "🕸️ Grafo"]):
             btn = QPushButton(label)
             btn.setObjectName("NavButton")
             btn.setCheckable(True)
@@ -1468,13 +1478,13 @@ class FlowLocalHub(QMainWindow):
         return sidebar
 
     def _on_nav_clicked(self, idx: int):
-        if idx == 4:
+        if idx == 5:
             # Selezione diretta Grafo della Conoscenza dalla sidebar
-            self.pages.setCurrentIndex(1)
+            self.pages.setCurrentIndex(2)
             self._set_notes_view_mode(1)
         else:
             self.pages.setCurrentIndex(idx)
-            if idx == 1:
+            if idx == 2:
                 self._set_notes_view_mode(0)
         self._refresh_current_page()
 
@@ -1483,14 +1493,16 @@ class FlowLocalHub(QMainWindow):
         if idx == 0:
             self._refresh_history()
         elif idx == 1:
+            self._refresh_whis_page()
+        elif idx == 2:
             if hasattr(self, "notes_view_stack") and self.notes_view_stack.currentIndex() == 1:
                 if hasattr(self, "graph_widget"):
                     self.graph_widget.load_data()
             else:
                 self._refresh_notes()
-        elif idx == 2:
-            self._refresh_dictionary()
         elif idx == 3:
+            self._refresh_dictionary()
+        elif idx == 4:
             self._load_mode_prompt(self._current_mode_name)
 
     @staticmethod
@@ -1585,12 +1597,316 @@ class FlowLocalHub(QMainWindow):
             self._refresh_history()
 
     def _poll_new_transcriptions(self):
-        if not self.isVisible() or self.pages.currentIndex() != 0:
+        if not self.isVisible():
             return
-        latest = db.get_recent_transcriptions(limit=1)
-        marker = latest[0]["id"] if latest else None
-        if marker != self._last_transcription_marker:
-            self._refresh_history()
+        curr_page = self.pages.currentIndex() if hasattr(self, "pages") else 0
+        if curr_page == 0:
+            latest = db.get_recent_transcriptions(limit=1)
+            marker = latest[0]["id"] if latest else None
+            if marker != self._last_transcription_marker:
+                self._refresh_history()
+        elif curr_page == 1:
+            latest_whis = db.get_whis_history(limit=1)
+            whis_marker = latest_whis[0]["id"] if latest_whis else None
+            if whis_marker != getattr(self, "_last_whis_marker", None):
+                self._refresh_whis_page()
+
+    # -----------------------------------------------------------------
+    # 1b. WHIS
+    # -----------------------------------------------------------------
+    def set_whis_agent(self, agent: WhisAgent):
+        """Assegna l'agente Whis condiviso e collega i listener di stato ed eventi."""
+        self.whis_agent = agent
+        if self.whis_agent:
+            try:
+                self.whis_agent.status_changed.connect(self._on_whis_status_changed)
+                self.whis_agent.interaction_saved.connect(self._on_whis_interaction_saved)
+            except Exception:
+                pass
+            if hasattr(self, "whis_model_combo"):
+                idx = self.whis_model_combo.findData(self.whis_agent.get_model_mode())
+                if idx >= 0:
+                    self.whis_model_combo.setCurrentIndex(idx)
+
+    def _build_whis_page(self) -> QWidget:
+        page, layout = self._make_page("✨ Whis", "Assistente virtuale ingegneristico, cronologia interazioni e monitoraggio live.")
+
+        # 1. Header & Live Status Panel
+        status_frame = QFrame()
+        status_frame.setObjectName("WhisStatusFrame")
+        status_frame.setStyleSheet("""
+            QFrame#WhisStatusFrame {
+                background-color: #12141D;
+                border: 1px solid #232938;
+                border-radius: 10px;
+            }
+        """)
+        sf_layout = QHBoxLayout(status_frame)
+        sf_layout.setContentsMargins(14, 10, 14, 10)
+        sf_layout.setSpacing(12)
+
+        self.whis_status_label = QLabel("🟢 Pronto (In ascolto su Caps Lock + \"Whis...\")")
+        self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
+        sf_layout.addWidget(self.whis_status_label, 1)
+
+        # Selettore modalità modello
+        lbl_mod = QLabel("Modello:")
+        lbl_mod.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 500;")
+        sf_layout.addWidget(lbl_mod)
+
+        self.whis_model_combo = QComboBox()
+        self.whis_model_combo.setMinimumHeight(32)
+        self.whis_model_combo.setStyleSheet("""
+            QComboBox {
+                min-height: 30px;
+                background-color: #1A1E29;
+                border: 1px solid #2E3547;
+                border-radius: 6px;
+                padding: 0 10px;
+                color: #F1F5F9;
+                font-size: 11px;
+                font-weight: 500;
+            }
+            QComboBox:focus { border: 1px solid #38BDF8; }
+            QComboBox QAbstractItemView {
+                background-color: #12141D;
+                color: #F1F5F9;
+                selection-background-color: #0284C7;
+                border: 1px solid #2E3547;
+            }
+        """)
+        self.whis_model_combo.addItem("Auto (3B/7B)", "auto")
+        self.whis_model_combo.addItem("Rapido (qwen2.5:3b)", "3b")
+        self.whis_model_combo.addItem("Profondo (qwen2.5:7b)", "7b")
+        if hasattr(self, "whis_agent") and self.whis_agent:
+            cur_idx = self.whis_model_combo.findData(self.whis_agent.get_model_mode())
+            if cur_idx >= 0:
+                self.whis_model_combo.setCurrentIndex(cur_idx)
+        self.whis_model_combo.currentIndexChanged.connect(self._on_whis_model_changed)
+        sf_layout.addWidget(self.whis_model_combo)
+
+        # Pulsante Mostra ultimo HUD
+        show_hud_btn = _make_button("🪟 Mostra ultimo HUD")
+        show_hud_btn.setStyleSheet("""
+            QPushButton {
+                min-height: 30px;
+                padding: 0 12px;
+                background-color: #1A1E29;
+                border: 1px solid #38BDF8;
+                border-radius: 6px;
+                color: #38BDF8;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: rgba(56, 189, 248, 0.15);
+                color: #FFFFFF;
+            }
+        """)
+        show_hud_btn.clicked.connect(self._show_last_whis_hud)
+        sf_layout.addWidget(show_hud_btn)
+
+        layout.addWidget(status_frame)
+
+        # 2. Barra di Ricerca Cronologia
+        search_row = QHBoxLayout()
+        search_row.setSpacing(10)
+
+        self.whis_search = QLineEdit()
+        self.whis_search.setPlaceholderText("🔍 Cerca nelle conversazioni con Whis…")
+        self.whis_search.setMinimumHeight(36)
+        self.whis_search.textChanged.connect(self._refresh_whis_page)
+        search_row.addWidget(self.whis_search, 1)
+
+        clear_btn = _make_button("🗑️ Svuota cronologia", "danger")
+        clear_btn.clicked.connect(self._clear_whis_history)
+        search_row.addWidget(clear_btn)
+
+        layout.addLayout(search_row)
+
+        # 3. Feed Cronologia Conversazioni
+        self.whis_list = ScrollList("Nessuna conversazione con Whis ancora. Usa Caps Lock dicendo 'Whis...' oppure scrivi qui sotto.")
+        layout.addWidget(self.whis_list, 1)
+
+        # 4. Input Testuale Rapido in Basso
+        input_bar = QHBoxLayout()
+        input_bar.setSpacing(10)
+
+        self.whis_input = QLineEdit()
+        self.whis_input.setPlaceholderText("Chiedi qualcosa a Whis o incolla del codice…")
+        self.whis_input.setMinimumHeight(40)
+        self.whis_input.returnPressed.connect(self._send_whis_text_query)
+        input_bar.addWidget(self.whis_input, 1)
+
+        self.whis_send_btn = _make_button("Invia ✨", "primary")
+        self.whis_send_btn.setMinimumHeight(40)
+        self.whis_send_btn.clicked.connect(self._send_whis_text_query)
+        input_bar.addWidget(self.whis_send_btn)
+
+        layout.addLayout(input_bar)
+
+        return page
+
+    def _on_whis_model_changed(self):
+        mode = self.whis_model_combo.currentData()
+        if hasattr(self, "whis_agent") and self.whis_agent:
+            self.whis_agent.set_model_mode(mode)
+
+    def _show_last_whis_hud(self):
+        if hasattr(self, "whis_hud") and self.whis_hud:
+            self.whis_hud.show_latest()
+
+    def _on_whis_status_changed(self, status: str, query: str = ""):
+        if not hasattr(self, "whis_status_label"):
+            return
+        if status in ("In attesa", "Risposta completata", "Pronto"):
+            self.whis_status_label.setText("🟢 Pronto (In ascolto su Caps Lock + \"Whis...\")")
+            self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
+        else:
+            clean_q = f': "{query[:40]}..."' if query else ""
+            self.whis_status_label.setText(f"🟣 {status}{clean_q}")
+            self.whis_status_label.setStyleSheet("color: #C084FC; font-size: 12px; font-weight: 600;")
+
+    def _on_whis_interaction_saved(self, item: Dict):
+        self._refresh_whis_page()
+
+    def _refresh_whis_page(self):
+        query = self.whis_search.text().strip().lower() if hasattr(self, "whis_search") else ""
+        items = db.get_whis_history(search_query=query, limit=100)
+        self._last_whis_marker = items[0]["id"] if items else None
+
+        self.whis_list.clear()
+        if not items:
+            self.whis_list.show_empty("Nessun risultato trovato." if query else None)
+            return
+
+        for item in items:
+            self.whis_list.add_card(self._make_whis_card(item))
+
+    def _make_whis_card(self, item: Dict) -> QFrame:
+        card, layout = _make_card()
+        card.setStyleSheet("""
+            QFrame#Card {
+                background-color: #141722;
+                border: 1px solid #232938;
+                border-left: 3px solid #38BDF8;
+                border-radius: 8px;
+            }
+        """)
+
+        # Row 1: Header con timestamp, modello, badge clipboard e azioni
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(6)
+        meta_row.addWidget(_make_label(_format_timestamp(item.get("created_at")), "CardMeta"))
+
+        model_str = item.get("model_used") or "3b"
+        if "7b" in model_str.lower():
+            badge_model = _make_label("🧠 7B Deep", "Badge")
+            badge_model.setStyleSheet("background-color: rgba(168, 85, 247, 0.18); color: #C084FC; border: 1px solid rgba(168, 85, 247, 0.4); border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 600;")
+            meta_row.addWidget(badge_model)
+        else:
+            badge_model = _make_label("⚡ 3B Fast", "Badge")
+            badge_model.setStyleSheet("background-color: rgba(56, 189, 248, 0.15); color: #38BDF8; border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 4px; padding: 1px 6px; font-size: 10px; font-weight: 600;")
+            meta_row.addWidget(badge_model)
+
+        if item.get("clipboard_context"):
+            clip_badge = _make_label("📎 Appunti allegati", "BadgeMuted")
+            clip_badge.setStyleSheet("background-color: #1E222D; border: 1px solid #2E364A; color: #C084FC; border-radius: 4px; padding: 1px 6px; font-size: 10px;")
+            clip_badge.setToolTip(str(item["clipboard_context"])[:300])
+            meta_row.addWidget(clip_badge)
+
+        meta_row.addStretch(1)
+
+        whis_resp = item.get("whis_response") or ""
+        user_q = item.get("user_query") or ""
+
+        # Pulsante Copia
+        copy_btn = _make_button("📋 Copia")
+        def on_copy(_c=False, btn=copy_btn, text=whis_resp):
+            self._copy_to_clipboard(text)
+            btn.setText("✓ Copiato!")
+            QTimer.singleShot(2000, lambda: btn.setText("📋 Copia"))
+        copy_btn.clicked.connect(on_copy)
+        meta_row.addWidget(copy_btn)
+
+        # Pulsante Salva nelle Note
+        save_note_btn = _make_button("📝 Salva nelle Note")
+        def on_save_note(_c=False, btn=save_note_btn, q=user_q, ans=whis_resp):
+            title = f"Whis: {q[:38]}" if q else "Risposta Whis"
+            content = f"**Domanda:**\n{q}\n\n**Risposta di Whis:**\n{ans}"
+            db.add_study_note(title=title, content_markdown=content, note_type="Note", tags="Whis, Studio")
+            btn.setText("✓ Salvata!")
+            btn.setEnabled(False)
+            self.note_added.emit()
+            QTimer.singleShot(2500, lambda: (btn.setText("📝 Salva nelle Note"), btn.setEnabled(True)))
+        save_note_btn.clicked.connect(on_save_note)
+        meta_row.addWidget(save_note_btn)
+
+        # Pulsante Elimina singola card
+        del_btn = _make_button("🗑️", "danger")
+        del_btn.setToolTip("Elimina questa conversazione")
+        del_btn.clicked.connect(lambda _c=False, item_id=item["id"]: self._delete_whis_interaction(item_id))
+        meta_row.addWidget(del_btn)
+
+        layout.addLayout(meta_row)
+
+        # Row 2: Domanda Utente
+        q_box = QFrame()
+        q_box.setStyleSheet("background-color: #1A1F2C; border: 1px solid #2C354A; border-radius: 6px; padding: 6px 10px;")
+        q_layout = QVBoxLayout(q_box)
+        q_layout.setContentsMargins(6, 4, 6, 4)
+        q_lbl = _make_label(f"💬 {user_q}", "CardTitle", wrap=True)
+        q_lbl.setStyleSheet("color: #7DD3FC; font-weight: 600; font-size: 13px;")
+        q_layout.addWidget(q_lbl)
+        layout.addWidget(q_box)
+
+        # Row 3: Risposta Whis
+        resp_lbl = _make_label(whis_resp, "CardBody", wrap=True)
+        resp_lbl.setStyleSheet("color: #F1F5F9; font-size: 13px; line-height: 1.45; padding-top: 4px;")
+        layout.addWidget(resp_lbl)
+
+        return card
+
+    def _delete_whis_interaction(self, item_id: int):
+        db.delete_whis_interaction(item_id)
+        self._refresh_whis_page()
+
+    def _clear_whis_history(self):
+        reply = QMessageBox.question(
+            self, "Svuota cronologia Whis",
+            "Eliminare definitivamente tutte le conversazioni salvate con Whis?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            db.clear_whis_history()
+            self._refresh_whis_page()
+
+    def _send_whis_text_query(self):
+        query = self.whis_input.text().strip()
+        if not query:
+            return
+        self.whis_input.clear()
+        self.whis_send_btn.setEnabled(False)
+
+        if not hasattr(self, "whis_agent") or not self.whis_agent:
+            self.whis_agent = WhisAgent()
+
+        self._on_whis_status_changed(f"Elaborazione con {self.whis_agent.select_model(query)}...", query)
+
+        self._active_whis_worker = WhisStreamWorker(self.whis_agent, query)
+        def on_finished(full_text, model):
+            self.whis_send_btn.setEnabled(True)
+            self._on_whis_status_changed("Pronto")
+            self._refresh_whis_page()
+        def on_error(err):
+            self.whis_send_btn.setEnabled(True)
+            self._on_whis_status_changed("Errore")
+            QMessageBox.warning(self, "Whis", f"Errore durante la richiesta a Whis:\n{err}")
+
+        self._active_whis_worker.finished_response.connect(on_finished)
+        self._active_whis_worker.error_occurred.connect(on_error)
+        self._active_whis_worker.start()
 
     # -----------------------------------------------------------------
     # 2. NOTE
@@ -2232,11 +2548,11 @@ class FlowLocalHub(QMainWindow):
             self.btn_view_list.setChecked(mode == 0)
             self.btn_view_graph.setChecked(mode == 1)
         # Sincronizza selezione bottoni sidebar se presente
-        if hasattr(self, "nav_buttons") and len(self.nav_buttons) > 4:
+        if hasattr(self, "nav_buttons") and len(self.nav_buttons) > 5:
             if mode == 1:
-                self.nav_buttons[4].setChecked(True)
-            elif self.pages.currentIndex() == 1:
-                self.nav_buttons[1].setChecked(True)
+                self.nav_buttons[5].setChecked(True)
+            elif self.pages.currentIndex() == 2:
+                self.nav_buttons[2].setChecked(True)
         if mode == 1 and hasattr(self, "graph_widget"):
             self.graph_widget.load_data()
 

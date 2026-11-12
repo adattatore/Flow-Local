@@ -34,9 +34,32 @@ except Exception:
     pass
 
 import time
+import signal
 import threading
 import subprocess
 import urllib.request
+
+import core.ai_pipeline as aip
+
+def _safe_sigint_handler(signum, frame):
+    """Ignora i segnali SIGINT generati dalla simulazione interna di Ctrl+C per cattura selezione."""
+    now = time.time()
+    last_cap = getattr(aip, "LAST_SELECTION_CAPTURE_TIME", 0.0)
+    if (now - last_cap) < 0.600:
+        return
+    print("\n[FlowLocal] Ricevuto arresto da terminale.")
+    try:
+        app_inst = QApplication.instance()
+        if app_inst:
+            app_inst.quit()
+    except Exception:
+        pass
+    os._exit(0)
+
+try:
+    signal.signal(signal.SIGINT, _safe_sigint_handler)
+except Exception:
+    pass
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction
@@ -46,6 +69,7 @@ import keyboard
 from database import db
 from ui.voice_orb import VoiceOrbOverlay
 from ui.hub_window import FlowLocalHub
+from ui.whis_hud import WhisHUD
 from core.ai_pipeline import FlowLocalEngine
 
 VK_CAPITAL = 0x14  # Caps Lock (Bloc Maiusc)
@@ -156,6 +180,11 @@ def main():
     # 2. FlowLocalHub (Finestra Principale 1080x700)
     hub = FlowLocalHub()
 
+    # 2b. WhisHUD (HUD Assistente Peek-from-Edge da bordo destro)
+    whis_hud = WhisHUD()
+    hub.set_whis_agent(whis_hud.agent)
+    hub.whis_hud = whis_hud
+
     def toggle_hub():
         if hub.isVisible():
             hub.hide()
@@ -167,8 +196,9 @@ def main():
     orb.on_open_hub = toggle_hub
 
     # 3. Core Engine: Faster-Whisper + Qwen 2.5 + Audio WASAPI
-    engine = FlowLocalEngine(orb=orb, hub=hub)
+    engine = FlowLocalEngine(orb=orb, hub=hub, whis_hud=whis_hud)
     hub.engine = engine  # Condivide l'istanza con il modello Whisper già in VRAM
+    hub.whis_hud = whis_hud
     orb.on_click_toggle = engine.toggle_recording_click
     orb.on_change_mode = engine.set_mode
     hub.on_device_changed = engine.change_device
@@ -193,6 +223,10 @@ def main():
     open_hub_act.triggered.connect(toggle_hub)
     menu.addAction(open_hub_act)
 
+    whis_act = QAction("✨ Chiedi a Whis", menu)
+    whis_act.triggered.connect(lambda: whis_hud.start_query("Ciao Whis, dimmi come puoi aiutarmi."))
+    menu.addAction(whis_act)
+
     menu.addSeparator()
 
     pause_act = QAction("⏸️ Sospendi Dettatura", menu)
@@ -212,6 +246,7 @@ def main():
             tray.hide()
             orb.hide()
             hub.hide()
+            whis_hud.hide()
             if engine.stream:
                 engine.stream.stop()
                 engine.stream.close()
