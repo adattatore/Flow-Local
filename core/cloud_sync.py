@@ -21,9 +21,9 @@ SUPPORTED_AUDIO_EXTENSIONS = {
 }
 
 
-def sanitize_filename(name: str, max_len: int = 80) -> str:
+def sanitize_filename(name: Optional[str], max_len: int = 80) -> str:
     """Rende una stringa sicura come nome file su Windows/macOS/Linux."""
-    clean = re.sub(r'[\\/*?:"<>|]', "", name).strip()
+    clean = re.sub(r'[\\/*?:"<>|]', "", str(name or "")).strip()
     clean = clean.replace(" ", "_")
     clean = "".join(c for c in clean if c.isalnum() or c in ("_", "-", "."))
     return clean[:max_len] if clean else "file"
@@ -152,19 +152,27 @@ class CloudSyncManager:
                             meta_path = p
                             break
 
+                    default_title = os.path.splitext(name)[0]
                     profile = "Alessandro"
-                    subject = "Generale"
-                    title = os.path.splitext(name)[0]
+                    subject = ""
+                    title = default_title
                     created_at = None
 
                     if meta_path:
                         try:
                             with open(meta_path, "r", encoding="utf-8") as f:
                                 meta_data = json.load(f)
-                            profile = meta_data.get("profile") or profile
-                            subject = meta_data.get("subject") or subject
-                            title = meta_data.get("title") or title
-                            created_at = meta_data.get("created_at")
+                            if isinstance(meta_data, dict):
+                                meta_profile = (meta_data.get("profile") or "").strip()
+                                if meta_profile:
+                                    # Retrocompatibilità automatica: 'Lei' -> 'Giada'
+                                    profile = "Giada" if meta_profile.lower() in ("lei", "giada") else meta_profile
+                                meta_subject = (meta_data.get("subject") or "").strip()
+                                subject = meta_subject
+                                meta_title = (meta_data.get("title") or "").strip()
+                                if meta_title:
+                                    title = meta_title
+                                created_at = meta_data.get("created_at")
                         except Exception:
                             pass
 
@@ -204,7 +212,7 @@ class CloudSyncManager:
         outbox_dir = self.get_outbox_study_dir()
 
         # Raccoglie i profili e le materie uniche
-        profiles_set = {"Alessandro", "Lei"}
+        profiles_set = {"Alessandro", "Giada"}
         subjects_set = set()
 
         notes_list = []
@@ -215,28 +223,28 @@ class CloudSyncManager:
 
         for n in all_notes:
             note_id = n["id"]
-            note_type = n.get("note_type") or "Note"
-            title = n.get("title") or "Senza titolo"
-            content = n.get("content_markdown") or ""
-            tags_str = n.get("tags") or ""
+            note_type = (n.get("note_type") or "Note").strip()
+            title = (n.get("title") or "Senza titolo").strip()
+            content = (n.get("content_markdown") or "")
+            tags_str = str(n.get("tags") or "")
             created_at = str(n.get("created_at") or "")
             parent_id = n.get("parent_note_id")
 
-            # Estrazione Profilo e Materia dai tag o dal contenuto
+            # Estrazione Profilo e Materia dai tag o dal contenuto (retrocompatibilità 'Lei' -> 'Giada')
             profile = "Alessandro"
-            if "Lei" in tags_str or "Profilo: Lei" in tags_str:
-                profile = "Lei"
+            if "Giada" in tags_str or "Profilo: Giada" in tags_str or "Lei" in tags_str or "Profilo: Lei" in tags_str:
+                profile = "Giada"
             elif "Alessandro" in tags_str or "Profilo: Alessandro" in tags_str:
                 profile = "Alessandro"
 
-            subject = "Generale"
+            subject = ""
             # Cerca tag di materia tipo "Materia: XXX" oppure "Fisica", "Diritto", ecc.
-            tag_tokens = [t.strip() for t in tags_str.split(",") if t.strip()]
+            tag_tokens = [(t or "").strip() for t in tags_str.split(",") if (t or "").strip()]
             for tok in tag_tokens:
                 if tok.lower().startswith("materia:"):
-                    subject = tok.split(":", 1)[1].strip()
+                    subject = (tok.split(":", 1)[1] or "").strip()
                     break
-                elif tok.lower() not in ("audio", "sbobina", "note", "flashcard", "esame", "alessandro", "lei"):
+                elif tok.lower() not in ("audio", "sbobina", "note", "flashcard", "esame", "alessandro", "giada", "lei"):
                     subject = tok
                     break
 
@@ -244,14 +252,20 @@ class CloudSyncManager:
             if subject and subject != "Generale":
                 subjects_set.add(subject)
 
+            # Normalizzazione automatica retrocompatibile dei tag ("Profilo: Lei" -> "Profilo: Giada", "Lei" -> "Giada")
+            norm_tags = tags_str.replace("Profilo: Lei", "Profilo: Giada")
+            norm_tokens = [(t or "").strip() for t in norm_tags.split(",") if (t or "").strip()]
+            norm_tokens = ["Giada" if t in ("Lei", "Profilo: Lei") else t for t in norm_tokens]
+            clean_tags_str = ", ".join(norm_tokens)
+
             if note_type == "Flashcard":
                 # Parsing domanda / risposta dal markdown se strutturato
-                q_text = title.replace("Flashcard:", "").strip()
+                q_text = (title or "").replace("Flashcard:", "").strip()
                 a_text = content
                 if "**Domanda:**" in content and "**Risposta:**" in content:
                     parts = content.split("**Risposta:**", 1)
-                    q_part = parts[0].replace("**Domanda:**", "").strip()
-                    a_part = parts[1].strip() if len(parts) > 1 else ""
+                    q_part = (parts[0] or "").replace("**Domanda:**", "").strip()
+                    a_part = (parts[1] or "").strip() if len(parts) > 1 else ""
                     if q_part:
                         q_text = q_part
                     if a_part:
@@ -265,7 +279,7 @@ class CloudSyncManager:
                     "answer": a_text,
                     "profile": profile,
                     "subject": subject,
-                    "tags": tags_str,
+                    "tags": clean_tags_str,
                     "created_at": created_at,
                 })
             else:
@@ -275,11 +289,11 @@ class CloudSyncManager:
                     try:
                         sum_part = content.split("# Sommario Esecutivo", 1)[1]
                         if "## Trascrizione" in sum_part:
-                            summary_text = sum_part.split("## Trascrizione", 1)[0].strip()
+                            summary_text = (sum_part.split("## Trascrizione", 1)[0] or "").strip()
                         elif "---" in sum_part:
-                            summary_text = sum_part.split("---", 1)[0].strip()
+                            summary_text = (sum_part.split("---", 1)[0] or "").strip()
                         else:
-                            summary_text = sum_part[:600].strip()
+                            summary_text = (sum_part[:600] or "").strip()
                     except Exception:
                         summary_text = ""
 
@@ -297,7 +311,7 @@ class CloudSyncManager:
                     "note_type": note_type,
                     "profile": profile,
                     "subject": subject,
-                    "tags": tags_str,
+                    "tags": clean_tags_str,
                     "summary": summary_text,
                     "pdf_filename": expected_pdf if has_pdf else None,
                     "docx_filename": expected_docx if has_docx else None,
@@ -367,10 +381,14 @@ class CloudSyncManager:
 
         audio_path = item["audio_path"]
         meta_path = item.get("meta_path")
-        filename = item["filename"]
-        profile = item.get("profile") or "Alessandro"
-        subject = item.get("subject") or "Generale"
-        custom_title = item.get("title") or os.path.splitext(filename)[0]
+        filename = (item.get("filename") or "file").strip()
+        default_title = os.path.splitext(filename)[0]
+
+        raw_profile = (item.get("profile") or "").strip() or "Alessandro"
+        profile = "Giada" if raw_profile.lower() in ("lei", "giada") else raw_profile
+        subject = (item.get("subject") or "").strip()
+        raw_title = (item.get("title") or "").strip()
+        custom_title = raw_title if raw_title else default_title
 
         def report(msg: str, pct: int = -1):
             if progress_callback:
@@ -380,7 +398,8 @@ class CloudSyncManager:
             raise InterruptedError("Operazione annullata.")
 
         # 1. Trascrizione ed elaborazione della lezione
-        report(f"Sbobinatura di '{filename}' ({subject})...", 10)
+        subj_desc = f" ({subject})" if subject else ""
+        report(f"Sbobinatura di '{filename}'{subj_desc}...", 10)
         markdown = engine.transcribe_audio_file(
             file_path=audio_path,
             subject_context=subject,
@@ -394,7 +413,13 @@ class CloudSyncManager:
         # 2. Salvataggio nel Database
         report("Salvataggio sbobina nel database...", 92)
         note_title = f"Sbobina: {custom_title}"
-        tags_str = f"Sbobina, Materia: {subject}, Profilo: {profile}, Audio"
+
+        tag_parts = ["Sbobina"]
+        if subject:
+            tag_parts.append(f"Materia: {subject}")
+        tag_parts.extend([f"Profilo: {profile}", "Audio"])
+        tags_str = ", ".join(tag_parts)
+
         new_note_id = db.add_study_note(
             title=note_title,
             content_markdown=markdown,
@@ -405,17 +430,23 @@ class CloudSyncManager:
         # 3. Estrazione Flashcard d'esame
         report("Estrazione flashcard d'esame con Qwen...", 94)
         flashcard_count = 0
+        fc_tag_parts = ["Flashcard"]
+        if subject:
+            fc_tag_parts.append(f"Materia: {subject}")
+        fc_tag_parts.append(f"Profilo: {profile}")
+        fc_tags_str = ", ".join(fc_tag_parts)
+
         try:
             cards = LLMRefiner.extract_flashcards_from_note(markdown)
-            for c in cards:
-                q = c.get("question", "").strip()
-                a = c.get("answer", "").strip()
+            for c in (cards or []):
+                q = (c.get("question") or "").strip()
+                a = (c.get("answer") or "").strip()
                 if q and a:
                     db.add_study_note(
                         title=f"Flashcard: {q[:60]}",
                         content_markdown=f"**Domanda:**\n{q}\n\n**Risposta:**\n{a}",
                         note_type="Flashcard",
-                        tags=f"Flashcard, Materia: {subject}, Profilo: {profile}",
+                        tags=fc_tags_str,
                         parent_note_id=new_note_id,
                     )
                     flashcard_count += 1

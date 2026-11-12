@@ -577,131 +577,12 @@ class LLMRefiner:
     def reformat_lecture_block(cls, chunk_text: str, subject_context: str = "") -> str:
         """Riformatta un blocco di sbobinatura universitaria in Markdown chiaro ed elegante con Qwen 2.5 (preferendo 7B),
         correggendo refusi fonetici e allucinazioni acustiche incompatibili con il contesto accademico."""
-        if not chunk_text or not chunk_text.strip():
-            return chunk_text
-
-    @classmethod
-    def generate_lecture_summary(cls, lecture_markdown: str, subject_context: str = "") -> str:
-        """Genera un riquadro di Sommario Esecutivo con i punti chiave della lezione."""
-        if not lecture_markdown or not lecture_markdown.strip():
+        clean_chunk = (chunk_text or "").strip()
+        if not clean_chunk:
             return ""
 
-        lecture_model = cls.detect_lecture_model()
-        ctx_info = f"\nMateria: {subject_context.strip()}" if subject_context else ""
-
-        system_prompt = (
-            "SEI UN ASSISTENTE UNIVERSITARIO ESPERTO. "
-            f"{ctx_info}\n"
-            "Genera un Sommario Esecutivo sintetico, chiaro e rigoroso dei punti chiave trattati nella lezione. "
-            "Restituisci ESCLUSIVAMENTE un riquadro in stile citazione Markdown nel seguente formato esatto:\n\n"
-            "> 📌 **Punti Chiave della Lezione:**\n"
-            "> - [Punto chiave 1]\n"
-            "> - [Punto chiave 2]\n"
-            "> - [Punto chiave 3]\n"
-            "> - [Punto chiave 4]\n\n"
-            "Includi da 4 a 6 punti salienti. Nessun commento, premessa o testo extra prima o dopo il riquadro."
-        )
-
-        sample_text = lecture_markdown.strip()
-        if len(sample_text) > 8000:
-            sample_text = sample_text[:8000] + "\n...(continua)"
-
-        payload = {
-            "model": lecture_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"<testo_lezione>\n{sample_text}\n</testo_lezione>"}
-            ],
-            "stream": False,
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 600
-            }
-        }
-
-        try:
-            req = urllib.request.Request(
-                OLLAMA_API_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=30.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                summary = data.get("message", {}).get("content", "").strip()
-                summary = re.sub(r"</?(?:testo_lezione|output|result)>\s*", "", summary, flags=re.IGNORECASE).strip()
-                if summary:
-                    return summary
-        except Exception as e:
-            print(f"[FlowLocal] Errore generazione sommario esecutivo ({lecture_model}): {e}")
-
-        return ""
-
-    @classmethod
-    def extract_flashcards_from_note(cls, note_text: str) -> List[Dict[str, str]]:
-        """Estrae 5-8 domande e risposte d'esame in formato strutturato per flashcard da una nota di studio."""
-        if not note_text or not note_text.strip():
-            return []
-
-        lecture_model = cls.detect_lecture_model()
-        system_prompt = (
-            "SEI UN DOCENTE UNIVERSITARIO ESPERTO. "
-            "Estrai dal testo della lezione da 5 a 8 domande d'esame fondamentali con risposte sintetiche e precise per flashcard di ripasso attivo. "
-            "Restituisci ESCLUSIVAMENTE un array JSON valido con questa struttura esatta:\n"
-            "[\n"
-            "  {\"question\": \"Domanda d'esame 1?\", \"answer\": \"Risposta sintetica 1.\"},\n"
-            "  {\"question\": \"Domanda d'esame 2?\", \"answer\": \"Risposta sintetica 2.\"}\n"
-            "]\n"
-            "Non aggiungere assolutamente testo introduttivo, saluti, spiegazioni o blocchi di codice markdown prima o dopo il JSON."
-        )
-
-        sample_text = note_text.strip()
-        if len(sample_text) > 9000:
-            sample_text = sample_text[:9000]
-
-        payload = {
-            "model": lecture_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"<testo_lezione>\n{sample_text}\n</testo_lezione>"}
-            ],
-            "stream": False,
-            "options": {
-                "temperature": 0.25,
-                "num_predict": 1200
-            }
-        }
-
-        try:
-            req = urllib.request.Request(
-                OLLAMA_API_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=45.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                content = data.get("message", {}).get("content", "").strip()
-
-                json_match = re.search(r'\[[\s\S]*\]', content)
-                if json_match:
-                    parsed = json.loads(json_match.group(0))
-                    if isinstance(parsed, list):
-                        cards = []
-                        for item in parsed:
-                            if isinstance(item, dict) and "question" in item and "answer" in item:
-                                q_val = str(item["question"]).strip()
-                                a_val = str(item["answer"]).strip()
-                                if q_val and a_val:
-                                    cards.append({"question": q_val, "answer": a_val})
-                        if cards:
-                            return cards
-        except Exception as e:
-            print(f"[FlowLocal] Errore estrazione flashcard ({lecture_model}): {e}")
-
-        return []
-
-        ctx_instruction = ""
-        if subject_context and subject_context.strip():
-            ctx_instruction = f"\nMateria / Parole chiave della lezione: {subject_context.strip()}."
+        clean_ctx = (subject_context or "").strip()
+        ctx_instruction = f"\nMateria / Parole chiave della lezione: {clean_ctx}." if clean_ctx else ""
 
         system_prompt = (
             "SEI UN SBOBINATORE UNIVERSITARIO ESPERTO. "
@@ -719,7 +600,7 @@ class LLMRefiner:
             "trasformalo esclusivamente nel segnaposto **`[Audio non chiaro / testo incompleto: da MM:SS a MM:SS]`** senza inventare nulla per riempire il vuoto."
         )
 
-        user_content = f"<trascrizione_lezione>\n{chunk_text.strip()}\n</trascrizione_lezione>"
+        user_content = f"<trascrizione_lezione>\n{clean_chunk}\n</trascrizione_lezione>"
 
         # Selezione modello: preferisci qwen2.5:7b per qualità della sbobina, fallback su LLM_MODEL (3B)
         lecture_model = cls.detect_lecture_model()
@@ -749,7 +630,7 @@ class LLMRefiner:
             )
             with urllib.request.urlopen(req, timeout=50.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                content = data.get("message", {}).get("content", "").strip()
+                content = (data.get("message", {}).get("content") or "").strip()
                 refined = re.sub(r"</?(?:trascrizione_lezione|sbobina|output|result)>\s*", "", content, flags=re.IGNORECASE).strip()
                 refined = refined.rstrip()
                 while refined.endswith('\\'):
@@ -780,16 +661,18 @@ class LLMRefiner:
         except Exception as e:
             print(f"[FlowLocal] Errore riformattazione blocco sbobina LLM ({lecture_model}): {e}")
 
-        return chunk_text
+        return clean_chunk
 
     @classmethod
     def generate_lecture_summary(cls, lecture_markdown: str, subject_context: str = "") -> str:
         """Genera un riquadro di Sommario Esecutivo con i punti chiave della lezione."""
-        if not lecture_markdown or not lecture_markdown.strip():
+        clean_lecture = (lecture_markdown or "").strip()
+        if not clean_lecture:
             return ""
 
         lecture_model = cls.detect_lecture_model()
-        ctx_info = f"\nMateria: {subject_context.strip()}" if subject_context else ""
+        clean_ctx = (subject_context or "").strip()
+        ctx_info = f"\nMateria: {clean_ctx}" if clean_ctx else ""
 
         system_prompt = (
             "SEI UN ASSISTENTE UNIVERSITARIO ESPERTO. "
@@ -804,7 +687,7 @@ class LLMRefiner:
             "Includi da 4 a 6 punti salienti. Nessun commento, premessa o testo extra prima o dopo il riquadro."
         )
 
-        sample_text = lecture_markdown.strip()
+        sample_text = clean_lecture
         if len(sample_text) > 8000:
             sample_text = sample_text[:8000] + "\n...(continua)"
 
@@ -829,7 +712,7 @@ class LLMRefiner:
             )
             with urllib.request.urlopen(req, timeout=30.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                summary = data.get("message", {}).get("content", "").strip()
+                summary = (data.get("message", {}).get("content") or "").strip()
                 summary = re.sub(r"</?(?:testo_lezione|output|result)>\s*", "", summary, flags=re.IGNORECASE).strip()
                 if summary:
                     return summary
@@ -841,7 +724,8 @@ class LLMRefiner:
     @classmethod
     def extract_flashcards_from_note(cls, note_text: str) -> List[Dict[str, str]]:
         """Estrae 5-8 domande e risposte d'esame in formato strutturato per flashcard da una nota di studio."""
-        if not note_text or not note_text.strip():
+        clean_note = (note_text or "").strip()
+        if not clean_note:
             return []
 
         lecture_model = cls.detect_lecture_model()
@@ -856,7 +740,7 @@ class LLMRefiner:
             "Non aggiungere assolutamente testo introduttivo, saluti, spiegazioni o blocchi di codice markdown prima o dopo il JSON."
         )
 
-        sample_text = note_text.strip()
+        sample_text = clean_note
         if len(sample_text) > 9000:
             sample_text = sample_text[:9000]
 
@@ -881,7 +765,7 @@ class LLMRefiner:
             )
             with urllib.request.urlopen(req, timeout=45.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                content = data.get("message", {}).get("content", "").strip()
+                content = (data.get("message", {}).get("content") or "").strip()
 
                 json_match = re.search(r'\[[\s\S]*\]', content)
                 if json_match:
@@ -890,8 +774,8 @@ class LLMRefiner:
                         cards = []
                         for item in parsed:
                             if isinstance(item, dict) and "question" in item and "answer" in item:
-                                q_val = str(item["question"]).strip()
-                                a_val = str(item["answer"]).strip()
+                                q_val = (str(item.get("question") or "")).strip()
+                                a_val = (str(item.get("answer") or "")).strip()
                                 if q_val and a_val:
                                     cards.append({"question": q_val, "answer": a_val})
                         if cards:
@@ -1765,8 +1649,8 @@ class FlowLocalEngine:
             # 2. Trascrizione Faster-Whisper (Profilo Aula: threshold 0.35, min_silence 800ms)
             report("Fase 2/3: Trascrizione acustica Faster-Whisper (Profilo Aula)...", 25)
             base_prompt = db.get_whisper_initial_prompt(limit=40) or ""
-            if subject_context and subject_context.strip():
-                clean_ctx = subject_context.strip()
+            clean_ctx = (subject_context or "").strip()
+            if clean_ctx:
                 if base_prompt:
                     whisper_prompt = f"Lezione universitaria di {clean_ctx}. {base_prompt}. Trascrizione accurata in italiano."
                 else:
@@ -1897,10 +1781,10 @@ class FlowLocalEngine:
                 pct = int(45 + (i / total_chunks) * 45)  # Da 45% a 90%
                 report(f"Riformattazione blocco {i}/{total_chunks} ({active_lecture_model})...", pct)
                 formatted = LLMRefiner.reformat_lecture_block(chunk, subject_context=subject_context)
-                formatted_blocks.append(formatted.strip())
+                formatted_blocks.append((formatted or "").strip())
 
             check_cancelled()
-            lecture_body = "\n\n".join(formatted_blocks).strip()
+            lecture_body = "\n\n".join(b for b in formatted_blocks if b).strip()
 
             # Pulizia regex finale: rimozione di eventuali backtick attorno ai segnaposto temporali
             lecture_body = re.sub(r'`+(\[Audio non chiaro[^\]]+\])`+', r'\1', lecture_body)
@@ -1910,9 +1794,10 @@ class FlowLocalEngine:
             report("Generazione Sommario Esecutivo della lezione...", 94)
             check_cancelled()
             summary = LLMRefiner.generate_lecture_summary(lecture_body, subject_context=subject_context)
+            clean_summary = (summary or "").strip()
 
-            if summary:
-                final_markdown = f"{summary}\n\n{lecture_body}".strip()
+            if clean_summary:
+                final_markdown = f"{clean_summary}\n\n{lecture_body}".strip()
             else:
                 final_markdown = lecture_body
 

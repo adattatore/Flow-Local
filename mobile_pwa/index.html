@@ -1,8 +1,10 @@
 <!DOCTYPE html>
 <html lang="it">
+
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="FlowLocal">
@@ -88,8 +90,18 @@
     }
 
     @keyframes pulse-orb {
-      0%, 100% { transform: scale(1); opacity: 0.95; }
-      50% { transform: scale(1.08); opacity: 1; filter: drop-shadow(0 0 10px #38BDF8); }
+
+      0%,
+      100% {
+        transform: scale(1);
+        opacity: 0.95;
+      }
+
+      50% {
+        transform: scale(1.08);
+        opacity: 1;
+        filter: drop-shadow(0 0 10px #38BDF8);
+      }
     }
 
     .brand-title {
@@ -150,6 +162,7 @@
       font-size: 15px;
       cursor: pointer;
     }
+
     .icon-btn:active {
       transform: scale(0.95);
       background: var(--bg-card-hover);
@@ -167,14 +180,22 @@
     .tab-view {
       display: none;
     }
+
     .tab-view.active {
       display: block;
       animation: fadeIn 0.2s ease-in;
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
 
     /* CARD STYLING */
@@ -218,7 +239,9 @@
       margin-bottom: 6px;
     }
 
-    input[type="text"], input[type="password"], select {
+    input[type="text"],
+    input[type="password"],
+    select {
       width: 100%;
       background: var(--bg-input);
       border: 1px solid var(--border-color);
@@ -230,7 +253,9 @@
       transition: border-color 0.15s ease;
       user-select: text;
     }
-    input:focus, select:focus {
+
+    input:focus,
+    select:focus {
       border-color: var(--border-focus);
     }
 
@@ -257,6 +282,7 @@
       cursor: pointer;
       transition: all 0.15s ease;
     }
+
     .seg-btn.active {
       background: var(--primary);
       color: #FFFFFF;
@@ -281,6 +307,7 @@
       border-radius: 16px;
       cursor: pointer;
     }
+
     .chip.active {
       background: rgba(2, 132, 199, 0.25);
       color: var(--accent-cyan);
@@ -302,6 +329,7 @@
       gap: 8px;
       transition: transform 0.1s ease, background 0.15s ease;
     }
+
     .btn:active {
       transform: scale(0.98);
     }
@@ -360,7 +388,9 @@
     }
 
     @keyframes blink-rec {
-      50% { opacity: 0.6; }
+      50% {
+        opacity: 0.6;
+      }
     }
 
     .rec-pulse-btn {
@@ -379,15 +409,24 @@
       box-shadow: 0 0 20px rgba(244, 63, 94, 0.4);
       transition: transform 0.15s ease;
     }
+
     .rec-pulse-btn.active {
       animation: pulse-ring 1.5s infinite;
       background: #EF4444;
     }
 
     @keyframes pulse-ring {
-      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-      70% { box-shadow: 0 0 0 16px rgba(239, 68, 68, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+      0% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+      }
+
+      70% {
+        box-shadow: 0 0 0 16px rgba(239, 68, 68, 0);
+      }
+
+      100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+      }
     }
 
     .rec-actions {
@@ -440,7 +479,10 @@
       margin-bottom: 12px;
       -webkit-overflow-scrolling: touch;
     }
-    .filter-pills::-webkit-scrollbar { display: none; }
+
+    .filter-pills::-webkit-scrollbar {
+      display: none;
+    }
 
     .fpill {
       white-space: nowrap;
@@ -453,6 +495,7 @@
       color: var(--text-muted);
       cursor: pointer;
     }
+
     .fpill.active {
       background: var(--primary);
       border-color: var(--primary);
@@ -469,6 +512,7 @@
       cursor: pointer;
       transition: background 0.15s ease;
     }
+
     .note-card:active {
       background: var(--bg-card-hover);
     }
@@ -488,9 +532,25 @@
       text-transform: uppercase;
       letter-spacing: 0.3px;
     }
-    .badge-profile-alessandro { background: rgba(56, 189, 248, 0.18); color: #38BDF8; border: 1px solid rgba(56, 189, 248, 0.4); }
-    .badge-profile-lei { background: rgba(168, 85, 247, 0.18); color: #C084FC; border: 1px solid rgba(168, 85, 247, 0.4); }
-    .badge-subject { background: rgba(245, 158, 11, 0.15); color: #FBBF24; border: 1px solid rgba(245, 158, 11, 0.3); }
+
+    .badge-profile-alessandro {
+      background: rgba(56, 189, 248, 0.18);
+      color: #38BDF8;
+      border: 1px solid rgba(56, 189, 248, 0.4);
+    }
+
+    .badge-profile-giada,
+    .badge-profile-lei {
+      background: rgba(168, 85, 247, 0.18);
+      color: #C084FC;
+      border: 1px solid rgba(168, 85, 247, 0.4);
+    }
+
+    .badge-subject {
+      background: rgba(245, 158, 11, 0.15);
+      color: #FBBF24;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
 
     .note-date {
       font-size: 11px;
@@ -528,6 +588,7 @@
       padding: calc(var(--safe-top) + 12px) 12px calc(var(--safe-bottom) + 12px) 12px;
       overflow-y: auto;
     }
+
     .detail-overlay.active {
       display: block;
     }
@@ -563,7 +624,9 @@
       color: #E2E8F0;
     }
 
-    .detail-content h1, .detail-content h2, .detail-content h3 {
+    .detail-content h1,
+    .detail-content h2,
+    .detail-content h3 {
       color: #F8FAFC;
       margin-top: 18px;
       margin-bottom: 8px;
@@ -573,7 +636,8 @@
       margin-bottom: 12px;
     }
 
-    .detail-content ul, .detail-content ol {
+    .detail-content ul,
+    .detail-content ol {
       margin-left: 20px;
       margin-bottom: 12px;
     }
@@ -618,6 +682,7 @@
       position: relative;
       transition: transform 0.15s ease, border-color 0.15s ease;
     }
+
     .fc-box:active {
       transform: scale(0.99);
     }
@@ -653,6 +718,7 @@
       padding-top: 12px;
       border-top: 1px dashed var(--border-color);
     }
+
     .fc-box.flipped .fc-answer {
       display: block;
       animation: fadeIn 0.2s ease;
@@ -683,6 +749,7 @@
       margin-top: 10px;
       display: none;
     }
+
     .progress-bar-fill {
       width: 0%;
       height: 100%;
@@ -720,9 +787,11 @@
       gap: 3px;
       transition: color 0.15s ease;
     }
+
     .nav-item.active {
       color: var(--accent-cyan);
     }
+
     .nav-item svg {
       width: 22px;
       height: 22px;
@@ -748,6 +817,7 @@
       pointer-events: none;
       transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
     }
+
     .toast.show {
       transform: translateX(-50%) translateY(0);
       opacity: 1;
@@ -759,6 +829,7 @@
       padding: 40px 16px;
       color: var(--text-dim);
     }
+
     .empty-state-icon {
       font-size: 42px;
       margin-bottom: 12px;
@@ -766,6 +837,7 @@
     }
   </style>
 </head>
+
 <body>
 
   <!-- HEADER -->
@@ -801,28 +873,30 @@
         <div class="form-group">
           <label>Profilo Studente</label>
           <div class="segmented-control">
-            <button type="button" class="seg-btn active" onclick="app.setProfile('Alessandro', this)">Alessandro</button>
-            <button type="button" class="seg-btn" onclick="app.setProfile('Lei', this)">Lei</button>
+            <button type="button" class="seg-btn active"
+              onclick="app.setProfile('Alessandro', this)">Alessandro</button>
+            <button type="button" class="seg-btn" onclick="app.setProfile('Giada', this)">Giada</button>
           </div>
         </div>
 
         <!-- Materia / Corso -->
         <div class="form-group">
           <label>Materia / Corso</label>
-          <input type="text" id="subjectInput" placeholder="Es. Diritto Sanitario, Fisica 2..." value="Diritto Sanitario">
-          <div class="chip-container">
-            <span class="chip active" onclick="app.selectSubjectChip('Diritto Sanitario', this)">Diritto Sanitario</span>
-            <span class="chip" onclick="app.selectSubjectChip('Fisica 2', this)">Fisica 2</span>
-            <span class="chip" onclick="app.selectSubjectChip('Analisi Matematica', this)">Analisi</span>
-            <span class="chip" onclick="app.selectSubjectChip('Anatomia Clinica', this)">Anatomia</span>
-            <span class="chip" onclick="app.selectSubjectChip('Informatica', this)">Informatica</span>
+          <input type="text" id="subjectInput" placeholder="Es. Meccanica dei Robot, Sistemi Dinamici..."
+            value="" oninput="app.onSubjectInput(this.value)" onchange="if(this.value.trim()) app.saveRecentSubject(this.value.trim());">
+          <div class="chip-container" id="subjectChipsContainer">
+            <span class="chip" onclick="app.selectSubjectChip('Meccanica dei Robot', this)">Meccanica dei Robot</span>
+            <span class="chip" onclick="app.selectSubjectChip('Azionamenti Elettrici', this)">Azionamenti Elettrici</span>
+            <span class="chip" onclick="app.selectSubjectChip('Reti Wireless', this)">Reti Wireless</span>
+            <span class="chip" onclick="app.selectSubjectChip('Fisica 1', this)">Fisica 1</span>
+            <span class="chip" onclick="app.selectSubjectChip('Sistemi Dinamici', this)">Sistemi Dinamici</span>
           </div>
         </div>
 
         <!-- Titolo / Note Aggiuntive -->
         <div class="form-group">
           <label>Titolo Lezione (Opzionale)</label>
-          <input type="text" id="titleInput" placeholder="Es. Lezione 3 - Colpa grave e linee guida">
+          <input type="text" id="titleInput" placeholder="Es. Lezione 3 - Cinematica braccio robotico, Teorema di Gauss...">
         </div>
 
         <!-- REGISTRATORE MICROFONO BROWSER -->
@@ -834,7 +908,8 @@
           </div>
 
           <div id="recActionsRow" class="rec-actions" style="display: none;">
-            <button class="btn btn-outline" style="width: auto; padding: 6px 14px; font-size: 12px;" onclick="app.cancelRecording()">✕ Scarta</button>
+            <button class="btn btn-outline" style="width: auto; padding: 6px 14px; font-size: 12px;"
+              onclick="app.cancelRecording()">✕ Scarta</button>
           </div>
 
           <audio id="audioPreview" controls style="display: none;"></audio>
@@ -842,7 +917,8 @@
 
         <!-- OPPURE CARICA FILE ESISTENTE -->
         <div class="file-drop-area">
-          <input type="file" id="audioFileInput" accept="audio/*,video/*,.m4a,.mp3,.wav,.mp4,.ogg,.webm,.aac" onchange="app.onAudioFileSelected(event)">
+          <input type="file" id="audioFileInput" accept="audio/*,video/*,.m4a,.mp3,.wav,.mp4,.ogg,.webm,.aac"
+            onchange="app.onAudioFileSelected(event)">
           <div style="font-size: 24px; margin-bottom: 4px;">📂</div>
           <div id="fileUploadLabel" style="font-size: 13px; font-weight: 600; color: #FFFFFF;">
             Oppure tocca qui per scegliere un file audio dal telefono
@@ -866,7 +942,8 @@
     <!-- TAB 2: LIBRERIA SBOBINE & NOTE -->
     <section id="tab-library" class="tab-view">
       <div class="search-row">
-        <input type="text" id="librarySearchInput" placeholder="🔍 Cerca nelle sbobine e appunti…" oninput="app.renderLibrary()">
+        <input type="text" id="librarySearchInput" placeholder="🔍 Cerca nelle sbobine e appunti…"
+          oninput="app.renderLibrary()">
         <button class="icon-btn" onclick="app.syncFromDrive()" title="Sincronizza subito">🔄</button>
       </div>
 
@@ -874,7 +951,7 @@
       <div class="filter-pills" id="profileFilterPills">
         <button class="fpill active" onclick="app.setLibraryProfileFilter('ALL', this)">Tutti i Profili</button>
         <button class="fpill" onclick="app.setLibraryProfileFilter('Alessandro', this)">Alessandro</button>
-        <button class="fpill" onclick="app.setLibraryProfileFilter('Lei', this)">Lei</button>
+        <button class="fpill" onclick="app.setLibraryProfileFilter('Giada', this)">Giada</button>
       </div>
 
       <div class="filter-pills" id="subjectFilterPills">
@@ -889,7 +966,7 @@
       <div class="filter-pills" id="fcProfileFilterPills">
         <button class="fpill active" onclick="app.setFcProfileFilter('ALL', this)">Tutti</button>
         <button class="fpill" onclick="app.setFcProfileFilter('Alessandro', this)">Alessandro</button>
-        <button class="fpill" onclick="app.setFcProfileFilter('Lei', this)">Lei</button>
+        <button class="fpill" onclick="app.setFcProfileFilter('Giada', this)">Giada</button>
       </div>
 
       <div id="flashcardBoxContainer">
@@ -904,18 +981,22 @@
           <div class="card-title">🔑 Integrazione Google Drive API</div>
         </div>
         <p style="font-size: 12.5px; color: var(--text-muted); line-height: 1.5; margin-bottom: 14px;">
-          Collega il tuo Google Drive per sincronizzare automaticamente la cartella <code>FlowLocal_Sync</code> senza aprire l'app di Drive.
+          Collega il tuo Google Drive per sincronizzare automaticamente la cartella <code>FlowLocal_Sync</code> senza
+          aprire l'app di Drive.
         </p>
 
         <div class="form-group">
           <label>Google OAuth Client ID</label>
-          <input type="text" id="googleClientIdInput" placeholder="7123456789-xxxx.apps.googleusercontent.com" onchange="app.saveGoogleClientId()">
+          <input type="text" id="googleClientIdInput" placeholder="7123456789-xxxx.apps.googleusercontent.com"
+            onchange="app.saveGoogleClientId()" onblur="app.saveGoogleClientId()">
           <div style="font-size: 11px; color: var(--text-dim); margin-top: 5px; line-height: 1.4;">
-            Crea un <em>Client ID applicazione Web</em> su Google Cloud Console (Aggiungi le origini JavaScript autorizzate es. <code>http://localhost</code> o il tuo dominio PWA).
+            Crea un <em>Client ID applicazione Web</em> su Google Cloud Console (Aggiungi le origini JavaScript
+            autorizzate es. <code>http://localhost</code> o il tuo dominio PWA).
           </div>
         </div>
 
-        <button id="authDriveBtn" class="btn btn-success" onclick="app.connectGoogleDrive()" style="margin-bottom: 10px;">
+        <button id="authDriveBtn" class="btn btn-success" onclick="app.connectGoogleDrive()"
+          style="margin-bottom: 10px;">
           🔑 Collega Google Drive
         </button>
 
@@ -926,9 +1007,11 @@
         <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 14px;">
           <div class="card-title" style="font-size: 14px; margin-bottom: 8px;">📁 Riserva Offline / Import Manuale</div>
           <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
-            Puoi caricare manualmente il file <code>outbox_study/library.json</code> esportato dal PC senza account Google.
+            Puoi caricare manualmente il file <code>outbox_study/library.json</code> esportato dal PC senza account
+            Google.
           </p>
-          <input type="file" id="manualJsonInput" accept=".json" onchange="app.importManualJson(event)" style="display: none;">
+          <input type="file" id="manualJsonInput" accept=".json" onchange="app.importManualJson(event)"
+            style="display: none;">
           <button class="btn btn-outline" onclick="document.getElementById('manualJsonInput').click()">
             📥 Carica library.json dal telefono
           </button>
@@ -940,7 +1023,8 @@
         <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;" id="storageStats">
           Archivio locale attivo per visualizzazione in aula.
         </div>
-        <button class="btn btn-outline" style="border-color: #3F2A2E; color: #F87171;" onclick="app.clearOfflineCache()">
+        <button class="btn btn-outline" style="border-color: #3F2A2E; color: #F87171;"
+          onclick="app.clearOfflineCache()">
           🗑️ Svuota Cache Offline
         </button>
       </div>
@@ -966,30 +1050,58 @@
   <!-- BOTTOM NAVIGATION BAR -->
   <nav class="bottom-nav">
     <div class="nav-item active" onclick="app.showTab('upload')">
-      <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+      <svg viewBox="0 0 24 24">
+        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+        <path
+          d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
+      </svg>
       <span>Invia Audio</span>
     </div>
     <div class="nav-item" onclick="app.showTab('library')">
-      <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/></svg>
+      <svg viewBox="0 0 24 24">
+        <path
+          d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z" />
+      </svg>
       <span>Libreria</span>
     </div>
     <div class="nav-item" onclick="app.showTab('flashcards')">
-      <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+      <svg viewBox="0 0 24 24">
+        <path
+          d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" />
+      </svg>
       <span>Flashcard</span>
     </div>
     <div class="nav-item" onclick="app.showTab('settings')">
-      <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+      <svg viewBox="0 0 24 24">
+        <path
+          d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+      </svg>
       <span>Setup</span>
     </div>
   </nav>
 
   <!-- APPLICATION LOGIC & GOOGLE DRIVE API CLIENT -->
   <script>
-    // Inizializzazione Service Worker per uso offline
+    // Configurazione Predefinita Google Identity Services
+    const DEFAULT_GOOGLE_CLIENT_ID = "532605028528-c3cq37jq830oqiejk84lppmak26i9up7.apps.googleusercontent.com".trim();
+
+    // Inizializzazione Service Worker per uso offline e reload automatico all'aggiornamento
     if ('serviceWorker' in navigator) {
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!refreshing) {
+          refreshing = true;
+          console.log('[PWA] Nuovo Service Worker attivo, ricarico la pagina per applicare la nuova build...');
+          window.location.reload();
+        }
+      });
+
       window.addEventListener('load', () => {
         navigator.serviceWorker.register('./sw.js')
-          .then((reg) => console.log('[PWA] Service Worker registrato con scope:', reg.scope))
+          .then((reg) => {
+            console.log('[PWA] Service Worker registrato con scope:', reg.scope);
+            reg.update();
+          })
           .catch((err) => console.warn('[PWA] Errore Service Worker:', err));
       });
     }
@@ -1050,7 +1162,7 @@
       fcFilterProfile: 'ALL',
       currentFcIndex: 0,
       activeFlashcards: [],
-      
+
       // Audio Recording State
       mediaRecorder: null,
       recordedChunks: [],
@@ -1062,15 +1174,25 @@
 
       // Google Drive API State
       tokenClient: null,
+      initializedClientId: null,
       accessToken: localStorage.getItem('flowlocal_drive_token') || null,
       tokenExpiry: parseInt(localStorage.getItem('flowlocal_drive_token_expires') || '0', 10),
 
-      init: async function() {
+      init: async function () {
         this.updateOnlineStatus();
         window.addEventListener('online', () => this.updateOnlineStatus());
         window.addEventListener('offline', () => this.updateOnlineStatus());
+        this.renderSubjectChips();
 
-        const savedClientId = localStorage.getItem('flowlocal_google_client_id');
+        let savedClientId = (localStorage.getItem('flowlocal_google_client_id') || '').trim();
+        // Se localStorage non contiene un client_id valido che termina con .apps.googleusercontent.com, usa e salva automaticamente DEFAULT_GOOGLE_CLIENT_ID
+        if (!savedClientId || !savedClientId.endsWith('.apps.googleusercontent.com')) {
+          if (DEFAULT_GOOGLE_CLIENT_ID) {
+            savedClientId = DEFAULT_GOOGLE_CLIENT_ID;
+            localStorage.setItem('flowlocal_google_client_id', savedClientId);
+          }
+        }
+
         if (savedClientId) {
           const el = document.getElementById('googleClientIdInput');
           if (el) el.value = savedClientId;
@@ -1090,7 +1212,7 @@
         }
       },
 
-      showToast: function(msg) {
+      showToast: function (msg) {
         const t = document.getElementById('toast');
         if (!t) return;
         t.textContent = msg;
@@ -1098,7 +1220,7 @@
         setTimeout(() => t.classList.remove('show'), 2800);
       },
 
-      updateOnlineStatus: function() {
+      updateOnlineStatus: function () {
         const badge = document.getElementById('syncStatusBadge');
         const text = document.getElementById('syncStatusText');
         if (!badge || !text) return;
@@ -1111,7 +1233,7 @@
         }
       },
 
-      showTab: function(tabId) {
+      showTab: function (tabId) {
         document.querySelectorAll('.tab-view').forEach(el => el.classList.remove('active'));
         document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
 
@@ -1127,22 +1249,99 @@
         if (tabId === 'flashcards') this.renderFlashcards();
       },
 
-      setProfile: function(name, btn) {
+      setProfile: function (name, btn) {
         this.profile = name;
         document.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
       },
 
-      selectSubjectChip: function(subject, chip) {
-        document.getElementById('subjectInput').value = subject;
-        document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
+      getRecentSubjects: function () {
+        const defaultList = [
+          'Meccanica dei Robot',
+          'Azionamenti Elettrici',
+          'Reti Wireless',
+          'Fisica 1',
+          'Sistemi Dinamici'
+        ];
+        try {
+          const raw = localStorage.getItem('flowlocal_recent_subjects');
+          if (!raw) return defaultList;
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const cleaned = parsed
+              .filter(s => typeof s === 'string' && s.trim() && s.trim().toLowerCase() !== 'diritto sanitario')
+              .map(s => s.trim());
+            return cleaned.length > 0 ? cleaned : defaultList;
+          }
+        } catch (e) {
+          console.error('Errore lettura recent_subjects:', e);
+        }
+        return defaultList;
+      },
+
+      saveRecentSubject: function (subject) {
+        if (!subject) return;
+        const trimmed = subject.trim();
+        if (!trimmed || trimmed.toLowerCase() === 'generale' || trimmed.toLowerCase() === 'diritto sanitario') return;
+
+        let list = this.getRecentSubjects();
+        list = list.filter(s => s.toLowerCase() !== trimmed.toLowerCase());
+        list.unshift(trimmed);
+        if (list.length > 8) {
+          list = list.slice(0, 8);
+        }
+        try {
+          localStorage.setItem('flowlocal_recent_subjects', JSON.stringify(list));
+        } catch (e) {
+          console.error('Errore salvataggio recent_subjects:', e);
+        }
+        this.renderSubjectChips();
+      },
+
+      renderSubjectChips: function () {
+        const container = document.getElementById('subjectChipsContainer');
+        if (!container) return;
+        const currentVal = (document.getElementById('subjectInput')?.value || '').trim().toLowerCase();
+        const list = this.getRecentSubjects();
+
+        container.innerHTML = '';
+        list.forEach(subj => {
+          const chip = document.createElement('span');
+          chip.className = 'chip' + (currentVal && subj.toLowerCase() === currentVal ? ' active' : '');
+          chip.textContent = subj;
+          chip.onclick = () => this.selectSubjectChip(subj, chip);
+          container.appendChild(chip);
+        });
+      },
+
+      onSubjectInput: function (val) {
+        const trimmed = (val || '').trim().toLowerCase();
+        document.querySelectorAll('#subjectChipsContainer .chip').forEach(c => {
+          if (trimmed && c.textContent.trim().toLowerCase() === trimmed) {
+            c.classList.add('active');
+          } else {
+            c.classList.remove('active');
+          }
+        });
+      },
+
+      selectSubjectChip: function (subject, chip) {
+        const input = document.getElementById('subjectInput');
+        if (!input) return;
+        if (input.value.trim().toLowerCase() === subject.trim().toLowerCase() && chip && chip.classList.contains('active')) {
+          input.value = '';
+          chip.classList.remove('active');
+        } else {
+          input.value = subject;
+          document.querySelectorAll('#subjectChipsContainer .chip').forEach(c => c.classList.remove('active'));
+          if (chip) chip.classList.add('active');
+        }
       },
 
       // -----------------------------------------------------------------------
       // AUDIO RECORDING (MediaRecorder)
       // -----------------------------------------------------------------------
-      toggleRecording: async function() {
+      toggleRecording: async function () {
         if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
           this.stopRecording();
         } else {
@@ -1150,11 +1349,11 @@
         }
       },
 
-      startRecording: async function() {
+      startRecording: async function () {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           this.recordedChunks = [];
-          
+
           let mime = 'audio/webm';
           if (MediaRecorder.isTypeSupported('audio/mp4')) mime = 'audio/mp4';
           else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mime = 'audio/webm;codecs=opus';
@@ -1176,7 +1375,7 @@
             const ext = mime.includes('mp4') ? 'm4a' : 'webm';
             const timestamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
             this.selectedFileName = `registrazione_${this.profile.toLowerCase()}_${timestamp}.${ext}`;
-            
+
             document.getElementById('recHint').textContent = `Audio registrato (${(this.recordedBlob.size / 1024 / 1024).toFixed(2)} MB)`;
             document.getElementById('recActionsRow').style.display = 'flex';
           };
@@ -1200,7 +1399,7 @@
         }
       },
 
-      stopRecording: function() {
+      stopRecording: function () {
         if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
           this.mediaRecorder.stop();
         }
@@ -1209,7 +1408,7 @@
         document.getElementById('recTimer').classList.remove('recording');
       },
 
-      cancelRecording: function() {
+      cancelRecording: function () {
         this.stopRecording();
         this.recordedChunks = [];
         this.recordedBlob = null;
@@ -1221,7 +1420,7 @@
         document.getElementById('recHint').textContent = 'Tocca per registrare direttamente dal microfono';
       },
 
-      updateRecTimer: function() {
+      updateRecTimer: function () {
         const h = Math.floor(this.recSeconds / 3600);
         const m = Math.floor((this.recSeconds % 3600) / 60);
         const s = this.recSeconds % 60;
@@ -1229,7 +1428,7 @@
         document.getElementById('recTimer').textContent = fmt;
       },
 
-      onAudioFileSelected: function(e) {
+      onAudioFileSelected: function (e) {
         const file = e.target.files[0];
         if (!file) return;
         this.selectedFileBlob = file;
@@ -1242,358 +1441,401 @@
       // -----------------------------------------------------------------------
       // GOOGLE DRIVE API V3 & GIS
       // -----------------------------------------------------------------------
-      isTokenValid: function() {
+      isTokenValid: function () {
         return !!(this.accessToken && Date.now() < this.tokenExpiry);
       },
 
-      saveGoogleClientId: function() {
-        const val = document.getElementById('googleClientIdInput').value.trim();
+      saveGoogleClientId: function () {
+        const inputEl = document.getElementById('googleClientIdInput');
+        const val = inputEl ? inputEl.value.trim() : '';
+        if (inputEl) inputEl.value = val;
         if (val) {
           localStorage.setItem('flowlocal_google_client_id', val);
           this.showToast('Client ID salvato!');
+        } else {
+          localStorage.removeItem('flowlocal_google_client_id');
         }
       },
 
-      connectGoogleDrive: function() {
-        const clientId = localStorage.getItem('flowlocal_google_client_id') || (document.getElementById('googleClientIdInput') ? document.getElementById('googleClientIdInput').value.trim() : '');
-        if (!clientId) {
-          alert('Inserisci prima il tuo Google OAuth Client ID nelle impostazioni.');
-          this.showTab('settings');
-          return;
-        }
+      connectGoogleDrive: function () {
+        const inputEl = document.getElementById('googleClientIdInput');
+          let activeClientId = inputEl ? inputEl.value.trim() : '';
+          if (!activeClientId) {
+            activeClientId = (localStorage.getItem('flowlocal_google_client_id') || '').trim();
+          }
+          if (!activeClientId && DEFAULT_GOOGLE_CLIENT_ID) {
+            activeClientId = DEFAULT_GOOGLE_CLIENT_ID.trim();
+          }
 
-        if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
-          alert('Libreria Google Identity Services non ancora caricata. Verifica la connessione Internet.');
-          return;
-        }
-
-        this.tokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: clientId,
-          scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive',
-          callback: (resp) => {
-            if (resp.access_token) {
-              this.accessToken = resp.access_token;
-              this.tokenExpiry = Date.now() + ((parseInt(resp.expires_in, 10) || 3600) * 1000);
-              localStorage.setItem('flowlocal_drive_token', this.accessToken);
-              localStorage.setItem('flowlocal_drive_token_expires', this.tokenExpiry.toString());
-              this.updateOnlineStatus();
-              this.showToast('Google Drive collegato con successo!');
-              this.syncFromDrive();
-            } else if (resp.error) {
-              alert('Errore autorizzazione Google: ' + resp.error);
+            if (inputEl && activeClientId) {
+              inputEl.value = activeClientId;
             }
-          }
-        });
 
-        this.tokenClient.requestAccessToken({ prompt: 'consent' });
-      },
+              if (!activeClientId || activeClientId === '<INCOLLA_QUI_IL_TUO_CLIENT_ID>') {
+                alert('Google Client ID mancante o non configurato!\n\nImposta il tuo Client ID nelle Impostazioni oppure aggiorna la costante DEFAULT_GOOGLE_CLIENT_ID nel codice sorgente della PWA.');
+                this.showTab('settings');
+                if (inputEl) inputEl.focus();
+                return;
+              }
 
-      // Helper per trovare o creare cartella su Google Drive
-      findOrCreateFolder: async function(name, parentId = null) {
-        let q = `mimeType = 'application/vnd.google-apps.folder' and name = '${name}' and trashed = false`;
-        if (parentId) {
-          q += ` and '${parentId}' in parents`;
-        }
-        const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, {
-          headers: { 'Authorization': `Bearer ${this.accessToken}` }
-        });
-        const data = await searchRes.json();
-        if (data.files && data.files.length > 0) {
-          return data.files[0].id;
-        }
+                if (!activeClientId.endsWith('.apps.googleusercontent.com')) {
+                  alert('Google Client ID non valido o malformato!\n\nValore rilevato: "' + activeClientId + '"\n\nDeve terminare obbligatoriamente con ".apps.googleusercontent.com" (es. 123456789-abcdef.apps.googleusercontent.com).\n\nVerifica di aver copiato l\'intero Client ID per applicazione Web dalla Google Cloud Console.');
+                  this.showTab('settings');
+                  if (inputEl) inputEl.focus();
+                  return;
+                }
 
-        // Creazione cartella se non trovata
-        const meta = { name: name, mimeType: 'application/vnd.google-apps.folder' };
-        if (parentId) meta.parents = [parentId];
-        const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(meta)
-        });
-        const created = await createRes.json();
-        return created.id;
-      },
+                // Salva il client ID sanificato
+                localStorage.setItem('flowlocal_google_client_id', activeClientId);
 
-      // Carica file su Google Drive via Multipart Upload
-      uploadFileToDrive: async function(fileBlob, filename, parentFolderId, mimeType = null) {
-        const metadata = {
-          name: filename,
-          parents: [parentFolderId]
-        };
+                if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
+                  alert('Libreria Google Identity Services non ancora caricata o bloccata.\nVerifica la connessione a Internet o disattiva eventuali estensioni ad-block.');
+                  return;
+                }
 
-        const boundary = '-------FlowLocalMultipartBoundary';
-        const delimiter = `\r\n--${boundary}\r\n`;
-        const closeDelim = `\r\n--${boundary}--`;
+                // Re-inizializza il client OAuth se non ancora inizializzato o se il client_id è cambiato
+                  if (!this.tokenClient || this.initializedClientId !== activeClientId) {
+                    try {
+                      this.tokenClient = google.accounts.oauth2.initTokenClient({
+                        client_id: activeClientId.trim(),
+                        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive',
+                        ux_mode: 'popup',
+                        callback: (resp) => {
+                          if (resp.access_token) {
+                            this.accessToken = resp.access_token;
+                            this.tokenExpiry = Date.now() + ((parseInt(resp.expires_in, 10) || 3600) * 1000);
+                            localStorage.setItem('flowlocal_drive_token', this.accessToken);
+                            localStorage.setItem('flowlocal_drive_token_expires', this.tokenExpiry.toString());
+                            this.updateOnlineStatus();
+                            this.showToast('Google Drive collegato con successo!');
+                            this.syncFromDrive();
+                          } else if (resp.error) {
+                            const desc = resp.error_description ? `\n${resp.error_description}` : '';
+                            alert('Errore autorizzazione Google: ' + resp.error + desc);
+                          }
+                        }
+                      });
+                      this.initializedClientId = activeClientId;
+                    } catch (initErr) {
+                      alert('Errore diagnostico inizializzazione Google Identity Services:\n' + initErr.message + '\n\nClient ID usato: ' + activeClientId);
+                      return;
+                    }
+                  }
 
-        const effectiveMime = mimeType || fileBlob.type || 'application/octet-stream';
+                  this.tokenClient.requestAccessToken({ prompt: 'consent' });
+                },
 
-        // Convertiamo il file blob in ArrayBuffer per costruire il body binario
-        const fileBuffer = await fileBlob.arrayBuffer();
-        const metaPart = `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}${delimiter}Content-Type: ${effectiveMime}\r\n\r\n`;
-        
-        const encoder = new TextEncoder();
-        const metaBytes = encoder.encode(metaPart);
-        const closeBytes = encoder.encode(closeDelim);
+                // Helper per trovare o creare cartella su Google Drive
+                findOrCreateFolder: async function (name, parentId = null) {
+                  let q = `mimeType = 'application/vnd.google-apps.folder' and name = '${name}' and trashed = false`;
+                  if (parentId) {
+                    q += ` and '${parentId}' in parents`;
+                  }
+                  const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, {
+                    headers: { 'Authorization': `Bearer ${this.accessToken}` }
+                  });
+                  const data = await searchRes.json();
+                  if (data.files && data.files.length > 0) {
+                    return data.files[0].id;
+                  }
 
-        const totalLength = metaBytes.length + fileBuffer.byteLength + closeBytes.length;
-        const combined = new Uint8Array(totalLength);
-        combined.set(metaBytes, 0);
-        combined.set(new Uint8Array(fileBuffer), metaBytes.length);
-        combined.set(closeBytes, metaBytes.length + fileBuffer.byteLength);
+                  // Creazione cartella se non trovata
+                  const meta = { name: name, mimeType: 'application/vnd.google-apps.folder' };
+                  if (parentId) meta.parents = [parentId];
+                  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${this.accessToken}`,
+                      'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(meta)
+                  });
+                  const created = await createRes.json();
+                  return created.id;
+                },
 
-        const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.accessToken}`,
-            'Content-Type': `multipart/related; boundary=${boundary}`
-          },
-          body: combined
-        });
+                // Carica file su Google Drive via Multipart Upload
+                uploadFileToDrive: async function (fileBlob, filename, parentFolderId, mimeType = null) {
+                  const metadata = {
+                    name: filename,
+                    parents: [parentFolderId]
+                  };
 
-        if (!uploadRes.ok) {
-          const errText = await uploadRes.text();
-          throw new Error(`Upload fallito (${uploadRes.status}): ${errText}`);
-        }
-        return await uploadRes.json();
-      },
+                  const boundary = '-------FlowLocalMultipartBoundary';
+                  const delimiter = `\r\n--${boundary}\r\n`;
+                  const closeDelim = `\r\n--${boundary}--`;
 
-      // -----------------------------------------------------------------------
-      // UPLOAD AUDIO JOB (Audio + .meta.json in FlowLocal_Sync/inbox_audio/)
-      // -----------------------------------------------------------------------
-      uploadAudioJob: async function() {
-        if (!this.selectedFileBlob) {
-          alert('Nessun audio registrato o selezionato. Registra una lezione o scegli un file.');
-          return;
-        }
+                  const effectiveMime = mimeType || fileBlob.type || 'application/octet-stream';
 
-        if (!navigator.onLine) {
-          alert('Sei in modalità offline. Connettiti a Internet per caricare la registrazione su Google Drive.');
-          return;
-        }
+                  // Convertiamo il file blob in ArrayBuffer per costruire il body binario
+                  const fileBuffer = await fileBlob.arrayBuffer();
+                  const metaPart = `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}${delimiter}Content-Type: ${effectiveMime}\r\n\r\n`;
 
-        if (!this.isTokenValid()) {
-          this.connectGoogleDrive();
-          return;
-        }
+                  const encoder = new TextEncoder();
+                  const metaBytes = encoder.encode(metaPart);
+                  const closeBytes = encoder.encode(closeDelim);
 
-        const subject = document.getElementById('subjectInput').value.trim() || 'Generale';
-        const customTitle = document.getElementById('titleInput').value.trim() || this.selectedFileName;
-        const filename = this.selectedFileName || `audio_${Date.now()}.m4a`;
+                  const totalLength = metaBytes.length + fileBuffer.byteLength + closeBytes.length;
+                  const combined = new Uint8Array(totalLength);
+                  combined.set(metaBytes, 0);
+                  combined.set(new Uint8Array(fileBuffer), metaBytes.length);
+                  combined.set(closeBytes, metaBytes.length + fileBuffer.byteLength);
 
-        const btn = document.getElementById('uploadSubmitBtn');
-        const pBox = document.getElementById('uploadProgressBox');
-        const pBar = document.getElementById('uploadProgressBar');
+                  const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+                    method: 'POST',
+                    headers: {
+                      'Authorization': `Bearer ${this.accessToken}`,
+                      'Content-Type': `multipart/related; boundary=${boundary}`
+                    },
+                    body: combined
+                  });
 
-        btn.disabled = true;
-        btn.textContent = '⏳ Caricamento su Google Drive...';
-        pBox.style.display = 'block';
-        pBar.style.width = '20%';
+                  if (!uploadRes.ok) {
+                    const errText = await uploadRes.text();
+                    throw new Error(`Upload fallito (${uploadRes.status}): ${errText}`);
+                  }
+                  return await uploadRes.json();
+                },
 
-        try {
-          // 1. Assicura le cartelle su Google Drive: FlowLocal_Sync -> inbox_audio
-          const syncFolderId = await this.findOrCreateFolder('FlowLocal_Sync');
-          const inboxFolderId = await this.findOrCreateFolder('inbox_audio', syncFolderId);
-          pBar.style.width = '45%';
+                // -----------------------------------------------------------------------
+                // UPLOAD AUDIO JOB (Audio + .meta.json in FlowLocal_Sync/inbox_audio/)
+                // -----------------------------------------------------------------------
+                uploadAudioJob: async function () {
+                  if (!this.selectedFileBlob) {
+                    alert('Nessun audio registrato o selezionato. Registra una lezione o scegli un file.');
+                    return;
+                  }
 
-          // 2. Carica il file audio
-          await this.uploadFileToDrive(this.selectedFileBlob, filename, inboxFolderId);
-          pBar.style.width = '80%';
+                  if (!navigator.onLine) {
+                    alert('Sei in modalità offline. Connettiti a Internet per caricare la registrazione su Google Drive.');
+                    return;
+                  }
 
-          // 3. Carica il file companion .meta.json
-          const metaPayload = {
-            profile: this.profile,
-            subject: subject,
-            title: customTitle,
-            created_at: new Date().toISOString()
-          };
-          const metaBlob = new Blob([JSON.stringify(metaPayload, null, 2)], { type: 'application/json' });
-          await this.uploadFileToDrive(metaBlob, `${filename}.meta.json`, inboxFolderId, 'application/json');
+                  if (!this.isTokenValid()) {
+                    this.connectGoogleDrive();
+                    return;
+                  }
 
-          pBar.style.width = '100%';
-          this.showToast('✅ Audio inviato alla Coda Cloud!');
-          
-          alert(`Registrazione caricata con successo su Google Drive!\n\nFile: ${filename}\nProfilo: ${this.profile}\nMateria: ${subject}\n\nIl PC elaborerà l'audio non appena cliccherai '▶️ Elabora Coda' nell'Hub.`);
+                  const subject = document.getElementById('subjectInput').value.trim() || 'Generale';
+                  if (subject && subject !== 'Generale') {
+                    this.saveRecentSubject(subject);
+                  }
+                  const customTitle = document.getElementById('titleInput').value.trim() || this.selectedFileName;
+                  const filename = this.selectedFileName || `audio_${Date.now()}.m4a`;
 
-          // Reset del form
-          this.cancelRecording();
-          document.getElementById('titleInput').value = '';
-          document.getElementById('fileUploadLabel').textContent = 'Oppure tocca qui per scegliere un file audio dal telefono';
-          document.getElementById('fileUploadSub').textContent = 'Supporta .m4a, .mp3, .mp4, .wav, .aac';
-        } catch (err) {
-          alert('Errore durante il caricamento su Google Drive:\n' + err.message);
-        } finally {
-          btn.disabled = false;
-          btn.textContent = '🚀 Invia alla Coda Cloud del PC';
-          setTimeout(() => pBox.style.display = 'none', 1000);
-        }
-      },
+                  const btn = document.getElementById('uploadSubmitBtn');
+                  const pBox = document.getElementById('uploadProgressBox');
+                  const pBar = document.getElementById('uploadProgressBar');
 
-      // -----------------------------------------------------------------------
-      // SINCRONIZZAZIONE LIBRERIA (outbox_study/library.json)
-      // -----------------------------------------------------------------------
-      syncFromDrive: async function(silent = false) {
-        if (!navigator.onLine) {
-          if (!silent) this.showToast('Sei offline: mostro i dati salvati.');
-          return;
-        }
+                  btn.disabled = true;
+                  btn.textContent = '⏳ Caricamento su Google Drive...';
+                  pBox.style.display = 'block';
+                  pBar.style.width = '20%';
 
-        if (!this.isTokenValid()) {
-          if (!silent) {
-            alert('Google Drive non collegato o sessione scaduta. Clicca su "🔑 Collega Google Drive" nelle impostazioni.');
-            this.showTab('settings');
-          }
-          return;
-        }
+                  try {
+                    // 1. Assicura le cartelle su Google Drive: FlowLocal_Sync -> inbox_audio
+                    const syncFolderId = await this.findOrCreateFolder('FlowLocal_Sync');
+                    const inboxFolderId = await this.findOrCreateFolder('inbox_audio', syncFolderId);
+                    pBar.style.width = '45%';
 
-        try {
-          if (!silent) this.showToast('Sincronizzazione con Google Drive...');
-          
-          // Trova outbox_study
-          const syncFolderId = await this.findOrCreateFolder('FlowLocal_Sync');
-          const outboxFolderId = await this.findOrCreateFolder('outbox_study', syncFolderId);
+                    // 2. Carica il file audio
+                    await this.uploadFileToDrive(this.selectedFileBlob, filename, inboxFolderId);
+                    pBar.style.width = '80%';
 
-          // Cerca library.json
-          const q = `name = 'library.json' and '${outboxFolderId}' in parents and trashed = false`;
-          const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)`, {
-            headers: { 'Authorization': `Bearer ${this.accessToken}` }
-          });
-          const list = await res.json();
-          if (!list.files || list.files.length === 0) {
-            if (!silent) alert('Nessun file library.json trovato in FlowLocal_Sync/outbox_study. Clicca su "🔄 Aggiorna Cloud" nel PC per generarlo.');
-            return;
-          }
+                    // 3. Carica il file companion .meta.json
+                    const metaPayload = {
+                      profile: this.profile,
+                      subject: subject,
+                      title: customTitle,
+                      created_at: new Date().toISOString()
+                    };
+                    const metaBlob = new Blob([JSON.stringify(metaPayload, null, 2)], { type: 'application/json' });
+                    await this.uploadFileToDrive(metaBlob, `${filename}.meta.json`, inboxFolderId, 'application/json');
 
-          const fileId = list.files[0].id;
-          const downloadRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-            headers: { 'Authorization': `Bearer ${this.accessToken}` }
-          });
-          const json = await downloadRes.json();
+                    pBar.style.width = '100%';
+                    this.showToast('✅ Audio inviato alla Coda Cloud!');
 
-          this.libraryData = json;
-          await saveLibraryToIndexedDB(json);
+                    alert(`Registrazione caricata con successo su Google Drive!\n\nFile: ${filename}\nProfilo: ${this.profile}\nMateria: ${subject}\n\nIl PC elaborerà l'audio non appena cliccherai '▶️ Elabora Coda' nell'Hub.`);
 
-          this.renderLibrary();
-          this.renderFlashcards();
-          this.showToast('✅ Libreria sincronizzata!');
-        } catch (err) {
-          console.warn('Errore sincronizzazione:', err);
-          if (!silent) alert('Errore sincronizzazione Google Drive:\n' + err.message);
-        }
-      },
+                    // Reset del form
+                    this.cancelRecording();
+                    document.getElementById('titleInput').value = '';
+                    document.getElementById('fileUploadLabel').textContent = 'Oppure tocca qui per scegliere un file audio dal telefono';
+                    document.getElementById('fileUploadSub').textContent = 'Supporta .m4a, .mp3, .mp4, .wav, .aac';
+                  } catch (err) {
+                    alert('Errore durante il caricamento su Google Drive:\n' + err.message);
+                  } finally {
+                    btn.disabled = false;
+                    btn.textContent = '🚀 Invia alla Coda Cloud del PC';
+                    setTimeout(() => pBox.style.display = 'none', 1000);
+                  }
+                },
 
-      importManualJson: function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = async (ev) => {
-          try {
-            const data = JSON.parse(ev.target.result);
-            this.libraryData = data;
-            await saveLibraryToIndexedDB(data);
-            this.renderLibrary();
-            this.renderFlashcards();
-            this.showToast('Libreria importata con successo!');
-            this.showTab('library');
-          } catch (err) {
-            alert('File JSON non valido: ' + err.message);
-          }
-        };
-        reader.readAsText(file);
-      },
+                // -----------------------------------------------------------------------
+                // SINCRONIZZAZIONE LIBRERIA (outbox_study/library.json)
+                // -----------------------------------------------------------------------
+                syncFromDrive: async function (silent = false) {
+                  if (!navigator.onLine) {
+                    if (!silent) this.showToast('Sei offline: mostro i dati salvati.');
+                    return;
+                  }
 
-      clearOfflineCache: async function() {
-        if (confirm('Vuoi svuotare tutti i dati salvati offline sul telefono?')) {
-          localStorage.removeItem('flowlocal_cached_library');
-          const db = await openOfflineDB();
-          const tx = db.transaction('library', 'readwrite');
-          tx.objectStore('library').clear();
-          this.libraryData = null;
-          this.renderLibrary();
-          this.renderFlashcards();
-          this.showToast('Cache svuotata.');
-        }
-      },
+                  if (!this.isTokenValid()) {
+                    if (!silent) {
+                      alert('Google Drive non collegato o sessione scaduta. Clicca su "🔑 Collega Google Drive" nelle impostazioni.');
+                      this.showTab('settings');
+                    }
+                    return;
+                  }
 
-      // -----------------------------------------------------------------------
-      // RENDERING LIBRERIA & SBOBINE
-      // -----------------------------------------------------------------------
-      setLibraryProfileFilter: function(prof, btn) {
-        this.libFilterProfile = prof;
-        document.querySelectorAll('#profileFilterPills .fpill').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        this.renderLibrary();
-      },
+                  try {
+                    if (!silent) this.showToast('Sincronizzazione con Google Drive...');
 
-      setLibrarySubjectFilter: function(subj, btn) {
-        this.libFilterSubject = subj;
-        document.querySelectorAll('#subjectFilterPills .fpill').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        this.renderLibrary();
-      },
+                    // Trova outbox_study
+                    const syncFolderId = await this.findOrCreateFolder('FlowLocal_Sync');
+                    const outboxFolderId = await this.findOrCreateFolder('outbox_study', syncFolderId);
 
-      renderLibrary: function() {
-        const container = document.getElementById('libraryListContainer');
-        if (!container) return;
+                    // Cerca library.json
+                    const q = `name = 'library.json' and '${outboxFolderId}' in parents and trashed = false`;
+                    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)`, {
+                      headers: { 'Authorization': `Bearer ${this.accessToken}` }
+                    });
+                    const list = await res.json();
+                    if (!list.files || list.files.length === 0) {
+                      if (!silent) alert('Nessun file library.json trovato in FlowLocal_Sync/outbox_study. Clicca su "🔄 Aggiorna Cloud" nel PC per generarlo.');
+                      return;
+                    }
 
-        if (!this.libraryData || !this.libraryData.notes || this.libraryData.notes.length === 0) {
-          container.innerHTML = `
+                    const fileId = list.files[0].id;
+                    const downloadRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+                      headers: { 'Authorization': `Bearer ${this.accessToken}` }
+                    });
+                    const json = await downloadRes.json();
+
+                    this.libraryData = json;
+                    await saveLibraryToIndexedDB(json);
+
+                    this.renderLibrary();
+                    this.renderFlashcards();
+                    this.showToast('✅ Libreria sincronizzata!');
+                  } catch (err) {
+                    console.warn('Errore sincronizzazione:', err);
+                    if (!silent) alert('Errore sincronizzazione Google Drive:\n' + err.message);
+                  }
+                },
+
+                importManualJson: function (e) {
+                  const file = e.target.files[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = async (ev) => {
+                    try {
+                      const data = JSON.parse(ev.target.result);
+                      this.libraryData = data;
+                      await saveLibraryToIndexedDB(data);
+                      this.renderLibrary();
+                      this.renderFlashcards();
+                      this.showToast('Libreria importata con successo!');
+                      this.showTab('library');
+                    } catch (err) {
+                      alert('File JSON non valido: ' + err.message);
+                    }
+                  };
+                  reader.readAsText(file);
+                },
+
+                clearOfflineCache: async function () {
+                  if (confirm('Vuoi svuotare tutti i dati salvati offline sul telefono?')) {
+                    localStorage.removeItem('flowlocal_cached_library');
+                    const db = await openOfflineDB();
+                    const tx = db.transaction('library', 'readwrite');
+                    tx.objectStore('library').clear();
+                    this.libraryData = null;
+                    this.renderLibrary();
+                    this.renderFlashcards();
+                    this.showToast('Cache svuotata.');
+                  }
+                },
+
+                // -----------------------------------------------------------------------
+                // RENDERING LIBRERIA & SBOBINE
+                // -----------------------------------------------------------------------
+                setLibraryProfileFilter: function (prof, btn) {
+                  this.libFilterProfile = prof;
+                  document.querySelectorAll('#profileFilterPills .fpill').forEach(b => b.classList.remove('active'));
+                  btn.classList.add('active');
+                  this.renderLibrary();
+                },
+
+                setLibrarySubjectFilter: function (subj, btn) {
+                  this.libFilterSubject = subj;
+                  document.querySelectorAll('#subjectFilterPills .fpill').forEach(b => b.classList.remove('active'));
+                  btn.classList.add('active');
+                  this.renderLibrary();
+                },
+
+                renderLibrary: function () {
+                  const container = document.getElementById('libraryListContainer');
+                  if (!container) return;
+
+                  if (!this.libraryData || !this.libraryData.notes || this.libraryData.notes.length === 0) {
+                    container.innerHTML = `
             <div class="empty-state">
               <div class="empty-state-icon">📖</div>
               <div style="font-size: 15px; font-weight: 700; color: #FFFFFF; margin-bottom: 4px;">Nessuna Sbobina Trovata</div>
               <div style="font-size: 12.5px;">Sincronizza con Google Drive o carica una registrazione per iniziare.</div>
             </div>
           `;
-          return;
-        }
+                    return;
+                  }
 
-        // Popola i chip delle materie se non presenti
-        const subjPills = document.getElementById('subjectFilterPills');
-        if (subjPills && this.libraryData.subjects) {
-          let html = `<button class="fpill ${this.libFilterSubject === 'ALL' ? 'active' : ''}" onclick="app.setLibrarySubjectFilter('ALL', this)">Tutte le Materie</button>`;
-          this.libraryData.subjects.forEach(s => {
-            html += `<button class="fpill ${this.libFilterSubject === s ? 'active' : ''}" onclick="app.setLibrarySubjectFilter('${s}', this)">${s}</button>`;
-          });
-          subjPills.innerHTML = html;
-        }
+                  // Popola i chip delle materie se non presenti
+                  const subjPills = document.getElementById('subjectFilterPills');
+                  if (subjPills && this.libraryData.subjects) {
+                    let html = `<button class="fpill ${this.libFilterSubject === 'ALL' ? 'active' : ''}" onclick="app.setLibrarySubjectFilter('ALL', this)">Tutte le Materie</button>`;
+                    this.libraryData.subjects.forEach(s => {
+                      html += `<button class="fpill ${this.libFilterSubject === s ? 'active' : ''}" onclick="app.setLibrarySubjectFilter('${s}', this)">${s}</button>`;
+                    });
+                    subjPills.innerHTML = html;
+                  }
 
-        const query = (document.getElementById('librarySearchInput') ? document.getElementById('librarySearchInput').value.toLowerCase().trim() : '');
+                  const query = (document.getElementById('librarySearchInput') ? document.getElementById('librarySearchInput').value.toLowerCase().trim() : '');
 
-        const filtered = this.libraryData.notes.filter(n => {
-          if (this.libFilterProfile !== 'ALL' && n.profile !== this.libFilterProfile) return false;
-          if (this.libFilterSubject !== 'ALL' && n.subject !== this.libFilterSubject) return false;
-          if (query) {
-            const t = (n.title || '').toLowerCase();
-            const c = (n.content_markdown || '').toLowerCase();
-            const s = (n.subject || '').toLowerCase();
-            if (!t.includes(query) && !c.includes(query) && !s.includes(query)) return false;
-          }
-          return true;
-        });
+                  const filtered = this.libraryData.notes.filter(n => {
+                    const normProf = (n.profile === 'Lei') ? 'Giada' : (n.profile || 'Alessandro');
+                    if (this.libFilterProfile !== 'ALL' && normProf !== this.libFilterProfile) return false;
+                    if (this.libFilterSubject !== 'ALL' && n.subject !== this.libFilterSubject) return false;
+                    if (query) {
+                      const t = (n.title || '').toLowerCase();
+                      const c = (n.content_markdown || '').toLowerCase();
+                      const s = (n.subject || '').toLowerCase();
+                      if (!t.includes(query) && !c.includes(query) && !s.includes(query)) return false;
+                    }
+                    return true;
+                  });
 
-        if (filtered.length === 0) {
-          container.innerHTML = `
+                  if (filtered.length === 0) {
+                    container.innerHTML = `
             <div class="empty-state">
               <div class="empty-state-icon">🔍</div>
               <div style="font-size: 14px; color: #FFFFFF;">Nessuna nota corrisponde ai filtri selezionati.</div>
             </div>
           `;
-          return;
-        }
+                    return;
+                  }
 
-        let cardsHtml = '';
-        filtered.forEach(note => {
-          const profClass = note.profile === 'Lei' ? 'badge-profile-lei' : 'badge-profile-alessandro';
-          const summaryPreview = note.summary ? note.summary : (note.content_markdown || '').slice(0, 140) + '...';
-          const dateStr = note.created_at ? note.created_at.slice(0, 10) : '';
+                  let cardsHtml = '';
+                  filtered.forEach(note => {
+                    const displayProf = (note.profile === 'Lei') ? 'Giada' : (note.profile || 'Alessandro');
+                    const profClass = displayProf === 'Giada' ? 'badge-profile-giada' : 'badge-profile-alessandro';
+                    const summaryPreview = note.summary ? note.summary : (note.content_markdown || '').slice(0, 140) + '...';
+                    const dateStr = note.created_at ? note.created_at.slice(0, 10) : '';
 
-          cardsHtml += `
+                    cardsHtml += `
             <div class="note-card" onclick="app.openDetail(${note.id})">
               <div class="note-meta">
                 <div style="display: flex; gap: 5px;">
-                  <span class="badge ${profClass}">${note.profile}</span>
+                  <span class="badge ${profClass}">${displayProf}</span>
                   <span class="badge badge-subject">${note.subject}</span>
                 </div>
                 <span class="note-date">${dateStr}</span>
@@ -1602,123 +1844,125 @@
               <div class="note-preview">${summaryPreview}</div>
             </div>
           `;
-        });
+                  });
 
-        container.innerHTML = cardsHtml;
-      },
+                  container.innerHTML = cardsHtml;
+                },
 
-      openDetail: function(noteId) {
-        if (!this.libraryData || !this.libraryData.notes) return;
-        const note = this.libraryData.notes.find(n => n.id === noteId);
-        if (!note) return;
+                openDetail: function (noteId) {
+                  if (!this.libraryData || !this.libraryData.notes) return;
+                  const note = this.libraryData.notes.find(n => n.id === noteId);
+                  if (!note) return;
 
-        document.getElementById('detailTitle').textContent = note.title;
-        
-        const profClass = note.profile === 'Lei' ? 'badge-profile-lei' : 'badge-profile-alessandro';
-        document.getElementById('detailBadges').innerHTML = `
-          <span class="badge ${profClass}">${note.profile}</span>
+                  document.getElementById('detailTitle').textContent = note.title;
+
+                  const displayProf = (note.profile === 'Lei') ? 'Giada' : (note.profile || 'Alessandro');
+                  const profClass = displayProf === 'Giada' ? 'badge-profile-giada' : 'badge-profile-alessandro';
+                  document.getElementById('detailBadges').innerHTML = `
+          <span class="badge ${profClass}">${displayProf}</span>
           <span class="badge badge-subject">${note.subject}</span>
           <span class="badge" style="background: #1E293B; color: #94A3B8;">${note.created_at || ''}</span>
         `;
 
-        const sumBox = document.getElementById('detailSummary');
-        if (note.summary) {
-          sumBox.innerHTML = `<strong>💡 Sommario Esecutivo:</strong><br>${note.summary}`;
-          sumBox.style.display = 'block';
-        } else {
-          sumBox.style.display = 'none';
-        }
+                  const sumBox = document.getElementById('detailSummary');
+                  if (note.summary) {
+                    sumBox.innerHTML = `<strong>💡 Sommario Esecutivo:</strong><br>${note.summary}`;
+                    sumBox.style.display = 'block';
+                  } else {
+                    sumBox.style.display = 'none';
+                  }
 
-        // Render Markdown con evidenziazione badge audio non chiaro
-        let htmlBody = this.renderMarkdown(note.content_markdown || '');
-        document.getElementById('detailBody').innerHTML = htmlBody;
+                  // Render Markdown con evidenziazione badge audio non chiaro
+                  let htmlBody = this.renderMarkdown(note.content_markdown || '');
+                  document.getElementById('detailBody').innerHTML = htmlBody;
 
-        document.getElementById('detailOverlay').classList.add('active');
-      },
+                  document.getElementById('detailOverlay').classList.add('active');
+                },
 
-      closeDetail: function() {
-        document.getElementById('detailOverlay').classList.remove('active');
-      },
+                closeDetail: function () {
+                  document.getElementById('detailOverlay').classList.remove('active');
+                },
 
-      // Lightweight Markdown + LaTeX & Unclear Audio Highlighter
-      renderMarkdown: function(md) {
-        if (!md) return '';
-        let escaped = md
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
+                // Lightweight Markdown + LaTeX & Unclear Audio Highlighter
+                renderMarkdown: function (md) {
+                  if (!md) return '';
+                  let escaped = md
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;");
 
-        // Evidenziazione badge d'aula: [Audio non chiaro da MM:SS a MM:SS]
-        escaped = escaped.replace(/\[(?:AUDIO_NON_CHIARO|Audio non chiaro)[^\]]*\]/gi, (match) => {
-          return `<span class="unclear-audio-tag">⚠️ ${match.replace(/\[|\]/g, '')}</span>`;
-        });
+                  // Evidenziazione badge d'aula: [Audio non chiaro da MM:SS a MM:SS]
+                  escaped = escaped.replace(/\[(?:AUDIO_NON_CHIARO|Audio non chiaro)[^\]]*\]/gi, (match) => {
+                    return `<span class="unclear-audio-tag">⚠️ ${match.replace(/\[|\]/g, '')}</span>`;
+                  });
 
-        // Headers
-        escaped = escaped.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-        escaped = escaped.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-        escaped = escaped.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+                  // Headers
+                  escaped = escaped.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+                  escaped = escaped.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+                  escaped = escaped.replace(/^# (.*$)/gim, '<h1>$1</h1>');
 
-        // Bold & Italic
-        escaped = escaped.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
-        escaped = escaped.replace(/\*(.*?)\*/gim, '<em>$1</em>');
+                  // Bold & Italic
+                  escaped = escaped.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
+                  escaped = escaped.replace(/\*(.*?)\*/gim, '<em>$1</em>');
 
-        // Inline Math LaTeX
-        escaped = escaped.replace(/\$([^\$]+)\$/g, '<code style="background: rgba(56, 189, 248, 0.15); color: #38BDF8; padding: 2px 5px; border-radius: 4px;">$1</code>');
+                  // Inline Math LaTeX
+                  escaped = escaped.replace(/\$([^\$]+)\$/g, '<code style="background: rgba(56, 189, 248, 0.15); color: #38BDF8; padding: 2px 5px; border-radius: 4px;">$1</code>');
 
-        // Paragrafi
-        escaped = escaped.split('\n\n').map(p => {
-          if (p.startsWith('<h') || p.startsWith('<span class="unclear')) return p;
-          return `<p>${p.replace(/\n/g, '<br>')}</p>`;
-        }).join('');
+                  // Paragrafi
+                  escaped = escaped.split('\n\n').map(p => {
+                    if (p.startsWith('<h') || p.startsWith('<span class="unclear')) return p;
+                    return `<p>${p.replace(/\n/g, '<br>')}</p>`;
+                  }).join('');
 
-        return escaped;
-      },
+                  return escaped;
+                },
 
-      // -----------------------------------------------------------------------
-      // RENDERING FLASHCARD INTERATTIVE
-      // -----------------------------------------------------------------------
-      setFcProfileFilter: function(prof, btn) {
-        this.fcFilterProfile = prof;
-        document.querySelectorAll('#fcProfileFilterPills .fpill').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        this.currentFcIndex = 0;
-        this.renderFlashcards();
-      },
+                // -----------------------------------------------------------------------
+                // RENDERING FLASHCARD INTERATTIVE
+                // -----------------------------------------------------------------------
+                setFcProfileFilter: function (prof, btn) {
+                  this.fcFilterProfile = prof;
+                  document.querySelectorAll('#fcProfileFilterPills .fpill').forEach(b => b.classList.remove('active'));
+                  btn.classList.add('active');
+                  this.currentFcIndex = 0;
+                  this.renderFlashcards();
+                },
 
-      renderFlashcards: function() {
-        const container = document.getElementById('flashcardBoxContainer');
-        if (!container) return;
+                renderFlashcards: function () {
+                  const container = document.getElementById('flashcardBoxContainer');
+                  if (!container) return;
 
-        if (!this.libraryData || !this.libraryData.flashcards || this.libraryData.flashcards.length === 0) {
-          container.innerHTML = `
+                  if (!this.libraryData || !this.libraryData.flashcards || this.libraryData.flashcards.length === 0) {
+                    container.innerHTML = `
             <div class="empty-state">
               <div class="empty-state-icon">🧠</div>
               <div style="font-size: 15px; font-weight: 700; color: #FFFFFF; margin-bottom: 4px;">Nessuna Flashcard Disponibile</div>
               <div style="font-size: 12.5px;">Estrai le flashcard dalle lezioni sul PC e aggiorna la libreria.</div>
             </div>
           `;
-          return;
-        }
+                    return;
+                  }
 
-        this.activeFlashcards = this.libraryData.flashcards.filter(fc => {
-          if (this.fcFilterProfile !== 'ALL' && fc.profile !== this.fcFilterProfile) return false;
-          return true;
-        });
+                  this.activeFlashcards = this.libraryData.flashcards.filter(fc => {
+                    const normProf = (fc.profile === 'Lei') ? 'Giada' : (fc.profile || 'Alessandro');
+                    if (this.fcFilterProfile !== 'ALL' && normProf !== this.fcFilterProfile) return false;
+                    return true;
+                  });
 
-        if (this.activeFlashcards.length === 0) {
-          container.innerHTML = `
+                  if (this.activeFlashcards.length === 0) {
+                    container.innerHTML = `
             <div class="empty-state">
               <div style="font-size: 14px; color: #FFFFFF;">Nessuna flashcard per questo profilo.</div>
             </div>
           `;
-          return;
-        }
+                    return;
+                  }
 
-        if (this.currentFcIndex >= this.activeFlashcards.length) this.currentFcIndex = 0;
-        const current = this.activeFlashcards[this.currentFcIndex];
-        const total = this.activeFlashcards.length;
+                  if (this.currentFcIndex >= this.activeFlashcards.length) this.currentFcIndex = 0;
+                  const current = this.activeFlashcards[this.currentFcIndex];
+                  const total = this.activeFlashcards.length;
 
-        container.innerHTML = `
+                  container.innerHTML = `
           <div id="activeFcBox" class="fc-box" onclick="this.classList.toggle('flipped')">
             <div class="fc-indicator">${current.subject} • Card ${this.currentFcIndex + 1} di ${total}</div>
             <div class="fc-question">${current.question}</div>
@@ -1732,34 +1976,34 @@
             <button class="btn btn-primary" style="width: auto; padding: 9px 18px;" onclick="app.nextFlashcard()">Prossima ➔</button>
           </div>
         `;
-      },
+                },
 
-      nextFlashcard: function() {
-        if (this.activeFlashcards.length === 0) return;
-        this.currentFcIndex = (this.currentFcIndex + 1) % this.activeFlashcards.length;
-        this.renderFlashcards();
-      },
+                nextFlashcard: function () {
+                  if (this.activeFlashcards.length === 0) return;
+                  this.currentFcIndex = (this.currentFcIndex + 1) % this.activeFlashcards.length;
+                  this.renderFlashcards();
+                },
 
-      prevFlashcard: function() {
-        if (this.activeFlashcards.length === 0) return;
-        this.currentFcIndex = (this.currentFcIndex - 1 + this.activeFlashcards.length) % this.activeFlashcards.length;
-        this.renderFlashcards();
-      },
+                prevFlashcard: function () {
+                  if (this.activeFlashcards.length === 0) return;
+                  this.currentFcIndex = (this.currentFcIndex - 1 + this.activeFlashcards.length) % this.activeFlashcards.length;
+                  this.renderFlashcards();
+                },
 
-      shuffleFlashcards: function() {
-        if (this.activeFlashcards.length <= 1) return;
-        for (let i = this.activeFlashcards.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [this.activeFlashcards[i], this.activeFlashcards[j]] = [this.activeFlashcards[j], this.activeFlashcards[i]];
-        }
-        this.currentFcIndex = 0;
-        this.renderFlashcards();
-        this.showToast('🔀 Flashcard rimescolate!');
-      }
-    };
+                shuffleFlashcards: function () {
+                  if (this.activeFlashcards.length <= 1) return;
+                  for (let i = this.activeFlashcards.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [this.activeFlashcards[i], this.activeFlashcards[j]] = [this.activeFlashcards[j], this.activeFlashcards[i]];
+                  }
+                  this.currentFcIndex = 0;
+                  this.renderFlashcards();
+                  this.showToast('🔀 Flashcard rimescolate!');
+                }
+              };
 
-    window.addEventListener('DOMContentLoaded', () => app.init());
+              window.addEventListener('DOMContentLoaded', () => app.init());
   </script>
 </body>
-</html>
 
+</html>

@@ -438,7 +438,7 @@ class AudioTranscribeThread(QThread):
     def __init__(self, file_path: str, subject_context: str = "", engine=None):
         super().__init__()
         self.file_path = file_path
-        self.subject_context = subject_context.strip()
+        self.subject_context = (subject_context or "").strip()
         self.engine = engine
         self.cancel_requested = False
 
@@ -483,8 +483,8 @@ class ExtractFlashcardsThread(QThread):
     def __init__(self, note_id: Optional[int], note_text: str, note_title: str):
         super().__init__()
         self.note_id = note_id
-        self.note_text = note_text
-        self.note_title = note_title
+        self.note_text = (note_text or "").strip()
+        self.note_title = (note_title or "Nota").strip()
 
     def run(self):
         try:
@@ -494,8 +494,8 @@ class ExtractFlashcardsThread(QThread):
                 raise ValueError("Nessuna flashcard generata dal contenuto della nota.")
             count = 0
             for item in cards:
-                q = item.get("question", "").strip()
-                a = item.get("answer", "").strip()
+                q = (item.get("question") or "").strip()
+                a = (item.get("answer") or "").strip()
                 if q and a:
                     db.add_study_note(
                         title=f"Flashcard: {q[:60]}",
@@ -545,11 +545,13 @@ class CloudQueueProcessThread(QThread):
                     self.cancelled.emit()
                     return
 
+                item_filename = (item.get("filename") or "file").strip()
+
                 def on_progress(msg: str, pct: int = -1):
                     base_pct = int(((idx - 1) / total) * 100)
                     file_pct = pct if pct >= 0 else 0
                     scaled_pct = int(base_pct + (file_pct / total))
-                    self.progress.emit(f"File {idx}/{total} ({item['filename']}): {msg}", scaled_pct)
+                    self.progress.emit(f"File {idx}/{total} ({item_filename}): {msg}", scaled_pct)
 
                 def is_cancelled() -> bool:
                     return self.cancel_requested
@@ -944,8 +946,15 @@ class GraphNodeItem(QGraphicsItem):
         clean_title = self.title.replace("Sbobina:", "").strip()
         self.label_text = clean_title if len(clean_title) <= 22 else clean_title[:20] + "…"
 
+        # Normalizzazione retrocompatibile tag per visualizzazione ("Profilo: Lei" -> "Profilo: Giada")
+        raw_tags = self.tags or ""
+        norm_tags = raw_tags.replace("Profilo: Lei", "Profilo: Giada")
+        norm_tokens = [(t or "").strip() for t in norm_tags.split(",") if (t or "").strip()]
+        norm_tokens = ["Giada" if t in ("Lei", "Profilo: Lei") else t for t in norm_tokens]
+        display_tags = ", ".join(norm_tokens)
+
         tipo_display = "🎙️ Sbobina" if self.is_sbobina else "⚡ Appunto Rapido"
-        tip = f"[{tipo_display}] {self.title}\nTag: {self.tags or 'Nessuno'}"
+        tip = f"[{tipo_display}] {self.title}\nTag: {display_tags or 'Nessuno'}"
         if self.preview:
             tip += f"\n\nAnteprima:\n{self.preview[:160]}..."
         tip += "\n\n(Clicca per aprire ed evidenziare la nota nella lista)"
@@ -1822,13 +1831,16 @@ class FlowLocalHub(QMainWindow):
             ]
 
         if query:
-            notes = [
-                n for n in notes
-                if query in (n.get("title") or "").lower()
-                or query in (n.get("content_markdown") or "").lower()
-                or query in (n.get("tags") or "").lower()
-                or query in (n.get("note_type") or "").lower()
-            ]
+            def _matches(n):
+                t = (n.get("title") or "").lower()
+                c = (n.get("content_markdown") or "").lower()
+                tags = (n.get("tags") or "").lower()
+                nt = (n.get("note_type") or "").lower()
+                # Retrocompatibilità: ricerca per 'giada' o 'lei' interscambiabile
+                tags_norm = tags.replace("lei", "giada")
+                return query in t or query in c or query in tags or query in tags_norm or query in nt
+
+            notes = [n for n in notes if _matches(n)]
         return notes
 
     def _refresh_notes(self):
@@ -1870,7 +1882,13 @@ class FlowLocalHub(QMainWindow):
             meta_row.addWidget(_make_label(badge_text, "Badge"))
 
         if n.get("tags"):
-            meta_row.addWidget(_make_label(n["tags"], "BadgeMuted"))
+            raw_tags = str(n["tags"])
+            # Normalizzazione retrocompatibile tag per visualizzazione ("Profilo: Lei" -> "Profilo: Giada")
+            norm_tags = raw_tags.replace("Profilo: Lei", "Profilo: Giada")
+            norm_tokens = [(t or "").strip() for t in norm_tags.split(",") if (t or "").strip()]
+            norm_tokens = ["Giada" if t in ("Lei", "Profilo: Lei") else t for t in norm_tokens]
+            display_tags = ", ".join(norm_tokens)
+            meta_row.addWidget(_make_label(display_tags, "BadgeMuted"))
         meta_row.addStretch(1)
 
         content = n.get("content_markdown") or ""
@@ -1919,7 +1937,7 @@ class FlowLocalHub(QMainWindow):
         meta_row.addWidget(del_btn)
         layout.addLayout(meta_row)
 
-        if n.get("title") and n.get("title") != "Appunto Rapido" and n.get("title") != content.strip():
+        if n.get("title") and n.get("title") != "Appunto Rapido" and n.get("title") != (content or "").strip():
             layout.addWidget(_make_label(n["title"], "CardTitle", wrap=True))
         layout.addWidget(body_label)
 
