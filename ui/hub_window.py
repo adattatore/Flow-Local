@@ -38,7 +38,7 @@ except Exception:
 import math
 import random
 
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QPointF, QRectF, QLineF
+from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QPointF, QRectF, QLineF, QSettings
 from PyQt6.QtGui import (
     QPainter, QPen, QBrush, QColor, QFont, QPainterPath, QRadialGradient,
     QLinearGradient, QCursor, QPolygonF
@@ -74,292 +74,558 @@ except Exception:
 
 
 # =====================================================================
-# STYLESHEET GLOBALE (solo proprietà QSS supportate da Qt6)
+# STYLESHEET GLOBALE MULTI-TEMA (solo proprietà QSS supportate da Qt6)
+# Temi: "obsidian" (scuro), "light" (chiaro minimale), "orb" (chiaro aurora 3 fuochi)
 # =====================================================================
-HUB_QSS = """
-QWidget {
-    color: #E2E8F0;
+_THEME_PALETTES = {
+    "obsidian": {
+        "text": "#E2E8F0",
+        "title": "#F8FAFC",
+        "subtitle": "#94A3B8",
+        "muted": "#64748B",
+        "sec_header": "#475569",
+        "root_bg": "#07090F",
+        "sidebar_bg": "#05070B",
+        "sidebar_border": "rgba(255, 255, 255, 0.06)",
+        "nav_hover": "rgba(255, 255, 255, 0.04)",
+        "nav_hover_text": "#F1F5F9",
+        "nav_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(56, 189, 248, 0.16), stop:0.6 rgba(168, 85, 247, 0.12), stop:1 rgba(16, 185, 129, 0.06))"
+        ),
+        "nav_checked_border": "rgba(56, 189, 248, 0.28)",
+        "nav_checked_text": "#F8FAFC",
+        "surface_soft": "rgba(255, 255, 255, 0.025)",
+        "card_bg": "rgba(255, 255, 255, 0.028)",
+        "card_hover_bg": "rgba(255, 255, 255, 0.042)",
+        "card_border": "rgba(255, 255, 255, 0.06)",
+        "card_hover_border": "rgba(56, 189, 248, 0.22)",
+        "card_body": "#CBD5E1",
+        "input_bg": "#0D111A",
+        "input_focus_bg": "#111724",
+        "input_border": "#1C2536",
+        "input_text": "#F1F5F9",
+        "btn_bg": "#131926",
+        "btn_hover_bg": "#192233",
+        "btn_pressed_bg": "#0F141E",
+        "btn_border": "#1F293D",
+        "btn_hover_border": "#2B3954",
+        "btn_text": "#E2E8F0",
+        "pill_bg": "#0F141F",
+        "pill_border": "#1C2536",
+        "pill_hover_bg": "#161E2E",
+        "pill_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(56, 189, 248, 0.18), stop:1 rgba(168, 85, 247, 0.16))"
+        ),
+        "pill_checked_text": "#7DD3FC",
+        "badge_bg": "rgba(56, 189, 248, 0.12)",
+        "badge_border": "rgba(56, 189, 248, 0.30)",
+        "badge_text": "#7DD3FC",
+        "badge_muted_bg": "rgba(168, 85, 247, 0.10)",
+        "badge_muted_border": "rgba(168, 85, 247, 0.25)",
+        "badge_muted_text": "#C4B5FD",
+        "engine_bg": "rgba(16, 185, 129, 0.10)",
+        "engine_border": "rgba(16, 185, 129, 0.28)",
+        "engine_text": "#34D399",
+        "shortcut_key_bg": "rgba(56, 189, 248, 0.10)",
+        "shortcut_key_border": "rgba(56, 189, 248, 0.28)",
+        "shortcut_key_text": "#38BDF8",
+        "scroll_handle": "#1E283B",
+        "dialog_bg": "#0B0E16",
+        "combo_popup_bg": "#0B0E16",
+    },
+    "light": {
+        "text": "#1E293B",
+        "title": "#0F172A",
+        "subtitle": "#475569",
+        "muted": "#64748B",
+        "sec_header": "#94A3B8",
+        "root_bg": "#F4F6FA",
+        "sidebar_bg": "#FFFFFF",
+        "sidebar_border": "#E2E8F0",
+        "nav_hover": "#F1F5F9",
+        "nav_hover_text": "#0F172A",
+        "nav_checked_bg": "#E0F2FE",
+        "nav_checked_border": "#BAE6FD",
+        "nav_checked_text": "#0369A1",
+        "surface_soft": "#F8FAFC",
+        "card_bg": "#FFFFFF",
+        "card_hover_bg": "#FFFFFF",
+        "card_border": "#E2E8F0",
+        "card_hover_border": "#94A3B8",
+        "card_body": "#334155",
+        "input_bg": "#FFFFFF",
+        "input_focus_bg": "#FFFFFF",
+        "input_border": "#CBD5E1",
+        "input_text": "#0F172A",
+        "btn_bg": "#FFFFFF",
+        "btn_hover_bg": "#F1F5F9",
+        "btn_pressed_bg": "#E2E8F0",
+        "btn_border": "#CBD5E1",
+        "btn_hover_border": "#94A3B8",
+        "btn_text": "#1E293B",
+        "pill_bg": "#FFFFFF",
+        "pill_border": "#CBD5E1",
+        "pill_hover_bg": "#F1F5F9",
+        "pill_checked_bg": "#E0F2FE",
+        "pill_checked_text": "#0369A1",
+        "badge_bg": "#E0F2FE",
+        "badge_border": "#BAE6FD",
+        "badge_text": "#0369A1",
+        "badge_muted_bg": "#F3E8FF",
+        "badge_muted_border": "#E9D5FF",
+        "badge_muted_text": "#7E22CE",
+        "engine_bg": "#DCFCE7",
+        "engine_border": "#86EFAC",
+        "engine_text": "#15803D",
+        "shortcut_key_bg": "#E0F2FE",
+        "shortcut_key_border": "#7DD3FC",
+        "shortcut_key_text": "#0284C7",
+        "scroll_handle": "#CBD5E1",
+        "dialog_bg": "#FFFFFF",
+        "combo_popup_bg": "#FFFFFF",
+    },
+    "orb": {
+        "text": "#0F172A",
+        "title": "#0B1324",
+        "subtitle": "#475569",
+        "muted": "#64748B",
+        "sec_header": "#64748B",
+        "root_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #ECFEFF, stop:0.48 #F5F3FF, stop:1 #ECFDF5)"
+        ),
+        "sidebar_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #F0FDFF, stop:0.55 #F6F3FF, stop:1 #F0FDF9)"
+        ),
+        "sidebar_border": "rgba(56, 189, 248, 0.22)",
+        "nav_hover": "rgba(56, 189, 248, 0.10)",
+        "nav_hover_text": "#0F172A",
+        "nav_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(56, 189, 248, 0.22), stop:0.55 rgba(168, 85, 247, 0.16), stop:1 rgba(16, 185, 129, 0.14))"
+        ),
+        "nav_checked_border": "rgba(56, 189, 248, 0.45)",
+        "nav_checked_text": "#0C4A6E",
+        "surface_soft": "rgba(255, 255, 255, 0.65)",
+        "card_bg": "rgba(255, 255, 255, 0.78)",
+        "card_hover_bg": "rgba(255, 255, 255, 0.94)",
+        "card_border": "rgba(56, 189, 248, 0.22)",
+        "card_hover_border": "rgba(168, 85, 247, 0.40)",
+        "card_body": "#1E293B",
+        "input_bg": "rgba(255, 255, 255, 0.88)",
+        "input_focus_bg": "#FFFFFF",
+        "input_border": "rgba(56, 189, 248, 0.30)",
+        "input_text": "#0F172A",
+        "btn_bg": "rgba(255, 255, 255, 0.82)",
+        "btn_hover_bg": "#FFFFFF",
+        "btn_pressed_bg": "#E0F2FE",
+        "btn_border": "rgba(148, 163, 184, 0.35)",
+        "btn_hover_border": "rgba(56, 189, 248, 0.55)",
+        "btn_text": "#0F172A",
+        "pill_bg": "rgba(255, 255, 255, 0.75)",
+        "pill_border": "rgba(56, 189, 248, 0.25)",
+        "pill_hover_bg": "#FFFFFF",
+        "pill_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(56, 189, 248, 0.24), stop:1 rgba(168, 85, 247, 0.20))"
+        ),
+        "pill_checked_text": "#0369A1",
+        "badge_bg": "rgba(56, 189, 248, 0.16)",
+        "badge_border": "rgba(56, 189, 248, 0.38)",
+        "badge_text": "#0369A1",
+        "badge_muted_bg": "rgba(168, 85, 247, 0.14)",
+        "badge_muted_border": "rgba(168, 85, 247, 0.32)",
+        "badge_muted_text": "#7E22CE",
+        "engine_bg": "rgba(16, 185, 129, 0.16)",
+        "engine_border": "rgba(16, 185, 129, 0.40)",
+        "engine_text": "#047857",
+        "shortcut_key_bg": "rgba(56, 189, 248, 0.16)",
+        "shortcut_key_border": "rgba(56, 189, 248, 0.42)",
+        "shortcut_key_text": "#0284C7",
+        "scroll_handle": "rgba(56, 189, 248, 0.35)",
+        "dialog_bg": "#F5FAFF",
+        "combo_popup_bg": "#FFFFFF",
+    },
+}
+
+
+def get_hub_qss(theme: str = "obsidian") -> str:
+    p = _THEME_PALETTES.get(theme, _THEME_PALETTES["obsidian"])
+    return f"""
+QWidget {{
+    color: {p['text']};
     font-family: 'Segoe UI';
     font-size: 13px;
-}
+}}
 
-QWidget#HubRoot, QStackedWidget#Pages, QWidget#Page {
-    background-color: #161920;
-}
+QWidget#HubRoot, QStackedWidget#Pages, QWidget#Page {{
+    background-color: {p['root_bg']};
+}}
 
 /* ---------------- SIDEBAR ---------------- */
-QFrame#Sidebar {
-    background-color: #111318;
-    border-right: 1px solid #232730;
-}
-QLabel#AppTitle {
+QFrame#Sidebar {{
+    background-color: {p['sidebar_bg']};
+    border-right: 1px solid {p['sidebar_border']};
+}}
+QLabel#AppTitle {{
     font-size: 18px;
-    font-weight: bold;
-    color: #F8FAFC;
+    font-weight: 700;
+    color: {p['title']};
     background-color: transparent;
-}
-QLabel#EngineStatus {
-    background-color: #0F2A22;
-    border: 1px solid #14532D;
-    border-radius: 10px;
-    padding: 3px 10px;
+}}
+QLabel#EngineStatus {{
+    background-color: {p['engine_bg']};
+    border: 1px solid {p['engine_border']};
+    border-radius: 11px;
+    padding: 4px 10px;
+    color: {p['engine_text']};
     font-size: 11px;
     font-weight: 600;
-}
-QLabel#NavSectionHeader {
-    color: #64748B;
-    font-size: 11px;
+}}
+QLabel#NavSectionHeader {{
+    color: {p['sec_header']};
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.8px;
-    padding: 8px 6px 2px 6px;
+    letter-spacing: 1.2px;
+    padding: 12px 10px 4px 10px;
     background-color: transparent;
-}
-QPushButton#NavButton {
-    min-height: 34px;
-    max-height: 34px;
+}}
+QPushButton#NavButton {{
+    min-height: 36px;
+    max-height: 36px;
     text-align: left;
     padding: 0 12px;
-    border: none;
-    border-radius: 6px;
+    border: 1px solid transparent;
+    border-radius: 10px;
     background-color: transparent;
-    color: #94A3B8;
+    color: {p['subtitle']};
     font-size: 12px;
     font-weight: 600;
-}
-QPushButton#NavButton:hover {
-    background-color: #1A1F29;
-    color: #E2E8F0;
-}
-QPushButton#NavButton:checked {
-    background-color: #1E293B;
-    color: #38BDF8;
-}
-QFrame#ShortcutBox {
-    background-color: #161A22;
-    border: 1px solid #232730;
-    border-radius: 10px;
-}
-QLabel#ShortcutKey {
-    background-color: #1E293B;
-    border: 1px solid #334155;
-    border-radius: 6px;
+}}
+QPushButton#NavButton:hover {{
+    background-color: {p['nav_hover']};
+    color: {p['nav_hover_text']};
+}}
+QPushButton#NavButton:checked {{
+    background-color: {p['nav_checked_bg']};
+    border: 1px solid {p['nav_checked_border']};
+    color: {p['nav_checked_text']};
+}}
+QFrame#ShortcutBox {{
+    background-color: {p['surface_soft']};
+    border: 1px solid {p['card_border']};
+    border-radius: 14px;
+}}
+QLabel#ShortcutKey {{
+    background-color: {p['shortcut_key_bg']};
+    border: 1px solid {p['shortcut_key_border']};
+    border-radius: 8px;
     padding: 2px 8px;
-    color: #38BDF8;
-    font-weight: bold;
-}
-QLabel#ShortcutHint {
-    color: #94A3B8;
-    font-size: 12px;
+    color: {p['shortcut_key_text']};
+    font-weight: 700;
+}}
+QLabel#ShortcutHint {{
+    color: {p['subtitle']};
+    font-size: 11.5px;
     background-color: transparent;
-}
+}}
 
 /* ---------------- HEADER PAGINE ---------------- */
-QLabel#PageTitle {
-    font-size: 20px;
-    font-weight: bold;
-    color: #F8FAFC;
-}
-QLabel#PageSubtitle {
+QLabel#PageTitle {{
+    font-size: 21px;
+    font-weight: 700;
+    color: {p['title']};
+    background-color: transparent;
+}}
+QLabel#PageSubtitle {{
     font-size: 12px;
-    color: #94A3B8;
-}
+    color: {p['subtitle']};
+    background-color: transparent;
+}}
 
-/* ---------------- INPUT ---------------- */
-QLineEdit {
+/* ---------------- INPUT & COMBO ---------------- */
+QLineEdit {{
     min-height: 36px;
-    background-color: #1E222B;
-    border: 1px solid #2F3542;
-    border-radius: 8px;
+    background-color: {p['input_bg']};
+    border: 1px solid {p['input_border']};
+    border-radius: 10px;
     padding: 0 12px;
-    color: #F1F5F9;
+    color: {p['input_text']};
     font-size: 13px;
     selection-background-color: #0284C7;
-}
-QLineEdit:focus {
+}}
+QLineEdit:focus {{
     border: 1px solid #38BDF8;
-    background-color: #232833;
-}
-QTextEdit {
+    background-color: {p['input_focus_bg']};
+}}
+QTextEdit {{
     min-height: 120px;
-    background-color: #1E222B;
-    border: 1px solid #2F3542;
-    border-radius: 8px;
-    padding: 10px;
-    color: #F1F5F9;
+    background-color: {p['input_bg']};
+    border: 1px solid {p['input_border']};
+    border-radius: 10px;
+    padding: 10px 12px;
+    color: {p['input_text']};
     font-size: 13px;
     selection-background-color: #0284C7;
-}
-QTextEdit:focus {
+}}
+QTextEdit:focus {{
     border: 1px solid #38BDF8;
-}
+    background-color: {p['input_focus_bg']};
+}}
+QComboBox {{
+    min-height: 28px;
+    background-color: {p['input_bg']};
+    border: 1px solid {p['input_border']};
+    border-radius: 8px;
+    padding: 0 10px;
+    color: {p['input_text']};
+    font-size: 11px;
+    font-weight: 500;
+}}
+QComboBox:focus {{
+    border: 1px solid #38BDF8;
+}}
+QComboBox QAbstractItemView {{
+    background-color: {p['combo_popup_bg']};
+    color: {p['input_text']};
+    selection-background-color: #0284C7;
+    selection-color: #FFFFFF;
+    border: 1px solid {p['input_border']};
+}}
 
-/* ---------------- PULSANTI ---------------- */
-QPushButton {
+/* ---------------- PULSANTI (Plasma 3 Fuochi) ---------------- */
+QPushButton {{
     min-height: 34px;
-    border-radius: 7px;
+    border-radius: 9px;
     padding: 0 14px;
     font-weight: 600;
-    background-color: #262B36;
-    color: #E2E8F0;
-    border: 1px solid #2F3542;
-}
-QPushButton:hover {
-    background-color: #2F3542;
-}
-QPushButton:pressed {
-    background-color: #1E222B;
-}
-QPushButton[variant="primary"] {
-    background-color: #0284C7;
-    border: 1px solid #0284C7;
+    background-color: {p['btn_bg']};
+    color: {p['btn_text']};
+    border: 1px solid {p['btn_border']};
+}}
+QPushButton:hover {{
+    background-color: {p['btn_hover_bg']};
+    border: 1px solid {p['btn_hover_border']};
+}}
+QPushButton:pressed {{
+    background-color: {p['btn_pressed_bg']};
+}}
+QPushButton[variant="primary"] {{
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:1, y2:0,
+        stop:0 #0284C7, stop:0.55 #6366F1, stop:1 #9333EA
+    );
+    border: 1px solid rgba(125, 211, 252, 0.35);
     color: #FFFFFF;
-}
-QPushButton[variant="primary"]:hover {
-    background-color: #0369A1;
-    border: 1px solid #0369A1;
-}
-QPushButton[variant="success"] {
-    background-color: #059669;
-    border: 1px solid #10B981;
+}}
+QPushButton[variant="primary"]:hover {{
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:1, y2:0,
+        stop:0 #0EA5E9, stop:0.55 #818CF8, stop:1 #A855F7
+    );
+    border: 1px solid rgba(125, 211, 252, 0.65);
+}}
+QPushButton[variant="success"] {{
+    background-color: qlineargradient(
+        x1:0, y1:0, x2:1, y2:0,
+        stop:0 #059669, stop:1 #10B981
+    );
+    border: 1px solid rgba(52, 211, 153, 0.45);
     color: #FFFFFF;
     font-weight: 600;
-}
-QPushButton[variant="success"]:hover {
+}}
+QPushButton[variant="success"]:hover {{
     background-color: #10B981;
     border: 1px solid #34D399;
-}
-QPushButton[variant="success"]:disabled {
-    background-color: #1E293B;
-    border: 1px solid #334155;
-    color: #64748B;
-}
-QPushButton[variant="danger"] {
+}}
+QPushButton[variant="success"]:disabled {{
+    background-color: {p['btn_bg']};
+    border: 1px solid {p['btn_border']};
+    color: {p['muted']};
+}}
+QPushButton[variant="danger"] {{
     background-color: transparent;
-    border: 1px solid #3F2A2E;
-    color: #F87171;
-}
-QPushButton[variant="danger"]:hover {
-    background-color: #2A1A1D;
-}
-QPushButton#ModeTab {
-    background-color: #1C2029;
-    border: 1px solid #2A303C;
-    color: #94A3B8;
-}
-QPushButton#ModeTab:hover {
-    color: #E2E8F0;
-}
-QPushButton#ModeTab:checked {
-    background-color: #1E293B;
+    border: 1px solid rgba(244, 63, 94, 0.32);
+    color: #E11D48;
+}}
+QPushButton[variant="danger"]:hover {{
+    background-color: rgba(244, 63, 94, 0.12);
+    border: 1px solid rgba(244, 63, 94, 0.55);
+}}
+QPushButton#ModeTab {{
+    background-color: {p['pill_bg']};
+    border: 1px solid {p['pill_border']};
+    border-radius: 9px;
+    color: {p['subtitle']};
+}}
+QPushButton#ModeTab:hover {{
+    color: {p['title']};
+    border: 1px solid {p['btn_hover_border']};
+}}
+QPushButton#ModeTab:checked {{
+    background-color: {p['pill_checked_bg']};
     border: 1px solid #38BDF8;
-    color: #38BDF8;
-}
-QPushButton#FilterPill {
-    background-color: #1A1E26;
-    border: 1px solid #282E3B;
-    border-radius: 14px;
-    color: #94A3B8;
+    color: {p['pill_checked_text']};
+}}
+QPushButton#FilterPill {{
+    background-color: {p['pill_bg']};
+    border: 1px solid {p['pill_border']};
+    border-radius: 15px;
+    color: {p['subtitle']};
     font-size: 12px;
     font-weight: 600;
     padding: 0 14px;
     min-height: 28px;
     max-height: 28px;
-}
-QPushButton#FilterPill:hover {
-    background-color: #222733;
-    color: #E2E8F0;
-}
-QPushButton#FilterPill:checked {
-    background-color: #1E293B;
-    border: 1px solid #38BDF8;
-    color: #38BDF8;
-}
+}}
+QPushButton#FilterPill:hover {{
+    background-color: {p['pill_hover_bg']};
+    color: {p['title']};
+}}
+QPushButton#FilterPill:checked {{
+    background-color: {p['pill_checked_bg']};
+    border: 1px solid rgba(56, 189, 248, 0.55);
+    color: {p['pill_checked_text']};
+}}
 
 /* ---------------- LISTE SCORREVOLI ---------------- */
-QScrollArea {
+QScrollArea {{
     background-color: transparent;
     border: none;
-}
-QWidget#ScrollContent {
+}}
+QWidget#ScrollContent {{
     background-color: transparent;
-}
-QScrollBar:vertical {
+}}
+QScrollBar:vertical {{
     background-color: transparent;
-    width: 10px;
+    width: 8px;
     margin: 2px;
-}
-QScrollBar::handle:vertical {
-    background-color: #2F3542;
+}}
+QScrollBar::handle:vertical {{
+    background-color: {p['scroll_handle']};
     border-radius: 4px;
     min-height: 30px;
-}
-QScrollBar::handle:vertical:hover {
-    background-color: #3B4252;
-}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+}}
+QScrollBar::handle:vertical:hover {{
+    background-color: #38BDF8;
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0px;
-}
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+}}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background-color: transparent;
-}
+}}
 
 /* ---------------- CARD ---------------- */
-QFrame#Card {
-    background-color: #1C2029;
-    border: 1px solid #2A303C;
-    border-radius: 10px;
-}
-QFrame#Card QLabel {
+QFrame#Card {{
+    background-color: {p['card_bg']};
+    border: 1px solid {p['card_border']};
+    border-radius: 14px;
+}}
+QFrame#Card:hover {{
+    background-color: {p['card_hover_bg']};
+    border: 1px solid {p['card_hover_border']};
+}}
+QFrame#Card QLabel {{
     background-color: transparent;
-}
-QLabel#CardMeta {
-    color: #64748B;
+}}
+QLabel#CardMeta {{
+    color: {p['muted']};
     font-size: 11px;
-}
-QLabel#CardTitle {
-    color: #F1F5F9;
+    background-color: transparent;
+}}
+QLabel#CardTitle {{
+    color: {p['title']};
     font-weight: 600;
-}
-QLabel#CardBody {
-    color: #CBD5E1;
+    background-color: transparent;
+}}
+QLabel#CardBody {{
+    color: {p['card_body']};
     font-size: 13px;
-}
-QLabel#Badge {
-    background-color: #1E293B;
-    border: 1px solid #334155;
-    border-radius: 8px;
-    padding: 1px 8px;
-    color: #7DD3FC;
+    background-color: transparent;
+}}
+QLabel#Badge {{
+    background-color: {p['badge_bg']};
+    border: 1px solid {p['badge_border']};
+    border-radius: 9px;
+    padding: 2px 9px;
+    color: {p['badge_text']};
     font-size: 11px;
     font-weight: 600;
-}
-QLabel#BadgeMuted {
-    background-color: #20242D;
-    border: 1px solid #2F3542;
-    border-radius: 8px;
-    padding: 1px 8px;
-    color: #94A3B8;
+}}
+QLabel#BadgeMuted {{
+    background-color: {p['badge_muted_bg']};
+    border: 1px solid {p['badge_muted_border']};
+    border-radius: 9px;
+    padding: 2px 9px;
+    color: {p['badge_muted_text']};
     font-size: 11px;
-}
-QLabel#BadgeQuickNote {
-    background-color: #2D2210;
-    border: 1px solid #B45309;
-    border-radius: 8px;
-    padding: 1px 8px;
-    color: #FBBF24;
+}}
+QLabel#BadgeQuickNote {{
+    background-color: {p['engine_bg']};
+    border: 1px solid {p['engine_border']};
+    border-radius: 9px;
+    padding: 2px 9px;
+    color: {p['engine_text']};
     font-size: 11px;
     font-weight: 600;
-}
-QLabel#EmptyState {
-    color: #64748B;
+}}
+QLabel#EmptyState {{
+    color: {p['muted']};
     font-size: 13px;
     padding: 30px;
-}
+}}
 
-QMessageBox {
-    background-color: #161920;
-}
+QDialog, QMessageBox {{
+    background-color: {p['dialog_bg']};
+}}
+
+/* ---------------- GRAFO & QUADERNO ---------------- */
+QFrame#KnowledgeGraphFrame {{
+    background-color: {p['card_bg']};
+    border: 1px solid {p['card_border']};
+    border-radius: 14px;
+}}
+QFrame#KnowledgeGraphToolbar {{
+    background-color: {p['surface_soft']};
+    border-bottom: 1px solid {p['card_border']};
+    border-top-left-radius: 14px;
+    border-top-right-radius: 14px;
+}}
+QGraphicsView#KnowledgeGraphView {{
+    background-color: transparent;
+    border: none;
+}}
+QSplitter::handle {{
+    background-color: {p['card_border']};
+    width: 2px;
+}}
+QTreeWidget {{
+    background-color: {p['input_bg']};
+    border: 1px solid {p['input_border']};
+    border-radius: 10px;
+    color: {p['text']};
+    font-size: 12px;
+    padding: 4px;
+}}
+QTreeWidget::item {{
+    padding: 5px 6px;
+    border-radius: 6px;
+}}
+QTreeWidget::item:hover {{
+    background-color: {p['nav_hover']};
+}}
+QTreeWidget::item:selected {{
+    background-color: {p['nav_checked_bg']};
+    color: {p['nav_checked_text']};
+}}
 """
+
+
+HUB_QSS = get_hub_qss("obsidian")
 
 # Modalità di dettatura (etichetta UI -> nome stile nel DB llm_styles)
 MODE_TABS = [
@@ -1312,13 +1578,6 @@ class KnowledgeGraphWidget(QFrame):
         super().__init__(parent)
         self.on_node_click = on_node_click
         self.setObjectName("KnowledgeGraphFrame")
-        self.setStyleSheet("""
-            QFrame#KnowledgeGraphFrame {
-                background-color: #0A0D14;
-                border: 1px solid #1E293B;
-                border-radius: 8px;
-            }
-        """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1326,13 +1585,7 @@ class KnowledgeGraphWidget(QFrame):
 
         # Barra controlli overlay in cima al grafo
         self.toolbar = QFrame()
-        self.toolbar.setStyleSheet("""
-            QFrame {
-                background-color: #0F141F;
-                border-bottom: 1px solid #1E293B;
-                padding: 4px 8px;
-            }
-        """)
+        self.toolbar.setObjectName("KnowledgeGraphToolbar")
         tb_layout = QHBoxLayout(self.toolbar)
         tb_layout.setContentsMargins(8, 6, 8, 6)
         tb_layout.setSpacing(8)
@@ -1375,7 +1628,7 @@ class KnowledgeGraphWidget(QFrame):
         self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
         self.view.setFrameShape(QFrame.Shape.NoFrame)
-        self.view.setStyleSheet("background-color: #0A0D14;")
+        self.view.setObjectName("KnowledgeGraphView")
 
         layout.addWidget(self.view, 1)
 
@@ -1450,6 +1703,251 @@ class KnowledgeGraphWidget(QFrame):
         QTimer.singleShot(250, self._fit_view)
 
 
+class OrbBrandBadge(QWidget):
+    """Mini emblema fluido Obsidian + 3 Fuochi Plasma (allineato a VoiceOrbOverlay)."""
+
+    def __init__(self, size: int = 30, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = float(self.width()), float(self.height())
+        cx, cy = w / 2.0, h / 2.0
+        r = min(w, h) * 0.44
+
+        # Piccolo fondo scuro morbido al centro (come VoiceOrbOverlay)
+        base_grad = QRadialGradient(cx, cy, r * 1.15)
+        base_grad.setColorAt(0.0, QColor(8, 10, 16, 220))
+        base_grad.setColorAt(0.68, QColor(8, 10, 16, 150))
+        base_grad.setColorAt(1.0, QColor(8, 10, 16, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(base_grad)
+        p.drawEllipse(QPointF(cx, cy), r * 1.15, r * 1.15)
+
+        # 3 fuochi fluidi sovrapposti in Screen blending
+        p.save()
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+        lobes = [
+            (-r * 0.18, -r * 0.12, r * 0.88, QColor(56, 189, 248, 210)),   # Ciano
+            (r * 0.20, -r * 0.10, r * 0.82, QColor(168, 85, 247, 200)),   # Viola
+            (0.0, r * 0.20, r * 0.78, QColor(16, 185, 129, 195)),         # Smeraldo
+        ]
+        for dx, dy, lr, col in lobes:
+            fx, fy = cx + dx, cy + dy
+            g = QRadialGradient(fx, fy, lr)
+            c_mid = QColor(col.red(), col.green(), col.blue(), int(col.alpha() * 0.65))
+            c_tip = QColor(col.red(), col.green(), col.blue(), 0)
+            g.setColorAt(0.0, col)
+            g.setColorAt(0.55, c_mid)
+            g.setColorAt(1.0, c_tip)
+            p.setBrush(g)
+            p.drawEllipse(QPointF(fx, fy), lr, lr)
+        p.restore()
+
+
+class ThemeRevealOverlay(QWidget):
+    """Animazione fluida a 60 FPS: un Orb luminoso si espande dal centro rivelando il nuovo tema."""
+
+    def __init__(self, parent: QWidget, old_pixmap):
+        super().__init__(parent)
+        self._old_pixmap = old_pixmap
+        self._progress = 0.0
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setGeometry(parent.rect())
+        self.show()
+        self.raise_()
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._step)
+        self._timer.start(16)
+
+    def _step(self):
+        self._progress += 0.045  # ~360ms a 60 FPS
+        if self._progress >= 1.0:
+            self._timer.stop()
+            self.hide()
+            self.deleteLater()
+            return
+        self.update()
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = float(self.width()), float(self.height())
+        cx, cy = w / 2.0, h / 2.0
+        max_r = math.hypot(cx, cy) + 24.0
+
+        # Ease-out cubico
+        t = 1.0 - ((1.0 - min(1.0, self._progress)) ** 3)
+        r = max(1.0, max_r * t)
+
+        # Disegna il vecchio tema solo FUORI dal cerchio che si espande
+        outer_path = QPainterPath()
+        outer_path.addRect(QRectF(0.0, 0.0, w, h))
+        hole_path = QPainterPath()
+        hole_path.addEllipse(QPointF(cx, cy), r, r)
+        clip_path = outer_path.subtracted(hole_path)
+
+        p.save()
+        p.setClipPath(clip_path)
+        p.drawPixmap(0, 0, self._old_pixmap)
+        p.restore()
+
+        # Anello plasma dei 3 fuochi sul bordo dell'espansione
+        ring_alpha = int(200 * (1.0 - self._progress * 0.75))
+        if ring_alpha > 4:
+            p.save()
+            p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+            ring_grad = QRadialGradient(cx, cy, r + 18.0)
+            inner_stop = max(0.0, (r - 18.0) / (r + 18.0))
+            mid_stop = max(inner_stop, min(1.0, r / (r + 18.0)))
+            ring_grad.setColorAt(0.0, QColor(56, 189, 248, 0))
+            ring_grad.setColorAt(inner_stop, QColor(56, 189, 248, 0))
+            ring_grad.setColorAt(mid_stop, QColor(168, 85, 247, ring_alpha))
+            ring_grad.setColorAt(1.0, QColor(16, 185, 129, 0))
+            p.setPen(QPen(QColor(56, 189, 248, ring_alpha), 2.5))
+            p.setBrush(ring_grad)
+            p.drawEllipse(QPointF(cx, cy), r, r)
+            p.restore()
+
+
+class AuroraDivider(QWidget):
+    """Sottile linea luminosa sfumata con i 3 colori dei fuochi."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(2)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        grad = QLinearGradient(0, 0, float(self.width()), 0)
+        grad.setColorAt(0.0, QColor(56, 189, 248, 0))
+        grad.setColorAt(0.25, QColor(56, 189, 248, 160))
+        grad.setColorAt(0.55, QColor(168, 85, 247, 170))
+        grad.setColorAt(0.80, QColor(16, 185, 129, 140))
+        grad.setColorAt(1.0, QColor(16, 185, 129, 0))
+        p.fillRect(self.rect(), grad)
+
+
+class QuickRuleDialog(QDialog):
+    """Dialog rapido per trasformare una trascrizione in regola Dizionario o Snippet."""
+
+    def __init__(self, initial_text: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Correggi / Salva Regola")
+        self.setMinimumWidth(520)
+        self.setStyleSheet(parent.styleSheet() if parent and parent.styleSheet() else HUB_QSS)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        layout.addWidget(_make_label("Crea regola rapida dalla trascrizione", "PageTitle"))
+        layout.addWidget(_make_label(
+            "Salva una correzione fonetica nel Dizionario oppure trasforma la frase in uno Snippet vocale.",
+            "PageSubtitle",
+            wrap=True,
+        ))
+
+        tab_row = QHBoxLayout()
+        tab_row.setSpacing(8)
+        self.btn_dict = QPushButton("📖 Dizionario (Alias → Parola)")
+        self.btn_dict.setObjectName("FilterPill")
+        self.btn_dict.setCheckable(True)
+        self.btn_dict.setChecked(True)
+        self.btn_snip = QPushButton("⚡ Snippet (Trigger → Testo)")
+        self.btn_snip.setObjectName("FilterPill")
+        self.btn_snip.setCheckable(True)
+
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.setExclusive(True)
+        self._mode_group.addButton(self.btn_dict, 0)
+        self._mode_group.addButton(self.btn_snip, 1)
+
+        tab_row.addWidget(self.btn_dict)
+        tab_row.addWidget(self.btn_snip)
+        tab_row.addStretch(1)
+        layout.addLayout(tab_row)
+
+        self.stack = QStackedWidget()
+
+        # Pagina 0: Dizionario
+        dict_w = QWidget()
+        dl = QVBoxLayout(dict_w)
+        dl.setContentsMargins(0, 4, 0, 0)
+        dl.setSpacing(8)
+        dl.addWidget(_make_label("Parola errata / alias pronunciato", "CardMeta"))
+        self.alias_edit = QLineEdit(initial_text.strip())
+        self.alias_edit.setPlaceholderText("Es. antigraffiti")
+        self.alias_edit.setMinimumHeight(36)
+        dl.addWidget(self.alias_edit)
+        dl.addWidget(_make_label("Parola corretta da inserire", "CardMeta"))
+        self.term_edit = QLineEdit()
+        self.term_edit.setPlaceholderText("Es. Antigravity")
+        self.term_edit.setMinimumHeight(36)
+        dl.addWidget(self.term_edit)
+        dl.addStretch(1)
+        self.stack.addWidget(dict_w)
+
+        # Pagina 1: Snippet
+        snip_w = QWidget()
+        sl = QVBoxLayout(snip_w)
+        sl.setContentsMargins(0, 4, 0, 0)
+        sl.setSpacing(8)
+        sl.addWidget(_make_label("Frase trigger vocale (breve)", "CardMeta"))
+        self.trigger_edit = QLineEdit()
+        self.trigger_edit.setPlaceholderText("Es. firma cliente")
+        self.trigger_edit.setMinimumHeight(36)
+        sl.addWidget(self.trigger_edit)
+        sl.addWidget(_make_label("Testo espanso completo", "CardMeta"))
+        self.expansion_edit = QTextEdit()
+        self.expansion_edit.setMinimumHeight(110)
+        self.expansion_edit.setPlainText(initial_text.strip())
+        sl.addWidget(self.expansion_edit, 1)
+        self.stack.addWidget(snip_w)
+
+        self._mode_group.idClicked.connect(self.stack.setCurrentIndex)
+        layout.addWidget(self.stack, 1)
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        cancel_btn = _make_button("Annulla")
+        cancel_btn.clicked.connect(self.reject)
+        save_btn = _make_button("Salva regola", "primary")
+        save_btn.clicked.connect(self._on_save)
+        btns.addWidget(cancel_btn)
+        btns.addWidget(save_btn)
+        layout.addLayout(btns)
+
+    def _on_save(self):
+        if self.stack.currentIndex() == 0:
+            alias = self.alias_edit.text().strip()
+            term = self.term_edit.text().strip()
+            if not term:
+                self.term_edit.setFocus()
+                return
+            if alias:
+                db.learn_vocabulary_pair(alias, term)
+            else:
+                existing = {v["correct_term"].lower() for v in db.get_all_vocabulary()}
+                if term.lower() not in existing:
+                    db.add_vocabulary(term, "", "Manuale")
+        else:
+            trigger = self.trigger_edit.text().strip()
+            expansion = self.expansion_edit.toPlainText().strip()
+            if not trigger:
+                self.trigger_edit.setFocus()
+                return
+            if not expansion:
+                self.expansion_edit.setFocus()
+                return
+            db.add_snippet(trigger, expansion)
+        self.accept()
+
+
 class FlowLocalHub(QMainWindow):
     note_added = pyqtSignal()
 
@@ -1467,7 +1965,9 @@ class FlowLocalHub(QMainWindow):
         self.setWindowTitle("FlowLocal Hub")
         self.resize(1120, 680)
         self.setMinimumSize(920, 580)
-        self.setStyleSheet(HUB_QSS)
+        saved_theme = str(QSettings("FlowLocal", "Hub").value("theme", "obsidian") or "obsidian")
+        self._current_theme = saved_theme if saved_theme in _THEME_PALETTES else "obsidian"
+        self.setStyleSheet(get_hub_qss(self._current_theme))
 
         self.note_added.connect(self._refresh_notekeeper)
 
@@ -1516,7 +2016,31 @@ class FlowLocalHub(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._apply_windows_titlebar_theme(self._current_theme)
         self._refresh_current_page()
+
+    def _apply_windows_titlebar_theme(self, theme_key: str):
+        """Sincronizza la barra del titolo nativa di Windows 10/11 con il tema attivo."""
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            if not hwnd:
+                return
+            dwmapi = ctypes.windll.dwmapi
+            is_dark = 1 if theme_key == "obsidian" else 0
+            dark_val = ctypes.c_int(is_dark)
+            dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_val), ctypes.sizeof(dark_val))
+            caption_colors = {
+                "obsidian": 0x000B0705,  # #05070B
+                "light": 0x00FFFFFF,     # #FFFFFF
+                "orb": 0x00FFFDF0,       # #F0FDFF
+            }
+            cap_val = ctypes.c_int(caption_colors.get(theme_key, 0x000B0705))
+            dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cap_val), ctypes.sizeof(cap_val))
+            text_val = ctypes.c_int(0x00FCFAF8 if is_dark else 0x002A170F)
+            dwmapi.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text_val), ctypes.sizeof(text_val))
+        except Exception:
+            pass
 
     # -----------------------------------------------------------------
     # Struttura principale (I 3 PILASTRI: FlowType, FlowStudy, Whis)
@@ -1555,9 +2079,14 @@ class FlowLocalHub(QMainWindow):
         layout.setContentsMargins(12, 16, 12, 14)
         layout.setSpacing(4)
 
+        brand_row = QHBoxLayout()
+        brand_row.setSpacing(10)
+        brand_row.addWidget(OrbBrandBadge(28))
         title = QLabel("FlowLocal")
         title.setObjectName("AppTitle")
-        layout.addWidget(title)
+        brand_row.addWidget(title, 1)
+        layout.addLayout(brand_row)
+        layout.addWidget(AuroraDivider())
 
         if GPU_AVAILABLE:
             status = QLabel("● GPU / CUDA Attivo")
@@ -1615,6 +2144,31 @@ class FlowLocalHub(QMainWindow):
 
         layout.addStretch(1)
 
+        # Selettore Tema (Obsidian / Chiaro / Orb)
+        theme_lbl = QLabel("TEMA")
+        theme_lbl.setObjectName("NavSectionHeader")
+        layout.addWidget(theme_lbl)
+
+        theme_row = QHBoxLayout()
+        theme_row.setSpacing(5)
+        self._theme_group = QButtonGroup(self)
+        self._theme_group.setExclusive(True)
+        for t_idx, (t_label, t_key) in enumerate([
+            ("Obsidian", "obsidian"),
+            ("Chiaro", "light"),
+            ("Orb", "orb"),
+        ]):
+            t_btn = QPushButton(t_label)
+            t_btn.setObjectName("FilterPill")
+            t_btn.setCheckable(True)
+            t_btn.setChecked(self._current_theme == t_key)
+            t_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            t_btn.setStyleSheet("padding: 0 8px; font-size: 11px;")
+            t_btn.clicked.connect(lambda _c=False, k=t_key: self._set_theme(k))
+            self._theme_group.addButton(t_btn, t_idx)
+            theme_row.addWidget(t_btn)
+        layout.addLayout(theme_row)
+
         shortcut_box = QFrame()
         shortcut_box.setObjectName("ShortcutBox")
         sb_layout = QVBoxLayout(shortcut_box)
@@ -1636,6 +2190,21 @@ class FlowLocalHub(QMainWindow):
 
         layout.addWidget(shortcut_box)
         return sidebar
+
+    def _set_theme(self, theme_key: str):
+        if theme_key not in _THEME_PALETTES or theme_key == self._current_theme:
+            return
+        old_pixmap = self.grab() if self.isVisible() else None
+        self._current_theme = theme_key
+        QSettings("FlowLocal", "Hub").setValue("theme", theme_key)
+
+        overlay = ThemeRevealOverlay(self, old_pixmap) if old_pixmap is not None else None
+        self.setUpdatesEnabled(False)
+        self.setStyleSheet(get_hub_qss(theme_key))
+        self._apply_windows_titlebar_theme(theme_key)
+        self.setUpdatesEnabled(True)
+        if overlay is not None:
+            overlay.raise_()
 
     def _on_nav_clicked(self, page_idx: int):
         self.pages.setCurrentIndex(page_idx)
@@ -1692,34 +2261,28 @@ class FlowLocalHub(QMainWindow):
 
         def _make_stat_card(icon_title: str, default_val: str, subtitle: str, color_val: str = "#38BDF8"):
             card = QFrame()
-            card.setStyleSheet("""
-                QFrame {
-                    background-color: #12151E;
-                    border: 1px solid #1E293B;
-                    border-radius: 8px;
-                }
-            """)
+            card.setObjectName("Card")
             c_layout = QVBoxLayout(card)
-            c_layout.setContentsMargins(12, 10, 12, 10)
+            c_layout.setContentsMargins(14, 12, 14, 12)
             c_layout.setSpacing(3)
 
             lbl_title = QLabel(icon_title)
-            lbl_title.setStyleSheet("color: #94A3B8; font-size: 11.5px; font-weight: 600;")
+            lbl_title.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 600; background: transparent;")
             c_layout.addWidget(lbl_title)
 
             lbl_val = QLabel(default_val)
-            lbl_val.setStyleSheet(f"color: {color_val}; font-size: 18px; font-weight: bold;")
+            lbl_val.setStyleSheet(f"color: {color_val}; font-size: 20px; font-weight: 700; background: transparent;")
             c_layout.addWidget(lbl_val)
 
             lbl_sub = QLabel(subtitle)
-            lbl_sub.setStyleSheet("color: #64748B; font-size: 10px;")
+            lbl_sub.setStyleSheet("color: #64748B; font-size: 10px; background: transparent;")
             c_layout.addWidget(lbl_sub)
             return card, lbl_val
 
-        card_words, self.stat_words_label = _make_stat_card("📝 Parole Totali", "0", "dettate con FlowLocal", "#38BDF8")
-        card_wpm, self.stat_wpm_label = _make_stat_card("⚡ Velocità WPM", "150 WPM", "parole al minuto vocali", "#10B981")
-        card_time, self.stat_time_label = _make_stat_card("⏱️ Tempo Risparmiato", "0 min", "rispetto a digitazione", "#F59E0B")
-        card_streak, self.stat_streak_label = _make_stat_card("🔥 Streak", "0 Giorni", "continuità di dettatura", "#EC4899")
+        card_words, self.stat_words_label = _make_stat_card("Parole", "0", "dettate con FlowLocal", "#38BDF8")
+        card_wpm, self.stat_wpm_label = _make_stat_card("Velocità", "150 WPM", "parole al minuto", "#10B981")
+        card_time, self.stat_time_label = _make_stat_card("Risparmio", "0 min", "rispetto a digitazione", "#A855F7")
+        card_streak, self.stat_streak_label = _make_stat_card("Streak", "0 Giorni", "continuità", "#7DD3FC")
 
         st_layout.addWidget(card_words)
         st_layout.addWidget(card_wpm)
@@ -1729,32 +2292,18 @@ class FlowLocalHub(QMainWindow):
 
         # --- SELETTORE RAPIDO STILE DI DETTATURA ---
         style_box = QFrame()
-        style_box.setObjectName("FlowTypeStyleBox")
-        style_box.setStyleSheet("""
-            QFrame#FlowTypeStyleBox {
-                background-color: #11141C;
-                border: 1px solid #1E293B;
-                border-radius: 8px;
-            }
-        """)
+        style_box.setObjectName("Card")
         s_layout = QVBoxLayout(style_box)
-        s_layout.setContentsMargins(12, 10, 12, 10)
-        s_layout.setSpacing(8)
+        s_layout.setContentsMargins(14, 12, 14, 12)
+        s_layout.setSpacing(10)
 
         s_header = QHBoxLayout()
-        s_title = QLabel("Stile di Dettatura Rapido:")
-        s_title.setStyleSheet("font-size: 12.5px; font-weight: 700; color: #38BDF8;")
+        s_title = QLabel("Stile di Dettatura")
+        s_title.setStyleSheet("font-size: 12.5px; font-weight: 700; color: #F8FAFC; background: transparent;")
         s_header.addWidget(s_title)
 
         self.flowtype_active_style_label = QLabel("Naturale")
-        self.flowtype_active_style_label.setStyleSheet("""
-            background-color: #0369A1;
-            color: #FFFFFF;
-            border-radius: 4px;
-            padding: 2px 10px;
-            font-size: 11px;
-            font-weight: bold;
-        """)
+        self.flowtype_active_style_label.setObjectName("Badge")
         s_header.addWidget(self.flowtype_active_style_label)
         s_header.addStretch(1)
         s_layout.addLayout(s_header)
@@ -1776,31 +2325,10 @@ class FlowLocalHub(QMainWindow):
         self._flowtype_style_buttons = {}
         for s_idx, (s_label, s_code, s_desc) in enumerate(styles_data):
             btn = QPushButton(s_label)
-            btn.setObjectName("StylePill")
+            btn.setObjectName("FilterPill")
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setToolTip(s_desc)
-            btn.setStyleSheet("""
-                QPushButton#StylePill {
-                    background-color: #1E2330;
-                    color: #94A3B8;
-                    border: 1px solid #334155;
-                    border-radius: 6px;
-                    padding: 6px 14px;
-                    font-size: 12px;
-                    font-weight: 600;
-                    min-height: 28px;
-                }
-                QPushButton#StylePill:hover {
-                    background-color: #273042;
-                    color: #F8FAFC;
-                }
-                QPushButton#StylePill:checked {
-                    background-color: #0284C7;
-                    color: #FFFFFF;
-                    border-color: #38BDF8;
-                }
-            """)
             btn.clicked.connect(lambda _c=False, code=s_code, lbl=s_label: self._on_flowtype_style_selected(code, lbl))
             self.flowtype_style_group.addButton(btn, s_idx)
             self._flowtype_style_buttons[s_code] = btn
@@ -1814,33 +2342,19 @@ class FlowLocalHub(QMainWindow):
 
         # --- STATO HOTKEY SHIFT DESTRO ---
         hotkey_box = QFrame()
-        hotkey_box.setStyleSheet("""
-            QFrame {
-                background-color: #11141C;
-                border: 1px solid #1E293B;
-                border-radius: 8px;
-            }
-        """)
+        hotkey_box.setObjectName("Card")
         h_layout = QHBoxLayout(hotkey_box)
-        h_layout.setContentsMargins(12, 10, 12, 10)
+        h_layout.setContentsMargins(14, 10, 14, 10)
         h_layout.setSpacing(12)
 
         key_badge = QLabel("Shift Destro")
-        key_badge.setStyleSheet("""
-            background-color: #1E293B;
-            border: 1px solid #38BDF8;
-            border-radius: 6px;
-            padding: 4px 10px;
-            color: #38BDF8;
-            font-size: 12px;
-            font-weight: bold;
-        """)
+        key_badge.setObjectName("ShortcutKey")
         h_layout.addWidget(key_badge)
 
         h_info = QLabel("<b>Push-to-Talk principale:</b> tieni premuto Shift Destro (sotto Invio) per dettare live, rilascia per incollare con zero focus steal.<br>"
                         "<b>Doppio tocco:</b> modalità mani libere. <b>Shift Sinistro:</b> resta 100% libero per le maiuscole ordinarie.")
         h_info.setWordWrap(True)
-        h_info.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        h_info.setStyleSheet("color: #94A3B8; font-size: 12px; background: transparent;")
         h_layout.addWidget(h_info, 1)
 
         layout.addWidget(hotkey_box)
@@ -1929,6 +2443,10 @@ class FlowLocalHub(QMainWindow):
         meta_row.addStretch(1)
 
         text = t.get("final_text") or ""
+        fix_btn = _make_button("✏️ Correggi")
+        fix_btn.clicked.connect(lambda _c=False, s=text: self._open_quick_rule_dialog(s))
+        meta_row.addWidget(fix_btn)
+
         copy_btn = _make_button("📋 Copia")
         copy_btn.clicked.connect(lambda _c=False, s=text: self._copy_to_clipboard(s))
         meta_row.addWidget(copy_btn)
@@ -1936,6 +2454,11 @@ class FlowLocalHub(QMainWindow):
 
         layout.addWidget(_make_label(text, "CardBody", wrap=True))
         return card
+
+    def _open_quick_rule_dialog(self, text: str):
+        dlg = QuickRuleDialog(text, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._refresh_dictionary()
 
     def _clear_history(self):
         reply = QMessageBox.question(
@@ -1990,64 +2513,47 @@ class FlowLocalHub(QMainWindow):
     def _build_whis_page(self) -> QWidget:
         page, layout = self._make_page("✨ Whis", "Assistente virtuale ingegneristico, cronologia interazioni e monitoraggio live.")
 
-        # 1. Header & Live Status Panel
+        # 1. Header & Live Status Panel (Obsidian Glass)
         status_frame = QFrame()
-        status_frame.setObjectName("WhisStatusFrame")
-        status_frame.setStyleSheet("""
-            QFrame#WhisStatusFrame {
-                background-color: #12141D;
-                border: 1px solid #232938;
-                border-radius: 10px;
-            }
-        """)
+        status_frame.setObjectName("Card")
         sf_layout = QVBoxLayout(status_frame)
         sf_layout.setContentsMargins(14, 12, 14, 12)
         sf_layout.setSpacing(10)
 
-        # Riga 1 (Barra superiore): Status live + Switch Mani Libere + Selettore modalità + Mostra HUD
+        # Riga 1: Status live + Switch Mani Libere + Mostra HUD
         row1 = QHBoxLayout()
-        row1.setSpacing(12)
+        row1.setSpacing(10)
 
-        self.whis_status_label = QLabel("🟢 Pronto — Mani Libere Attive (Pronuncia \"Whis...\")")
-        self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
+        self.whis_status_label = QLabel("● Pronto — Mani Libere Attive (\"Whis...\")")
+        self.whis_status_label.setStyleSheet("color: #34D399; font-size: 12px; font-weight: 600; background: transparent;")
         row1.addWidget(self.whis_status_label, 1)
 
-        # Switch Mani Libere nella barra superiore (Attivo ON di default)
-        self.handsfree_switch = QPushButton("🎙️ Mani Libere (\"Di' Whis...\"): ON")
-        self.handsfree_switch.setObjectName("HandsfreeSwitch")
+        # Switch Mani Libere (Attivo ON di default)
+        self.handsfree_switch = QPushButton("Mani Libere: ON")
+        self.handsfree_switch.setObjectName("FilterPill")
         self.handsfree_switch.setCheckable(True)
         self.handsfree_switch.setChecked(self.is_handsfree_enabled)
         self.handsfree_switch.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.handsfree_switch.setMinimumHeight(32)
         self.handsfree_switch.toggled.connect(self._on_handsfree_toggled)
         row1.addWidget(self.handsfree_switch)
 
-        # Selettore modalità modello
+        # Pulsante Mostra ultimo HUD
+        show_hud_btn = _make_button("Mostra HUD")
+        show_hud_btn.clicked.connect(self._show_last_whis_hud)
+        row1.addWidget(show_hud_btn)
+
+        sf_layout.addLayout(row1)
+
+        # Riga 2: Selettori compatti (Modello, Audio, Voce, Prova) + Google Calendar
+        row2 = QHBoxLayout()
+        row2.setSpacing(10)
+
         lbl_mod = QLabel("Modello:")
-        lbl_mod.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 500;")
-        row1.addWidget(lbl_mod)
+        lbl_mod.setStyleSheet("color: #64748B; font-size: 11px; font-weight: 600; background: transparent;")
+        row2.addWidget(lbl_mod)
 
         self.whis_model_combo = QComboBox()
-        self.whis_model_combo.setMinimumHeight(32)
-        self.whis_model_combo.setStyleSheet("""
-            QComboBox {
-                min-height: 30px;
-                background-color: #1A1E29;
-                border: 1px solid #2E3547;
-                border-radius: 6px;
-                padding: 0 10px;
-                color: #F1F5F9;
-                font-size: 11px;
-                font-weight: 500;
-            }
-            QComboBox:focus { border: 1px solid #38BDF8; }
-            QComboBox QAbstractItemView {
-                background-color: #12141D;
-                color: #F1F5F9;
-                selection-background-color: #0284C7;
-                border: 1px solid #2E3547;
-            }
-        """)
+        self.whis_model_combo.setMinimumHeight(30)
         self.whis_model_combo.addItem("Auto (3B/7B)", "auto")
         self.whis_model_combo.addItem("Rapido (qwen2.5:3b)", "3b")
         self.whis_model_combo.addItem("Profondo (qwen2.5:7b)", "7b")
@@ -2056,37 +2562,17 @@ class FlowLocalHub(QMainWindow):
             if cur_idx >= 0:
                 self.whis_model_combo.setCurrentIndex(cur_idx)
         self.whis_model_combo.currentIndexChanged.connect(self._on_whis_model_changed)
-        row1.addWidget(self.whis_model_combo)
+        row2.addWidget(self.whis_model_combo)
 
-        # Selettore modalità audio feedback Whis (Voce TTS / Suono Morbido / Muto)
         lbl_audio = QLabel("Audio:")
-        lbl_audio.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 500;")
-        row1.addWidget(lbl_audio)
+        lbl_audio.setStyleSheet("color: #64748B; font-size: 11px; font-weight: 600; background: transparent;")
+        row2.addWidget(lbl_audio)
 
         self.whis_audio_combo = QComboBox()
-        self.whis_audio_combo.setMinimumHeight(32)
-        self.whis_audio_combo.setStyleSheet("""
-            QComboBox {
-                min-height: 30px;
-                background-color: #1A1E29;
-                border: 1px solid #2E3547;
-                border-radius: 6px;
-                padding: 0 10px;
-                color: #F1F5F9;
-                font-size: 11px;
-                font-weight: 500;
-            }
-            QComboBox:focus { border: 1px solid #38BDF8; }
-            QComboBox QAbstractItemView {
-                background-color: #12141D;
-                color: #F1F5F9;
-                selection-background-color: #0284C7;
-                border: 1px solid #2E3547;
-            }
-        """)
-        self.whis_audio_combo.addItem("🔇 Muto (Default)", MODE_MUTE)
-        self.whis_audio_combo.addItem("🔔 Suono Morbido", MODE_SOFT_CHIME)
-        self.whis_audio_combo.addItem("🗣️ Voce (TTS)", MODE_VOICE)
+        self.whis_audio_combo.setMinimumHeight(30)
+        self.whis_audio_combo.addItem("Muto (Default)", MODE_MUTE)
+        self.whis_audio_combo.addItem("Suono Morbido", MODE_SOFT_CHIME)
+        self.whis_audio_combo.addItem("Voce (TTS)", MODE_VOICE)
 
         cur_audio_mode = audio_feedback.get_mode()
         cur_audio_idx = self.whis_audio_combo.findData(cur_audio_mode)
@@ -2095,34 +2581,14 @@ class FlowLocalHub(QMainWindow):
 
         self.whis_audio_combo.currentIndexChanged.connect(self._on_whis_audio_mode_changed)
         audio_feedback.add_mode_listener(self._sync_whis_audio_combo)
-        row1.addWidget(self.whis_audio_combo)
+        row2.addWidget(self.whis_audio_combo)
 
-        # Selettore profilo vocale Whis
         lbl_voice = QLabel("Voce:")
-        lbl_voice.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 500;")
-        row1.addWidget(lbl_voice)
+        lbl_voice.setStyleSheet("color: #64748B; font-size: 11px; font-weight: 600; background: transparent;")
+        row2.addWidget(lbl_voice)
 
         self.whis_voice_combo = QComboBox()
-        self.whis_voice_combo.setMinimumHeight(32)
-        self.whis_voice_combo.setStyleSheet("""
-            QComboBox {
-                min-height: 30px;
-                background-color: #1A1E29;
-                border: 1px solid #2E3547;
-                border-radius: 6px;
-                padding: 0 10px;
-                color: #F1F5F9;
-                font-size: 11px;
-                font-weight: 500;
-            }
-            QComboBox:focus { border: 1px solid #38BDF8; }
-            QComboBox QAbstractItemView {
-                background-color: #12141D;
-                color: #F1F5F9;
-                selection-background-color: #0284C7;
-                border: 1px solid #2E3547;
-            }
-        """)
+        self.whis_voice_combo.setMinimumHeight(30)
         for k, v in VOICE_PRESETS.items():
             self.whis_voice_combo.addItem(v["label"], k)
 
@@ -2133,93 +2599,23 @@ class FlowLocalHub(QMainWindow):
 
         self.whis_voice_combo.currentIndexChanged.connect(self._on_whis_voice_changed)
         audio_feedback.add_voice_listener(self._sync_whis_voice_combo)
-        row1.addWidget(self.whis_voice_combo)
+        row2.addWidget(self.whis_voice_combo)
 
-        # Pulsante Prova Voce
-        self.whis_voice_test_btn = _make_button("▶️ Prova")
-        self.whis_voice_test_btn.setStyleSheet("""
-            QPushButton {
-                min-height: 30px;
-                padding: 0 11px;
-                background-color: #1A1E29;
-                border: 1px solid #10B981;
-                border-radius: 6px;
-                color: #10B981;
-                font-size: 11px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: rgba(16, 185, 129, 0.15);
-                color: #FFFFFF;
-                border-color: #34D399;
-            }
-            QPushButton:pressed {
-                background-color: #0F172A;
-            }
-        """)
+        self.whis_voice_test_btn = _make_button("Prova")
         self.whis_voice_test_btn.setToolTip("Ascolta un'anteprima vocale con il profilo selezionato")
         self.whis_voice_test_btn.clicked.connect(self._on_whis_voice_test_clicked)
-        row1.addWidget(self.whis_voice_test_btn)
+        row2.addWidget(self.whis_voice_test_btn)
 
-        # Pulsante Mostra ultimo HUD
-        show_hud_btn = _make_button("🪟 Mostra ultimo HUD")
-        show_hud_btn.setStyleSheet("""
-            QPushButton {
-                min-height: 30px;
-                padding: 0 12px;
-                background-color: #1A1E29;
-                border: 1px solid #38BDF8;
-                border-radius: 6px;
-                color: #38BDF8;
-                font-size: 11px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: rgba(56, 189, 248, 0.15);
-                color: #FFFFFF;
-            }
-        """)
-        show_hud_btn.clicked.connect(self._show_last_whis_hud)
-        row1.addWidget(show_hud_btn)
+        row2.addStretch(1)
 
-        sf_layout.addLayout(row1)
-
-        # Riga 2: Integrazione Google Calendar e Sincronizzazione Agenda
-        row2 = QHBoxLayout()
-        row2.setSpacing(10)
-
-        self.whis_cal_btn = QPushButton("📅 Connetti Google Calendar")
-        self.whis_cal_btn.setMinimumHeight(30)
-        self.whis_cal_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.whis_cal_btn.setStyleSheet("""
-            QPushButton {
-                min-height: 28px;
-                padding: 0 12px;
-                background-color: #1A1E29;
-                border: 1px solid #38BDF8;
-                border-radius: 6px;
-                color: #38BDF8;
-                font-size: 11px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: rgba(56, 189, 248, 0.15);
-                color: #FFFFFF;
-                border-color: #7DD3FC;
-            }
-            QPushButton:pressed {
-                background-color: #0F172A;
-            }
-        """)
+        self.whis_cal_btn = _make_button("Google Calendar")
         self.whis_cal_btn.clicked.connect(self._on_connect_calendar_clicked)
         row2.addWidget(self.whis_cal_btn)
 
         self.whis_cal_status = QLabel()
-        self.whis_cal_status.setStyleSheet("font-size: 11px; font-weight: 500;")
+        self.whis_cal_status.setStyleSheet("font-size: 11px; font-weight: 500; background: transparent;")
         row2.addWidget(self.whis_cal_status)
         self._update_calendar_status_ui()
-
-        row2.addStretch()
         sf_layout.addLayout(row2)
 
         self._update_handsfree_ui(self.is_handsfree_enabled)
@@ -2412,48 +2808,17 @@ class FlowLocalHub(QMainWindow):
             return
 
         if active:
-            self.handsfree_switch.setText("🎙️ Mani Libere (\"Di' Whis...\"): ON")
-            self.handsfree_switch.setStyleSheet("""
-                QPushButton {
-                    background-color: #064E3B;
-                    border: 1px solid #10B981;
-                    border-radius: 6px;
-                    padding: 0 14px;
-                    color: #6EE7B7;
-                    font-size: 11.5px;
-                    font-weight: 700;
-                    min-height: 32px;
-                }
-                QPushButton:hover {
-                    background-color: #047857;
-                    color: #FFFFFF;
-                }
-            """)
+            self.handsfree_switch.setText("Mani Libere: ON")
+            self.handsfree_switch.setStyleSheet("")
             if hasattr(self, "whis_status_label"):
-                self.whis_status_label.setText("🟢 Pronto — Mani Libere Attive (Pronuncia \"Whis...\")")
-                self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
+                self.whis_status_label.setText("● Pronto — Mani Libere Attive (\"Whis...\")")
+                self.whis_status_label.setStyleSheet("color: #34D399; font-size: 12px; font-weight: 600; background: transparent;")
         else:
-            self.handsfree_switch.setText("🎙️ Mani Libere (\"Di' Whis...\"): OFF")
-            self.handsfree_switch.setStyleSheet("""
-                QPushButton {
-                    background-color: #1A1E29;
-                    border: 1px solid #2E3547;
-                    border-radius: 6px;
-                    padding: 0 14px;
-                    color: #94A3B8;
-                    font-size: 11.5px;
-                    font-weight: 600;
-                    min-height: 32px;
-                }
-                QPushButton:hover {
-                    background-color: #242A3A;
-                    color: #E2E8F0;
-                    border: 1px solid #38BDF8;
-                }
-            """)
+            self.handsfree_switch.setText("Mani Libere: OFF")
+            self.handsfree_switch.setStyleSheet("")
             if hasattr(self, "whis_status_label"):
-                self.whis_status_label.setText("🟢 Pronto (In ascolto su Shift Destro + \"Whis...\")")
-                self.whis_status_label.setStyleSheet("color: #10B981; font-size: 12px; font-weight: 600;")
+                self.whis_status_label.setText("● Pronto (Shift Destro)")
+                self.whis_status_label.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: 600; background: transparent;")
 
     def _show_last_whis_hud(self):
         if hasattr(self, "whis_hud") and self.whis_hud:
@@ -2491,14 +2856,6 @@ class FlowLocalHub(QMainWindow):
 
     def _make_whis_card(self, item: Dict) -> QFrame:
         card, layout = _make_card()
-        card.setStyleSheet("""
-            QFrame#Card {
-                background-color: #141722;
-                border: 1px solid #232938;
-                border-left: 3px solid #38BDF8;
-                border-radius: 8px;
-            }
-        """)
 
         # Row 1: Header con timestamp, modello, badge clipboard e azioni
         meta_row = QHBoxLayout()
@@ -2558,7 +2915,7 @@ class FlowLocalHub(QMainWindow):
 
         # Row 2: Domanda Utente
         q_box = QFrame()
-        q_box.setStyleSheet("background-color: #1A1F2C; border: 1px solid #2C354A; border-radius: 6px; padding: 6px 10px;")
+        q_box.setStyleSheet("background-color: rgba(56, 189, 248, 0.06); border: none; border-radius: 10px; padding: 6px 10px;")
         q_layout = QVBoxLayout(q_box)
         q_layout.setContentsMargins(6, 4, 6, 4)
         q_lbl = _make_label(f"💬 {user_q}", "CardTitle", wrap=True)
@@ -2701,22 +3058,16 @@ class FlowLocalHub(QMainWindow):
 
         # ---------------- LAYOUT NOTEKEEPER A 3 COLONNE ----------------
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setStyleSheet("""
-            QSplitter::handle {
-                background-color: #1E2330;
-                width: 3px;
-            }
-        """)
 
         # ===== COLONNA 1: FILTRO PROFILO & ALBERO MATERIE -> ARGOMENTI =====
         col1 = QFrame()
-        col1.setStyleSheet("QFrame { background-color: #11141C; border: 1px solid #1E293B; border-radius: 8px; }")
+        col1.setObjectName("Card")
         col1_layout = QVBoxLayout(col1)
         col1_layout.setContentsMargins(10, 10, 10, 10)
         col1_layout.setSpacing(8)
 
         col1_header = QLabel("📚 Materie & Argomenti")
-        col1_header.setStyleSheet("font-weight: bold; font-size: 13px; color: #38BDF8; border: none;")
+        col1_header.setStyleSheet("font-weight: bold; font-size: 13px; color: #38BDF8; border: none; background: transparent;")
         col1_layout.addWidget(col1_header)
 
         # Filtro Profilo
@@ -2730,27 +3081,6 @@ class FlowLocalHub(QMainWindow):
         self.nk_tree = QTreeWidget()
         self.nk_tree.setHeaderHidden(True)
         self.nk_tree.setAnimated(True)
-        self.nk_tree.setStyleSheet("""
-            QTreeWidget {
-                background-color: #161A24;
-                border: 1px solid #1E2330;
-                border-radius: 6px;
-                color: #E2E8F0;
-                font-size: 12px;
-                padding: 4px;
-            }
-            QTreeWidget::item {
-                padding: 5px 6px;
-                border-radius: 4px;
-            }
-            QTreeWidget::item:hover {
-                background-color: #1E293B;
-            }
-            QTreeWidget::item:selected {
-                background-color: #0284C7;
-                color: #FFFFFF;
-            }
-        """)
         self.nk_tree.currentItemChanged.connect(self._on_nk_tree_item_changed)
         col1_layout.addWidget(self.nk_tree, 1)
 
@@ -2777,7 +3107,7 @@ class FlowLocalHub(QMainWindow):
 
         # ===== COLONNA 2: LISTA DELLE NOTE FILTRATE =====
         col2 = QFrame()
-        col2.setStyleSheet("QFrame { background-color: #11141C; border: 1px solid #1E293B; border-radius: 8px; }")
+        col2.setObjectName("Card")
         col2_layout = QVBoxLayout(col2)
         col2_layout.setContentsMargins(10, 10, 10, 10)
         col2_layout.setSpacing(8)
@@ -2810,7 +3140,7 @@ class FlowLocalHub(QMainWindow):
 
         # ===== COLONNA 3: EDITOR / VIEWER COMPLETO =====
         col3 = QFrame()
-        col3.setStyleSheet("QFrame { background-color: #11141C; border: 1px solid #1E293B; border-radius: 8px; }")
+        col3.setObjectName("Card")
         col3_layout = QVBoxLayout(col3)
         col3_layout.setContentsMargins(14, 12, 14, 12)
         col3_layout.setSpacing(8)
@@ -2819,17 +3149,7 @@ class FlowLocalHub(QMainWindow):
         self.nk_editor_title = QLineEdit()
         self.nk_editor_title.setPlaceholderText("Titolo della nota...")
         self.nk_editor_title.setMinimumHeight(36)
-        self.nk_editor_title.setStyleSheet("""
-            QLineEdit {
-                background-color: #181D28;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                color: #FFFFFF;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 4px 10px;
-            }
-        """)
+        self.nk_editor_title.setStyleSheet("font-size: 14px; font-weight: bold;")
         col3_layout.addWidget(self.nk_editor_title)
 
         # Metadata bar: Profilo, Materia, Argomento, Tipo
@@ -2862,17 +3182,6 @@ class FlowLocalHub(QMainWindow):
         self.nk_editor_body = QTextEdit()
         self.nk_editor_body.setPlaceholderText("Scrivi o incolla qui i tuoi appunti in formato Markdown...")
         self.nk_editor_body.setMinimumHeight(240)
-        self.nk_editor_body.setStyleSheet("""
-            QTextEdit {
-                background-color: #161A24;
-                border: 1px solid #1E293B;
-                border-radius: 6px;
-                color: #F8FAFC;
-                font-size: 13px;
-                line-height: 1.5;
-                padding: 10px;
-            }
-        """)
         col3_layout.addWidget(self.nk_editor_body, 1)
 
         # Bottom Actions Toolbar
@@ -4219,9 +4528,38 @@ class FlowLocalHub(QMainWindow):
     # -----------------------------------------------------------------
     def _build_dictionary_page(self) -> QWidget:
         page, layout = self._make_page(
-            "Dizionario",
-            "Correzioni applicate a ogni dettatura e glossario usato per guidare Whisper.",
+            "Dizionario & Snippet",
+            "Correzioni fonetiche per guidare Whisper e scorciatoie vocali per espandere frasi a latenza zero.",
         )
+
+        # Toggle pill Dizionario / Snippet
+        pill_row = QHBoxLayout()
+        pill_row.setSpacing(8)
+        self.dict_tab_btn = QPushButton("📖 Dizionario")
+        self.dict_tab_btn.setObjectName("FilterPill")
+        self.dict_tab_btn.setCheckable(True)
+        self.dict_tab_btn.setChecked(True)
+        self.snippet_tab_btn = QPushButton("⚡ Snippet Vocali")
+        self.snippet_tab_btn.setObjectName("FilterPill")
+        self.snippet_tab_btn.setCheckable(True)
+
+        self.dict_subtab_group = QButtonGroup(self)
+        self.dict_subtab_group.setExclusive(True)
+        self.dict_subtab_group.addButton(self.dict_tab_btn, 0)
+        self.dict_subtab_group.addButton(self.snippet_tab_btn, 1)
+
+        pill_row.addWidget(self.dict_tab_btn)
+        pill_row.addWidget(self.snippet_tab_btn)
+        pill_row.addStretch(1)
+        layout.addLayout(pill_row)
+
+        self.dict_stack = QStackedWidget()
+
+        # --- Sub-tab 0: Dizionario ---
+        dict_panel = QWidget()
+        dict_layout = QVBoxLayout(dict_panel)
+        dict_layout.setContentsMargins(0, 4, 0, 0)
+        dict_layout.setSpacing(10)
 
         form = QHBoxLayout()
         form.setSpacing(10)
@@ -4243,10 +4581,42 @@ class FlowLocalHub(QMainWindow):
         add_btn = _make_button("Aggiungi", "primary")
         add_btn.clicked.connect(self._add_dictionary_rule)
         form.addWidget(add_btn)
-        layout.addLayout(form)
+        dict_layout.addLayout(form)
 
         self.dict_list = ScrollList("Il dizionario è vuoto.")
-        layout.addWidget(self.dict_list, 1)
+        dict_layout.addWidget(self.dict_list, 1)
+        self.dict_stack.addWidget(dict_panel)
+
+        # --- Sub-tab 1: Snippet Vocali ---
+        snip_panel = QWidget()
+        snip_layout = QVBoxLayout(snip_panel)
+        snip_layout.setContentsMargins(0, 4, 0, 0)
+        snip_layout.setSpacing(10)
+
+        snip_top = QHBoxLayout()
+        snip_top.setSpacing(10)
+        self.snippet_trigger_input = QLineEdit()
+        self.snippet_trigger_input.setPlaceholderText("Frase trigger vocale (es. firma cliente)")
+        self.snippet_trigger_input.setMinimumHeight(36)
+        snip_top.addWidget(self.snippet_trigger_input, 1)
+
+        add_snip_btn = _make_button("Aggiungi Snippet", "primary")
+        add_snip_btn.clicked.connect(self._add_snippet_rule)
+        snip_top.addWidget(add_snip_btn)
+        snip_layout.addLayout(snip_top)
+
+        self.snippet_expansion_input = QTextEdit()
+        self.snippet_expansion_input.setPlaceholderText("Testo completo da incollare quando pronunci il trigger...")
+        self.snippet_expansion_input.setMinimumHeight(110)
+        self.snippet_expansion_input.setMaximumHeight(130)
+        snip_layout.addWidget(self.snippet_expansion_input)
+
+        self.snippet_list = ScrollList("Nessuno snippet configurato.")
+        snip_layout.addWidget(self.snippet_list, 1)
+        self.dict_stack.addWidget(snip_panel)
+
+        self.dict_subtab_group.idClicked.connect(self.dict_stack.setCurrentIndex)
+        layout.addWidget(self.dict_stack, 1)
         return page
 
     def _refresh_dictionary(self):
@@ -4254,9 +4624,62 @@ class FlowLocalHub(QMainWindow):
         self.dict_list.clear()
         if not items:
             self.dict_list.show_empty()
+        else:
+            for v in items:
+                self.dict_list.add_card(self._make_dictionary_card(v))
+
+        if hasattr(self, "snippet_list"):
+            snippets = db.get_all_snippets()
+            self.snippet_list.clear()
+            if not snippets:
+                self.snippet_list.show_empty()
+            else:
+                for s in snippets:
+                    self.snippet_list.add_card(self._make_snippet_card(s))
+
+    def _make_snippet_card(self, s: Dict) -> QFrame:
+        card, layout = _make_card()
+        row = QHBoxLayout()
+        row.setSpacing(10)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(4)
+        text_col.addWidget(_make_label(f"⚡ \"{s['trigger_phrase']}\"", "CardTitle", wrap=True))
+        text_col.addWidget(_make_label(s.get("expansion_text") or "", "CardBody", wrap=True))
+
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(6)
+        uses = s.get("use_count", 0)
+        meta_row.addWidget(_make_label(f"Usato {uses} volte", "BadgeMuted"))
+        meta_row.addStretch(1)
+        text_col.addLayout(meta_row)
+        row.addLayout(text_col, 1)
+
+        del_btn = _make_button("Elimina", "danger")
+        del_btn.clicked.connect(lambda _c=False, sid=s["id"]: self._delete_snippet_rule(sid))
+        row.addWidget(del_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        layout.addLayout(row)
+        return card
+
+    def _add_snippet_rule(self):
+        trigger = self.snippet_trigger_input.text().strip()
+        expansion = self.snippet_expansion_input.toPlainText().strip()
+        if not trigger:
+            self.snippet_trigger_input.setFocus()
             return
-        for v in items:
-            self.dict_list.add_card(self._make_dictionary_card(v))
+        if not expansion:
+            self.snippet_expansion_input.setFocus()
+            return
+        db.add_snippet(trigger, expansion)
+        self.snippet_trigger_input.clear()
+        self.snippet_expansion_input.clear()
+        self.snippet_trigger_input.setFocus()
+        self._refresh_dictionary()
+
+    def _delete_snippet_rule(self, snippet_id: int):
+        db.delete_snippet(snippet_id)
+        self._refresh_dictionary()
 
     def _make_dictionary_card(self, v: Dict) -> QFrame:
         card, layout = _make_card()

@@ -11,6 +11,7 @@ Supporta:
 
 import os
 import re
+import math
 import time
 import json
 import wave
@@ -161,10 +162,12 @@ class WindowsInjector:
 
         user32 = ctypes.windll.user32
         user32.keybd_event(cls.VK_CONTROL, 0, 0, 0)
-        user32.keybd_event(cls.VK_V, 0, 0, 0)
-        time.sleep(0.015)
-        user32.keybd_event(cls.VK_V, 0, cls.KEYEVENTF_KEYUP, 0)
-        user32.keybd_event(cls.VK_CONTROL, 0, cls.KEYEVENTF_KEYUP, 0)
+        try:
+            user32.keybd_event(cls.VK_V, 0, 0, 0)
+            time.sleep(0.015)
+            user32.keybd_event(cls.VK_V, 0, cls.KEYEVENTF_KEYUP, 0)
+        finally:
+            user32.keybd_event(cls.VK_CONTROL, 0, cls.KEYEVENTF_KEYUP, 0)
 
         def restore():
             time.sleep(0.6)
@@ -1210,22 +1213,41 @@ class FlowLocalEngine:
         self.whis_hud = whis_hud
         self.analyzer = AudioAnalyzer(num_half_bands=12, intensity=0.80, smoothing=0.50)
 
-        self.model = WhisperModel(
-            MODEL_SIZE,
-            device=DEVICE,
-            compute_type=COMPUTE_TYPE,
-            download_root=None,
-        )
+        self.model = None
+        self._model_ready = threading.Event()
+        self._model_error: Optional[str] = None
 
-        detected_lecture = LLMRefiner.detect_lecture_model()
-        print(f"[FlowLocal] Dettatura live: {LLM_MODEL} | Sbobinatura d'aula: {detected_lecture}")
-
-        def warm_llm():
+        def _load_whisper_and_warm():
+            t_load = time.time()
             try:
-                LLMRefiner.refine("Test audio iniziale")
-            except Exception:
-                pass
-        threading.Thread(target=warm_llm, daemon=True).start()
+                model = WhisperModel(
+                    MODEL_SIZE,
+                    device=DEVICE,
+                    compute_type=COMPUTE_TYPE,
+                    download_root=None,
+                )
+                self.model = model
+                load_ms = int((time.time() - t_load) * 1000)
+                print(f"[FlowLocal] Faster-Whisper '{MODEL_SIZE}' ({DEVICE}/{COMPUTE_TYPE}) pronto in {load_ms}ms.")
+            except Exception as e:
+                self._model_error = str(e)
+                print(f"[FlowLocal] Errore caricamento WhisperModel: {e}")
+            finally:
+                self._model_ready.set()
+
+            detected_lecture = LLMRefiner.detect_lecture_model()
+            print(f"[FlowLocal] Dettatura live: {LLM_MODEL} | Sbobinatura d'aula: {detected_lecture}")
+
+            # Attende brevemente che Ollama (avviato in background) risponda prima del warm-up
+            for attempt in range(4):
+                try:
+                    urllib.request.urlopen("http://localhost:11434/api/version", timeout=0.5)
+                    LLMRefiner.refine("Test audio iniziale")
+                    break
+                except Exception:
+                    time.sleep(0.6)
+
+        threading.Thread(target=_load_whisper_and_warm, daemon=True).start()
 
         self.audio_frames = []
         self.is_recording = False
@@ -1326,6 +1348,23 @@ class FlowLocalEngine:
                             self.stop_recording_and_process()
                 threading.Thread(target=_delayed_stop, daemon=True).start()
 
+    def reset_key_state(self):
+        """Resetta lo stato del tasto Push-to-Talk dopo sospensione/risveglio di sistema."""
+        with self.key_lock:
+            self.is_key_down = False
+            self.last_release_time = 0.0
+
+    def recover_audio_stream(self):
+        """Riavvia lo stream WASAPI se inattivo o interrotto dopo standby/risveglio."""
+        try:
+            if self.stream is None or not self.stream.active:
+                self._start_stream()
+        except Exception:
+            try:
+                self._start_stream()
+            except Exception:
+                pass
+
     def toggle_recording_click(self):
         if self.is_recording:
             self.stop_recording_and_process()
@@ -1399,10 +1438,12 @@ class FlowLocalEngine:
                     VK_C = 0x43
                     KEYEVENTF_KEYUP = 0x0002
                     user32.keybd_event(VK_CONTROL, 0, 0, 0)
-                    user32.keybd_event(VK_C, 0, 0, 0)
-                    time.sleep(0.080)  # Breve attesa per la cattura selezione su Windows
-                    user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0)
-                    user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+                    try:
+                        user32.keybd_event(VK_C, 0, 0, 0)
+                        time.sleep(0.080)  # Breve attesa per la cattura selezione su Windows
+                        user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0)
+                    finally:
+                        user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
                     time.sleep(0.020)
 
                     current_clip = (pyperclip.paste() or "").strip()
@@ -1477,15 +1518,9 @@ class FlowLocalEngine:
                     pass
             return
 
-        raw_audio = np.concatenate(captured, axis=0).flatten()
-
-        if self.use_decimation and self.sample_rate != WHISPER_SAMPLE_RATE:
-            num_target_samples = int(len(raw_audio) * WHISPER_SAMPLE_RATE / self.sample_rate)
-            audio_16k = signal.resample(raw_audio, num_target_samples).astype(np.float32)
-        else:
-            audio_16k = raw_audio
-
-        duration_s = len(audio_16k) / WHISPER_SAMPLE_RATE
+        total_samples = sum(len(c) for c in captured)
+        src_rate = self.sample_rate
+        duration_s = total_samples / src_rate
 
         if duration_s < 0.20:
             if self.orb:
@@ -1499,21 +1534,53 @@ class FlowLocalEngine:
 
         threading.Thread(
             target=self._transcribe_and_inject,
-            args=(audio_16k, duration_s, rec_mode, rec_context, selection_text, prev_clipboard),
+            args=(captured, src_rate, duration_s, rec_mode, rec_context, selection_text, prev_clipboard),
             daemon=True
         ).start()
 
-    def _transcribe_and_inject(self, audio_data: np.ndarray, duration_s: float, mode: str, context: tuple = ("Desktop", "natural", "Naturale"), selection_text: Optional[str] = None, previous_clipboard: Optional[str] = None):
+    @staticmethod
+    def _resample_to_16k(raw_audio: np.ndarray, src_rate: int) -> np.ndarray:
+        """Ricampionamento polifase veloce a 16kHz (eseguito nel worker thread)."""
+        if src_rate == WHISPER_SAMPLE_RATE:
+            return raw_audio.astype(np.float32, copy=False)
+        if src_rate % WHISPER_SAMPLE_RATE == 0:
+            down = src_rate // WHISPER_SAMPLE_RATE
+            return signal.resample_poly(raw_audio, up=1, down=down).astype(np.float32)
+        g = math.gcd(WHISPER_SAMPLE_RATE, src_rate)
+        return signal.resample_poly(
+            raw_audio,
+            up=WHISPER_SAMPLE_RATE // g,
+            down=src_rate // g,
+        ).astype(np.float32)
+
+    def _transcribe_and_inject(self, captured_chunks: List[np.ndarray], src_rate: int, duration_s: float, mode: str, context: tuple = ("Desktop", "natural", "Naturale"), selection_text: Optional[str] = None, previous_clipboard: Optional[str] = None):
         t0 = time.time()
         whisper_ms = 0
         launched_to_target = False
         try:
+            raw_audio = np.concatenate(captured_chunks, axis=0).flatten()
+            audio_data = self._resample_to_16k(raw_audio, src_rate)
+
             # 1. Normalizzazione audio (elimina problemi di microfoni a basso guadagno)
             max_val = float(np.max(np.abs(audio_data)))
             if max_val > 0.0005:
                 audio_data = (audio_data / max_val * 0.85).astype(np.float32)
             else:
                 print("[FlowLocal] Livello audio impercettibile / microfono muto.")
+                if self.orb:
+                    self.orb.set_state("IDLE")
+                if previous_clipboard is not None:
+                    try:
+                        pyperclip.copy(previous_clipboard)
+                    except Exception:
+                        pass
+                return
+
+            # Attende il caricamento asincrono del modello se l'utente ha parlato subito all'avvio
+            if not self._model_ready.is_set():
+                self._model_ready.wait(timeout=30.0)
+            if self.model is None:
+                print(f"[FlowLocal] Modello Whisper non disponibile: {self._model_error or 'timeout'}")
                 if self.orb:
                     self.orb.set_state("IDLE")
                 if previous_clipboard is not None:
@@ -1532,7 +1599,7 @@ class FlowLocalEngine:
 
             segments, info = self.model.transcribe(
                 audio_data,
-                beam_size=5,
+                beam_size=1,
                 language="it",
                 temperature=0.0,
                 condition_on_previous_text=False,
@@ -1546,11 +1613,11 @@ class FlowLocalEngine:
             )
 
             segments = list(segments)
-            # Fallback immediato senza VAD nel caso la voce sia stata tagliata
-            if not segments:
+            # Fallback senza VAD solo per audio con durata ed energia significative
+            if not segments and duration_s >= 0.45 and max_val >= 0.015:
                 segments, _ = self.model.transcribe(
                     audio_data,
-                    beam_size=5,
+                    beam_size=1,
                     language="it",
                     temperature=0.0,
                     condition_on_previous_text=False,
@@ -2018,6 +2085,11 @@ class FlowLocalEngine:
                 whisper_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} {base_prompt}".strip() or None
 
             check_cancelled()
+
+            if not self._model_ready.is_set():
+                self._model_ready.wait(timeout=30.0)
+            if self.model is None:
+                raise RuntimeError(f"Modello Whisper non pronto: {self._model_error or 'timeout'}")
 
             segments, info = self.model.transcribe(
                 audio_input,
