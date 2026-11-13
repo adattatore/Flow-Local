@@ -22,7 +22,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPainter, QColor, QPainterPath, QRadialGradient, QLinearGradient, QConicalGradient,
-    QPen, QAction, QFont, QFontMetrics, QCursor, QGuiApplication
+    QPen, QAction, QFont, QFontMetrics, QCursor, QGuiApplication, QPixmap
 )
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -64,6 +64,109 @@ def create_smooth_closed_path(points: list[QPointF]) -> QPainterPath:
 
     path.closeSubpath()
     return path
+
+
+def render_orb_icon_pixmap(size: int = 64, active: bool = True) -> QPixmap:
+    """Renderizza l'icona statica dell'Orb con i 3 fuochi fluidi (usata per tray, finestra e app.ico)."""
+    pixmap = QPixmap(size, size)
+    pixmap.fill(QColor(0, 0, 0, 0))
+
+    p = QPainter(pixmap)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+    cx = size / 2.0
+    cy = size / 2.0
+    outer_r = size * 0.45
+
+    # Base scura Obsidian per contrasto su sfondi chiari e scuri
+    base_grad = QRadialGradient(cx, cy, outer_r)
+    base_grad.setColorAt(0.0, QColor(12, 16, 26, 250))
+    base_grad.setColorAt(0.82, QColor(8, 10, 16, 245))
+    base_grad.setColorAt(1.0, QColor(8, 10, 16, 225))
+    p.setBrush(base_grad)
+    rim_col = QColor(56, 189, 248, 95) if active else QColor(148, 163, 184, 75)
+    p.setPen(QPen(rim_col, max(1.0, size * 0.032)))
+    p.drawEllipse(QPointF(cx, cy), outer_r, outer_r)
+
+    # I 3 fuochi fluidi (ciano, viola, smeraldo) oppure toni grigi se in pausa
+    if active:
+        flame_specs = [
+            (QColor("#38BDF8"), 0.45, 0.92, 220),
+            (QColor("#A855F7"), 2.55, 0.85, 205),
+            (QColor("#10B981"), 4.65, 0.80, 195),
+        ]
+    else:
+        flame_specs = [
+            (QColor("#94A3B8"), 0.45, 0.88, 145),
+            (QColor("#64748B"), 2.55, 0.80, 130),
+            (QColor("#475569"), 4.65, 0.74, 120),
+        ]
+
+    num_pts = 24
+    core_r = outer_r * 0.74
+    orbit_r = outer_r * 0.14
+
+    p.save()
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+    p.setPen(Qt.PenStyle.NoPen)
+
+    for f_col, f_ang, r_scale, f_alpha in flame_specs:
+        fx = cx + orbit_r * math.cos(f_ang)
+        fy = cy + orbit_r * math.sin(f_ang * 1.15)
+
+        f_points = []
+        for i in range(num_pts):
+            theta = (2.0 * math.pi * i) / num_pts - (math.pi / 2.0)
+            # Profilo organico a 3 lobi per richiamare i fuochi vivi dell'orb
+            wobble = 1.0 + 0.14 * math.sin(theta * 2.0 + f_ang) + 0.07 * math.cos(theta * 3.0 - f_ang)
+            r_pt = core_r * r_scale * wobble
+            f_points.append(QPointF(fx + r_pt * math.cos(theta), fy + r_pt * math.sin(theta)))
+
+        f_path = create_smooth_closed_path(f_points)
+        f_grad = QRadialGradient(fx, fy, core_r * r_scale * 1.25)
+        c_hot = QColor(f_col)
+        c_hot.setAlpha(f_alpha)
+        c_mid = QColor(f_col)
+        c_mid.setAlpha(int(f_alpha * 0.68))
+        c_tip = QColor(f_col)
+        c_tip.setAlpha(0)
+        f_grad.setColorAt(0.0, c_hot)
+        f_grad.setColorAt(0.65, c_mid)
+        f_grad.setColorAt(1.0, c_tip)
+
+        p.setBrush(f_grad)
+        p.drawPath(f_path)
+
+    # Nucleo luminoso centrale
+    center_grad = QRadialGradient(cx, cy, core_r * 0.48)
+    center_col = QColor(240, 249, 255, 160 if active else 75)
+    center_tip = QColor(240, 249, 255, 0)
+    center_grad.setColorAt(0.0, center_col)
+    center_grad.setColorAt(1.0, center_tip)
+    p.setBrush(center_grad)
+    p.drawEllipse(QPointF(cx, cy), core_r * 0.48, core_r * 0.48)
+    p.restore()
+
+    # Piccolo badge pausa in basso a destra quando la dettatura è sospesa
+    if not active:
+        badge_r = size * 0.20
+        bx = size - badge_r - size * 0.04
+        by = size - badge_r - size * 0.04
+        p.setPen(QPen(QColor("#94A3B8"), max(1.0, size * 0.03)))
+        p.setBrush(QColor(14, 17, 24, 245))
+        p.drawEllipse(QPointF(bx, by), badge_r, badge_r)
+
+        bar_w = max(1.2, badge_r * 0.28)
+        bar_h = max(3.0, badge_r * 0.85)
+        gap = max(1.0, badge_r * 0.24)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#F8FAFC"))
+        p.drawRoundedRect(QRectF(bx - gap - bar_w * 0.5, by - bar_h * 0.5, bar_w, bar_h), 0.8, 0.8)
+        p.drawRoundedRect(QRectF(bx + gap - bar_w * 0.5, by - bar_h * 0.5, bar_w, bar_h), 0.8, 0.8)
+
+    p.end()
+    return pixmap
 
 
 class WhisOrbBubble(QWidget):

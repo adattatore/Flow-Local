@@ -479,3 +479,243 @@ def export_to_pdf(notes: Union[Dict[str, Any], List[Dict[str, Any]]], output_pat
 
     doc.print(printer)
 
+
+def _escape_latex_text(text: str) -> str:
+    """Esegue l'escape dei caratteri speciali LaTeX nel testo normale (fuori da math/code)."""
+    replacements = [
+        ("\\", r"\textbackslash{}"),
+        ("&", r"\&"),
+        ("%", r"\%"),
+        ("#", r"\#"),
+        ("_", r"\_"),
+        ("{", r"\{"),
+        ("}", r"\}"),
+        ("~", r"\textasciitilde{}"),
+        ("^", r"\textasciicircum{}"),
+    ]
+    for old, new in replacements:
+        text = text.replace(old, new)
+    return text
+
+
+def _convert_inline_md_to_tex(line: str) -> str:
+    """Converte formattazione inline Markdown in LaTeX preservando $...$ e $$...$$."""
+    tokens = re.split(r'(\$\$.*?\$\$|\$[^$\n]+?\$|`[^`\n]+?`)', line)
+    out = []
+    for tok in tokens:
+        if not tok:
+            continue
+        if (tok.startswith("$$") and tok.endswith("$$")) or (tok.startswith("$") and tok.endswith("$")):
+            out.append(tok)
+        elif tok.startswith("`") and tok.endswith("`"):
+            inner = _escape_latex_text(tok[1:-1])
+            out.append(rf"\texttt{{{inner}}}")
+        else:
+            # Gestisci **bold** e *italic*
+            parts = re.split(r'(\*\*.*?\*\*|\*[^*\n]+?\*)', tok)
+            for p in parts:
+                if not p:
+                    continue
+                if p.startswith("**") and p.endswith("**") and len(p) >= 4:
+                    out.append(rf"\textbf{{{_escape_latex_text(p[2:-2])}}}")
+                elif p.startswith("*") and p.endswith("*") and len(p) >= 2:
+                    out.append(rf"\textit{{{_escape_latex_text(p[1:-1])}}}")
+                else:
+                    out.append(_escape_latex_text(p))
+    return "".join(out)
+
+
+def _markdown_to_tex_body(md_text: str) -> str:
+    """Converte il corpo Markdown+LaTeX di una nota in codice LaTeX compilabile."""
+    lines = (md_text or "").splitlines()
+    out: List[str] = []
+    i = 0
+    in_itemize = False
+    in_enumerate = False
+
+    def _close_lists():
+        nonlocal in_itemize, in_enumerate
+        if in_itemize:
+            out.append(r"\end{itemize}")
+            in_itemize = False
+        if in_enumerate:
+            out.append(r"\end{enumerate}")
+            in_enumerate = False
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Blocchi di codice / BibTeX fenced ```
+        if stripped.startswith("```"):
+            _close_lists()
+            lang = stripped[3:].strip().lower()
+            code_lines = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code_lines.append(lines[i])
+                i += 1
+            code_body = "\n".join(code_lines)
+            if lang == "bibtex":
+                out.append(r"\begin{verbatim}")
+                out.append(code_body)
+                out.append(r"\end{verbatim}")
+            else:
+                out.append(r"\begin{lstlisting}")
+                out.append(code_body)
+                out.append(r"\end{lstlisting}")
+            i += 1
+            continue
+
+        # Blocco matematico $$ ... $$ multi-riga
+        if stripped.startswith("$$") and not (stripped.endswith("$$") and len(stripped) > 4):
+            _close_lists()
+            math_lines = [line]
+            i += 1
+            while i < len(lines):
+                math_lines.append(lines[i])
+                if lines[i].strip().endswith("$$"):
+                    break
+                i += 1
+            out.append("\n".join(math_lines))
+            i += 1
+            continue
+
+        # Immagini ![alt](path)
+        img_match = re.match(r'^!\[(.*?)\]\((.+?)\)\s*$', stripped)
+        if img_match:
+            _close_lists()
+            alt = _escape_latex_text(img_match.group(1) or "Immagine")
+            img_path = img_match.group(2).strip().replace("\\", "/")
+            out.append(r"\begin{figure}[htbp]")
+            out.append(r"\centering")
+            out.append(rf"\includegraphics[width=0.85\linewidth]{{{img_path}}}")
+            if alt:
+                out.append(rf"\caption{{{alt}}}")
+            out.append(r"\end{figure}")
+            i += 1
+            continue
+
+        # Tabelle Markdown
+        if stripped.startswith("|") and "|" in stripped[1:]:
+            _close_lists()
+            table_rows = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                row_s = lines[i].strip().strip("|")
+                cells = [c.strip() for c in row_s.split("|")]
+                # Salta la riga separatrice |---|---|
+                if not all(re.match(r'^:?-{2,}:?$', c) for c in cells if c):
+                    table_rows.append(cells)
+                i += 1
+            if table_rows:
+                ncols = max(len(r) for r in table_rows)
+                col_spec = " ".join(["l"] * ncols)
+                out.append(r"\begin{table}[htbp]")
+                out.append(r"\centering")
+                out.append(rf"\begin{{tabular}}{{{col_spec}}}")
+                out.append(r"\toprule")
+                for r_idx, r in enumerate(table_rows):
+                    padded = r + [""] * (ncols - len(r))
+                    tex_cells = [_convert_inline_md_to_tex(c) for c in padded]
+                    out.append(" & ".join(tex_cells) + r" \\")
+                    if r_idx == 0 and len(table_rows) > 1:
+                        out.append(r"\midrule")
+                out.append(r"\bottomrule")
+                out.append(r"\end{tabular}")
+                out.append(r"\end{table}")
+            continue
+
+        # Titoli
+        if stripped.startswith("### "):
+            _close_lists()
+            out.append(rf"\subsubsection{{{_convert_inline_md_to_tex(stripped[4:].strip())}}}")
+        elif stripped.startswith("## "):
+            _close_lists()
+            out.append(rf"\subsection{{{_convert_inline_md_to_tex(stripped[3:].strip())}}}")
+        elif stripped.startswith("# "):
+            _close_lists()
+            out.append(rf"\section{{{_convert_inline_md_to_tex(stripped[2:].strip())}}}")
+        elif stripped.startswith("> "):
+            _close_lists()
+            out.append(r"\begin{quote}")
+            out.append(_convert_inline_md_to_tex(stripped[2:].strip()))
+            out.append(r"\end{quote}")
+        elif re.match(r'^[-*]\s+', stripped):
+            if in_enumerate:
+                out.append(r"\end{enumerate}")
+                in_enumerate = False
+            if not in_itemize:
+                out.append(r"\begin{itemize}")
+                in_itemize = True
+            item_txt = re.sub(r'^[-*]\s+', '', stripped)
+            out.append(rf"  \item {_convert_inline_md_to_tex(item_txt)}")
+        elif re.match(r'^\d+\.\s+', stripped):
+            if in_itemize:
+                out.append(r"\end{itemize}")
+                in_itemize = False
+            if not in_enumerate:
+                out.append(r"\begin{enumerate}")
+                in_enumerate = True
+            item_txt = re.sub(r'^\d+\.\s+', '', stripped)
+            out.append(rf"  \item {_convert_inline_md_to_tex(item_txt)}")
+        elif not stripped:
+            _close_lists()
+            out.append("")
+        else:
+            _close_lists()
+            out.append(_convert_inline_md_to_tex(line))
+
+        i += 1
+
+    _close_lists()
+    return "\n".join(out)
+
+
+def export_to_tex(notes: Union[Dict[str, Any], List[Dict[str, Any]]], output_path: str):
+    """Esporta una o più note in formato LaTeX (.tex) completo di preambolo standard."""
+    items = _normalize_notes(notes)
+    if not items:
+        raise ValueError("Nessuna nota fornita per l'esportazione.")
+
+    first_title = _escape_latex_text((items[0].get("title") or "Documento FlowLocal").strip())
+    if len(items) > 1:
+        first_title = "FlowLocal — Note \\& Sbobine"
+    author = _escape_latex_text((items[0].get("profile") or "FlowLocal").strip())
+
+    parts = [
+        r"\documentclass[11pt,a4paper]{article}",
+        r"\usepackage[utf8]{inputenc}",
+        r"\usepackage[T1]{fontenc}",
+        r"\usepackage[italian]{babel}",
+        r"\usepackage{amsmath, amssymb, graphicx}",
+        r"\usepackage{booktabs}",
+        r"\usepackage{listings}",
+        r"\usepackage{hyperref}",
+        "",
+        rf"\title{{{first_title}}}",
+        rf"\author{{{author}}}",
+        r"\date{\today}",
+        "",
+        r"\begin{document}",
+        r"\maketitle",
+        "",
+    ]
+
+    for idx, n in enumerate(items):
+        if len(items) > 1:
+            t = _escape_latex_text((n.get("title") or f"Nota {idx + 1}").strip())
+            parts.append(rf"\section*{{{t}}}")
+        meta_bits = [b for b in (n.get("subject"), n.get("topic"), n.get("note_type")) if b]
+        if meta_bits:
+            parts.append(rf"\noindent\textit{{{_escape_latex_text(' · '.join(meta_bits))}}}\par\medskip")
+        parts.append(_markdown_to_tex_body(n.get("content_markdown") or ""))
+        if idx < len(items) - 1:
+            parts.append(r"\clearpage")
+
+    parts.append("")
+    parts.append(r"\end{document}")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(parts))
+
+

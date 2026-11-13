@@ -66,11 +66,12 @@ except Exception:
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction
-from PyQt6.QtCore import Qt, QTimer, QAbstractNativeEventFilter
+from PyQt6.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QByteArray
+from PyQt6.QtSvg import QSvgRenderer
 import keyboard
 
 from database import db
-from ui.voice_orb import VoiceOrbOverlay
+from ui.voice_orb import VoiceOrbOverlay, render_orb_icon_pixmap
 from ui.whis_hud import WhisHUD
 from core.ai_pipeline import FlowLocalEngine
 from core.wake_listener import WhisWakeListener
@@ -294,33 +295,47 @@ def run_keyboard_poller(engine: FlowLocalEngine, hook_manager: Optional[Keyboard
 
 
 def create_tray_icon(active=True) -> QIcon:
-    pixmap = QPixmap(32, 32)
+    """Crea l'icona della system tray allineata all'Orb con i 3 fuochi."""
+    icon = QIcon()
+    for sz in (16, 24, 32, 48, 64):
+        icon.addPixmap(render_orb_icon_pixmap(sz, active=active))
+    return icon
+
+
+def create_app_icon() -> QIcon:
+    """Restituisce l'icona principale dell'app (app.ico o fallback Orb 3 fuochi)."""
+    ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.ico")
+    if os.path.exists(ico_path):
+        ico = QIcon(ico_path)
+        if not ico.isNull():
+            return ico
+    icon = QIcon()
+    for sz in (16, 32, 48, 64, 128, 256):
+        icon.addPixmap(render_orb_icon_pixmap(sz, active=True))
+    return icon
+
+
+def create_svg_icon(svg_inner: str, color: str, size: int = 16) -> QIcon:
+    """Renderizza un'icona SVG vettoriale nitida per il menù contestuale."""
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" '
+        f'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="2" '
+        f'stroke-linecap="round" stroke-linejoin="round">{svg_inner}</svg>'
+    )
+    renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
+    pixmap = QPixmap(size, size)
     pixmap.fill(QColor(0, 0, 0, 0))
-    p = QPainter(pixmap)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-    bg = QColor("#6366F1") if active else QColor("#71717A")
-    p.setBrush(bg)
-    p.setPen(Qt.PenStyle.NoPen)
-    p.drawEllipse(2, 2, 28, 28)
-
-    p.setBrush(QColor(255, 255, 255))
-    p.drawRoundedRect(12, 7, 8, 12, 4, 4)
-    pen = p.pen()
-    pen.setColor(QColor(255, 255, 255))
-    pen.setWidth(2)
-    p.setPen(pen)
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    p.drawArc(9, 10, 14, 11, 0, -180 * 16)
-    p.drawLine(16, 21, 16, 25)
-    p.drawLine(12, 25, 20, 25)
-    p.end()
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    renderer.render(painter)
+    painter.end()
     return QIcon(pixmap)
 
 
 def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+    app.setWindowIcon(create_app_icon())
 
     # Avvio non bloccante di Ollama in background
     threading.Thread(target=ensure_ollama_running, daemon=True).start()
@@ -435,26 +450,93 @@ def main():
     tray.setToolTip("FlowLocal — AI Voice & Study Workspace (Shift Destro per parlare)")
 
     menu = QMenu()
+    menu.setWindowFlags(
+        menu.windowFlags()
+        | Qt.WindowType.FramelessWindowHint
+        | Qt.WindowType.NoDropShadowWindowHint
+    )
+    menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
     menu.setStyleSheet(
-        "QMenu { background-color: #141419; color: #F8FAFC; border: 1px solid #2D2D3A; padding: 4px; border-radius: 8px; }"
-        "QMenu::item { padding: 6px 14px; border-radius: 4px; }"
-        "QMenu::item:selected { background-color: #2563EB; }"
+        "QMenu {"
+        "  background-color: #0E1118;"
+        "  color: #F1F5F9;"
+        "  border: 1px solid #262C3D;"
+        "  border-radius: 10px;"
+        "  padding: 6px;"
+        "  font-family: 'Segoe UI';"
+        "  font-size: 13px;"
+        "  font-weight: 500;"
+        "}"
+        "QMenu::item {"
+        "  padding: 8px 16px 8px 10px;"
+        "  border-radius: 6px;"
+        "  margin: 1px 0px;"
+        "  background-color: transparent;"
+        "}"
+        "QMenu::item:selected {"
+        "  background-color: rgba(56, 189, 248, 0.16);"
+        "  color: #FFFFFF;"
+        "}"
+        "QMenu::separator {"
+        "  height: 1px;"
+        "  background-color: #1E2433;"
+        "  margin: 5px 8px;"
+        "}"
+        "QMenu::indicator {"
+        "  width: 14px;"
+        "  height: 14px;"
+        "  margin-left: 6px;"
+        "  border-radius: 4px;"
+        "}"
+        "QMenu::indicator:unchecked {"
+        "  border: 1px solid #334155;"
+        "  background-color: #161B26;"
+        "}"
+        "QMenu::indicator:checked {"
+        "  border: 1px solid #10B981;"
+        "  background-color: #10B981;"
+        "}"
     )
 
-    open_hub_act = QAction("🚀 Mostra / Nascondi Hub", menu)
+    hub_icon = create_svg_icon(
+        '<rect x="3" y="3" width="7" height="7" rx="1.5"/>'
+        '<rect x="14" y="3" width="7" height="7" rx="1.5"/>'
+        '<rect x="3" y="14" width="7" height="7" rx="1.5"/>'
+        '<rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+        "#38BDF8",
+    )
+    open_hub_act = QAction(hub_icon, "Mostra / Nascondi Hub", menu)
     open_hub_act.triggered.connect(toggle_hub)
     menu.addAction(open_hub_act)
 
-    whis_act = QAction("✨ Chiedi a Whis", menu)
+    whis_icon = create_svg_icon(
+        '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/>'
+        '<path d="M19 3v3M20.5 4.5h-3"/>',
+        "#A855F7",
+    )
+    whis_act = QAction(whis_icon, "Chiedi a Whis", menu)
     whis_act.triggered.connect(lambda: whis_hud.start_query("Ciao Whis, dimmi come puoi aiutarmi."))
     menu.addAction(whis_act)
 
-    handsfree_act = QAction("🎙️ Attiva Mani Libere (\"Di' Whis...\")", menu)
+    mic_svg = (
+        '<path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>'
+        '<path d="M19 10v2a7 7 0 0 1-14 0v-2"/>'
+        '<line x1="12" y1="19" x2="12" y2="22"/>'
+    )
+    mic_icon_on = create_svg_icon(mic_svg, "#10B981")
+    mic_icon_off = create_svg_icon(mic_svg, "#94A3B8")
+
+    handsfree_act = QAction(
+        mic_icon_on if handsfree_state["enabled"] else mic_icon_off,
+        "Attiva Mani Libere (\"Di' Whis...\")",
+        menu,
+    )
     handsfree_act.setCheckable(True)
     handsfree_act.setChecked(handsfree_state["enabled"])
 
     def on_toggle_handsfree(checked: bool):
         handsfree_state["enabled"] = checked
+        handsfree_act.setIcon(mic_icon_on if checked else mic_icon_off)
         hub = hub_ref["hub"]
         if hub is not None and hasattr(hub, "handsfree_switch"):
             hub.handsfree_switch.setChecked(checked)
@@ -472,18 +554,29 @@ def main():
         handsfree_state["enabled"] = active
         handsfree_act.blockSignals(True)
         handsfree_act.setChecked(active)
+        handsfree_act.setIcon(mic_icon_on if active else mic_icon_off)
         handsfree_act.blockSignals(False)
 
     menu.addAction(handsfree_act)
 
     menu.addSeparator()
 
-    pause_act = QAction("⏸️ Sospendi Dettatura", menu)
+    pause_icon = create_svg_icon(
+        '<rect x="6" y="4" width="4" height="16" rx="1"/>'
+        '<rect x="14" y="4" width="4" height="16" rx="1"/>',
+        "#F59E0B",
+    )
+    resume_icon = create_svg_icon(
+        '<polygon points="6 4 20 12 6 20 6 4"/>',
+        "#10B981",
+    )
+    pause_act = QAction(pause_icon, "Sospendi Dettatura", menu)
 
     def on_toggle_pause():
         is_paused = engine.toggle_pause()
         tray.setIcon(create_tray_icon(active=not is_paused))
-        pause_act.setText("▶️ Riprendi Dettatura" if is_paused else "⏸️ Sospendi Dettatura")
+        pause_act.setIcon(resume_icon if is_paused else pause_icon)
+        pause_act.setText("Riprendi Dettatura" if is_paused else "Sospendi Dettatura")
 
     pause_act.triggered.connect(on_toggle_pause)
     menu.addAction(pause_act)
@@ -507,7 +600,12 @@ def main():
         app.quit()
         os._exit(0)
 
-    exit_act = QAction("❌ Esci da FlowLocal", menu)
+    exit_icon = create_svg_icon(
+        '<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>'
+        '<line x1="12" y1="2" x2="12" y2="12"/>',
+        "#F43F5E",
+    )
+    exit_act = QAction(exit_icon, "Esci da FlowLocal", menu)
     exit_act.triggered.connect(on_exit)
     menu.addAction(exit_act)
 

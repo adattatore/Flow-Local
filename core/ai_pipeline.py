@@ -78,7 +78,7 @@ QUICK_NOTE_TRIGGER_REGEX = re.compile(
 )
 
 WHIS_WAKE_REGEX = re.compile(
-    r'^(?:whis|wis|uis|quiz|vis|whiss|huiss?|ouis)\b[\s,.:;—–-]*',
+    r'^(?:whis|wis|uis|quiz|vis|whiss|huiss?|ouis|whois)\b[\s,.:;—–-]*',
     flags=re.IGNORECASE
 )
 
@@ -384,7 +384,8 @@ def normalize_phonetic_variants(text: str) -> str:
         return _preserve_case(word, simplified)
 
     # 1. Whis: varianti fonetiche
-    text = re.sub(r'\b(WIS|Wis|wis|Wiz|wiz|Whizz|whizz|Uis|uis|uisss|uiss|huiss)\b', 'Whis', text)
+    text = re.sub(r'\b(WIS|Wis|wis|Wiz|wiz|Whizz|whizz|Uis|uis|uisss|uiss|huiss|WHOIS)\b', 'Whis', text)
+    text = re.sub(r'\b[Ww]hois\b', 'Whis', text)
 
     # 2. FlowType, FlowStudy, FlowLocal, Emporio 87, RTX 5060, FlowLocal Hub, core/audio_feedback.py
     text = re.sub(r'\bFlow\s*[Ss]tud+y\b', 'FlowStudy', text, flags=re.IGNORECASE)
@@ -405,6 +406,7 @@ def normalize_phonetic_variants(text: str) -> str:
     text = re.sub(r"\bun'appuntamento\b", "un appuntamento", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(agli|degli|i miei|negli)\s+appuntiti\b", r"\1 appunti", text, flags=re.IGNORECASE)
     text = re.sub(r"\bnon deve peggiorarmi\b", "non deve parlarmi", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bdownload\s+[Ll]a[Tt]e[Xx]\b", "Markdown e LaTeX", text)
 
     # 2c. Rimozione intercalari specifici e correzione maiuscole
     text = re.sub(r',\s*diciamo,', ',', text, flags=re.IGNORECASE)

@@ -26,6 +26,7 @@ def normalize_post_transcription(text: str) -> str:
     text = re.sub(r"\bun'appuntamento\b", "un appuntamento", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(agli|degli|i miei|negli)\s+appuntiti\b", r"\1 appunti", text, flags=re.IGNORECASE)
     text = re.sub(r"\bnon deve peggiorarmi\b", "non deve parlarmi", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bdownload\s+[Ll]a[Tt]e[Xx]\b", "Markdown e LaTeX", text)
     return text
 
 
