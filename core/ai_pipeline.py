@@ -19,8 +19,8 @@ import difflib
 import tempfile
 import threading
 import subprocess
-import urllib.request
 import urllib.error
+import urllib.request
 from typing import Tuple, Optional, Callable, List, Dict, Union, Any
 
 # Compatibilità pyav >= 13/14 con faster-whisper:
@@ -157,12 +157,12 @@ class WindowsInjector:
             pass
 
         pyperclip.copy(clean_text)
-        time.sleep(0.04)
+        time.sleep(0.025)
 
         user32 = ctypes.windll.user32
         user32.keybd_event(cls.VK_CONTROL, 0, 0, 0)
         user32.keybd_event(cls.VK_V, 0, 0, 0)
-        time.sleep(0.03)
+        time.sleep(0.015)
         user32.keybd_event(cls.VK_V, 0, cls.KEYEVENTF_KEYUP, 0)
         user32.keybd_event(cls.VK_CONTROL, 0, cls.KEYEVENTF_KEYUP, 0)
 
@@ -175,6 +175,116 @@ class WindowsInjector:
                     pass
 
         threading.Thread(target=restore, daemon=True).start()
+
+    @classmethod
+    def get_target_point(cls) -> Optional[Tuple[int, int]]:
+        """Restituisce le coordinate schermo (x, y) del caret di testo attivo o del campo/finestra target."""
+        try:
+            from ctypes import wintypes
+
+            class GUITHREADINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("flags", wintypes.DWORD),
+                    ("hwndActive", wintypes.HWND),
+                    ("hwndFocus", wintypes.HWND),
+                    ("hwndCapture", wintypes.HWND),
+                    ("hwndMenuOwner", wintypes.HWND),
+                    ("hwndMoveSize", wintypes.HWND),
+                    ("hwndCaret", wintypes.HWND),
+                    ("rcCaret", wintypes.RECT),
+                ]
+
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            tid = user32.GetWindowThreadProcessId(hwnd, None) if hwnd else 0
+
+            gui = GUITHREADINFO()
+            gui.cbSize = ctypes.sizeof(GUITHREADINFO)
+            focus_hwnd = hwnd
+            if user32.GetGUIThreadInfo(tid, ctypes.byref(gui)):
+                if gui.hwndFocus:
+                    focus_hwnd = gui.hwndFocus
+                if gui.hwndCaret and (gui.rcCaret.right > gui.rcCaret.left or gui.rcCaret.bottom > gui.rcCaret.top):
+                    pt = wintypes.POINT(
+                        (gui.rcCaret.left + gui.rcCaret.right) // 2,
+                        (gui.rcCaret.top + gui.rcCaret.bottom) // 2,
+                    )
+                    if user32.ClientToScreen(gui.hwndCaret, ctypes.byref(pt)):
+                        return int(pt.x), int(pt.y)
+
+            # Fallback MSAA (OBJID_CARET = -8) per app Chromium/Electron/VS Code/Browser
+            if focus_hwnd:
+                try:
+                    import comtypes
+                    from comtypes import GUID
+                    from comtypes.automation import VARIANT
+                    comtypes.CoInitialize()
+                    try:
+                        # IID_IAccessible = {618736E0-3C3D-11CF-810C-00AA00389B71}
+                        iid_iaccessible = GUID("{618736E0-3C3D-11CF-810C-00AA00389B71}")
+
+                        class IAccessible(comtypes.IUnknown):
+                            _iid_ = iid_iaccessible
+
+                        # Chiama AccessibleObjectFromWindow via vtable/oleacc usando comtypes.gen/oleacc
+                        oleacc = ctypes.windll.oleacc
+                        p_acc = ctypes.c_void_p()
+                        OBJID_CARET = ctypes.c_uint(0xFFFFFFF8)
+                        hr = oleacc.AccessibleObjectFromWindow(
+                            focus_hwnd,
+                            OBJID_CARET,
+                            ctypes.byref(iid_iaccessible),
+                            ctypes.byref(p_acc),
+                        )
+                        if hr == 0 and p_acc.value:
+                            # Chiamata diretta al metodo accLocation (vtable index 22 di IAccessible)
+                            vtable = ctypes.cast(p_acc, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+                            # accLocation(this, *pxLeft, *pyTop, *pcxWidth, *pcyHeight, varChild)
+                            proto = ctypes.WINFUNCTYPE(
+                                ctypes.HRESULT,
+                                ctypes.c_void_p,
+                                ctypes.POINTER(ctypes.c_long),
+                                ctypes.POINTER(ctypes.c_long),
+                                ctypes.POINTER(ctypes.c_long),
+                                ctypes.POINTER(ctypes.c_long),
+                                VARIANT,
+                            )
+                            acc_location = proto(vtable[22])
+                            var_child = VARIANT(0)
+                            x_left = ctypes.c_long(0)
+                            y_top = ctypes.c_long(0)
+                            w_box = ctypes.c_long(0)
+                            h_box = ctypes.c_long(0)
+                            hr_loc = acc_location(
+                                p_acc,
+                                ctypes.byref(x_left),
+                                ctypes.byref(y_top),
+                                ctypes.byref(w_box),
+                                ctypes.byref(h_box),
+                                var_child,
+                            )
+                            # Release COM pointer (vtable[2] = IUnknown::Release)
+                            rel_proto = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)
+                            rel_proto(vtable[2])(p_acc)
+                            if hr_loc == 0 and (w_box.value > 0 or h_box.value > 0) and (x_left.value != 0 or y_top.value != 0):
+                                return int(x_left.value + w_box.value // 2), int(y_top.value + h_box.value // 2)
+                    finally:
+                        comtypes.CoUninitialize()
+                except Exception:
+                    pass
+
+            if hwnd:
+                rect = wintypes.RECT()
+                if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                    cursor = wintypes.POINT()
+                    if user32.GetCursorPos(ctypes.byref(cursor)):
+                        if rect.left <= cursor.x <= rect.right and rect.top <= cursor.y <= rect.bottom:
+                            return int(cursor.x), int(cursor.y)
+                    return int((rect.left + rect.right) // 2), int(rect.top + (rect.bottom - rect.top) * 0.55)
+        except Exception:
+            pass
+        return None
 
 
 LATEX_FORMULA_RULE = (
@@ -212,6 +322,46 @@ PUNCTUATION_RULE = (
 )
 
 
+def apply_inline_voice_commands(text: str) -> str:
+    """
+    Applica comandi vocali inline di auto-correzione durante la dettatura.
+    Esempio: 'Ok... Anzi, cancella tutto. Va bene, passiamo oltre' -> 'Va bene, passiamo oltre'.
+    Richiede che il comando sia un enunciato isolato (delimitato da inizio/punteggiatura e fine/punteggiatura)
+    per evitare falsi positivi in frasi normali come 'ho detto cancella tutto e non ha cancellato'.
+    """
+    if not text:
+        return text
+
+    reset_pattern = re.compile(
+        r'(?:'
+        r'(?:^|(?<=[.!?;\n])|(?<=\[PAUSA_CAMBIO_ARGOMENTO\]))\s*(?:(?:anzi|no|aspetta|scusa|ops)[,.:;\s]+)?'
+        r'|'
+        r'(?<=,)\s*(?:anzi|no|aspetta|scusa|ops)[,.:;\s]+'
+        r')'
+        r'(?:cancella\s+tutto|annulla\s+tutto|scarta\s+tutto|ricomincia(?:\s+da\s+capo)?)'
+        r'(?=\s*(?:$|[.!?,;\n]|\[PAUSA_CAMBIO_ARGOMENTO\]))'
+        r'[.!?,;\s]*',
+        re.IGNORECASE,
+    )
+
+    matches = list(reset_pattern.finditer(text))
+    if not matches:
+        return text
+
+    last_match = matches[-1]
+    remaining = text[last_match.end():].strip()
+    return remaining
+
+
+def strip_pause_markers(text: str) -> str:
+    """Converte eventuali tag interni [PAUSA_CAMBIO_ARGOMENTO] residui in interruzioni di paragrafo."""
+    if not text:
+        return text
+    cleaned = re.sub(r'\s*\[PAUSA_CAMBIO_ARGOMENTO\]\s*', '\n\n', text)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    return cleaned.strip()
+
+
 def normalize_phonetic_variants(text: str) -> str:
     """Normalizzazione automatica post-Whisper / pre-LLM di varianti fonetiche comuni."""
     if not text:
@@ -231,14 +381,14 @@ def normalize_phonetic_variants(text: str) -> str:
         return _preserve_case(word, simplified)
 
     # 1. Whis: varianti fonetiche
-    text = re.sub(r'\b(WIS|Wis|wis|Wiz|wiz|Whizz|whizz|Uis|uis)\b', 'Whis', text)
+    text = re.sub(r'\b(WIS|Wis|wis|Wiz|wiz|Whizz|whizz|Uis|uis|uisss|uiss|huiss)\b', 'Whis', text)
 
     # 2. FlowType, FlowStudy, FlowLocal, Emporio 87, RTX 5060, FlowLocal Hub, core/audio_feedback.py
     text = re.sub(r'\bFlow\s*[Ss]tud+y\b', 'FlowStudy', text, flags=re.IGNORECASE)
     text = re.sub(r'\bFlow[\s.,_-]*[Tt](?:ype|ap)\b', 'FlowType', text, flags=re.IGNORECASE)
     text = re.sub(r'\bFlow\s*Local\s*ab\b', 'FlowLocal Hub', text, flags=re.IGNORECASE)
     text = re.sub(r'\bflow\s*local\b', 'FlowLocal', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bEmporio\s*87\b', 'Emporio 87', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bEmporio\s*1987\b', 'Emporio 1987', text, flags=re.IGNORECASE)
     text = re.sub(r'\bRTX\s*5060\b', 'RTX 5060', text, flags=re.IGNORECASE)
     text = re.sub(r'\bCoreAudioFeedback\.py\b', 'core/audio_feedback.py', text, flags=re.IGNORECASE)
 
@@ -432,7 +582,7 @@ class LLMRefiner:
         # 3. Verifica Stile Attivo (Zero LLM)
         active_style = db.get_active_style()
         if active_style.get("system_prompt") == "RAW_WHISPER_NO_LLM":
-            return raw_text, 0
+            return strip_pause_markers(raw_text), 0
 
         # 4. Selezione dinamica del System Prompt in base alla modalità
         mode_clean = (mode or "natural").lower()
@@ -550,6 +700,9 @@ class LLMRefiner:
                     while clean.endswith('\\'):
                         clean = clean[:-1].rstrip()
                     return clean, qwen_ms
+
+                # Rimuove eventuali tag pausa residui non convertiti da Qwen
+                refined = strip_pause_markers(refined)
 
                 if refined:
                     return refined, qwen_ms
@@ -1165,9 +1318,9 @@ class FlowLocalEngine:
             self.is_key_down = False
 
             if self.is_recording and not self.is_locked:
-                # Tail-Padding Microfono (280ms) per non tagliare mai l'ultima sillaba
+                # Tail-Padding Microfono (160ms) per non tagliare l'ultima sillaba mantenendo bassa latenza
                 def _delayed_stop():
-                    time.sleep(0.280)
+                    time.sleep(0.160)
                     with self.key_lock:
                         if self.is_recording and not self.is_locked and not self.is_key_down:
                             self.stop_recording_and_process()
@@ -1353,6 +1506,7 @@ class FlowLocalEngine:
     def _transcribe_and_inject(self, audio_data: np.ndarray, duration_s: float, mode: str, context: tuple = ("Desktop", "natural", "Naturale"), selection_text: Optional[str] = None, previous_clipboard: Optional[str] = None):
         t0 = time.time()
         whisper_ms = 0
+        launched_to_target = False
         try:
             # 1. Normalizzazione audio (elimina problemi di microfoni a basso guadagno)
             max_val = float(np.max(np.abs(audio_data)))
@@ -1442,6 +1596,7 @@ class FlowLocalEngine:
             # =========================================================
             # CASO 0: ROUTER VOCALE ASSISTENTE WHIS (Zero-Focus)
             # =========================================================
+            raw_text = normalize_phonetic_variants(raw_text)
             whis_match = WHIS_WAKE_REGEX.match(raw_text.strip())
             if whis_match:
                 # Rimozione del prefisso wake-word
@@ -1555,6 +1710,20 @@ class FlowLocalEngine:
                     sound_done()
                     return
 
+            # Comandi vocali inline di auto-correzione ("Anzi, cancella tutto...")
+            raw_text = apply_inline_voice_commands(raw_text)
+            if not raw_text:
+                print("[FlowLocal] Dettatura annullata tramite comando vocale inline.")
+                if self.orb:
+                    self.orb.set_state("IDLE")
+                if previous_clipboard is not None:
+                    try:
+                        pyperclip.copy(previous_clipboard)
+                    except Exception:
+                        pass
+                sound_done()
+                return
+
             # Normalizzazione automatica varianti fonetiche e sostituzione alias da DB
             raw_text = normalize_phonetic_variants(raw_text)
             raw_text = db.apply_phonetic_replacements(raw_text)
@@ -1564,7 +1733,7 @@ class FlowLocalEngine:
                 self.orb.set_state("QWEN")
 
             final_text, qwen_ms = LLMRefiner.refine(raw_text, mode=mode)
-            final_text = final_text.rstrip()
+            final_text = strip_pause_markers(final_text).rstrip()
             while final_text.endswith('\\'):
                 final_text = final_text[:-1].rstrip()
 
@@ -1619,8 +1788,12 @@ class FlowLocalEngine:
                 return
 
             # Iniezione testo e feedback sonoro
+            target_pt = WindowsInjector.get_target_point()
             WindowsInjector.paste_text(final_text)
             sound_done()
+            if self.orb and target_pt:
+                self.orb.launch_to_target(target_pt[0], target_pt[1])
+                launched_to_target = True
 
             # Watcher passivo su clipboard per correzioni manuali post-incolla (12 secondi)
             self._start_clipboard_learning_watcher(final_text)
@@ -1645,7 +1818,7 @@ class FlowLocalEngine:
         except Exception as e:
             print("Transcription error:", e)
         finally:
-            if self.orb:
+            if self.orb and not launched_to_target:
                 self.orb.set_state("IDLE")
 
     @staticmethod

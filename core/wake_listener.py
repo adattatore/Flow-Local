@@ -407,21 +407,40 @@ class WhisWakeListener(QThread):
                 model_to_call = target.model
 
             if model_to_call:
-                segments, info = model_to_call.transcribe(
-                    audio_16k,
-                    beam_size=3,
+                whisper_prompt = "Whis."
+                try:
+                    from core.ai_pipeline import DEFAULT_WHISPER_INITIAL_PROMPT
+                    from database.db_manager import db
+                    db_prompt = db.get_whisper_initial_prompt(limit=40)
+                    whisper_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} {db_prompt}".strip() if db_prompt else DEFAULT_WHISPER_INITIAL_PROMPT
+                except Exception:
+                    pass
+
+                transcribe_kwargs = dict(
+                    beam_size=5,
                     language="it",
                     temperature=0.0,
                     condition_on_previous_text=False,
                     no_speech_threshold=0.6,
-                    repetition_penalty=1.2,
+                    initial_prompt=whisper_prompt,
+                )
+                segments, info = model_to_call.transcribe(
+                    audio_16k,
                     vad_filter=True,
                     vad_parameters=dict(
-                        min_silence_duration_ms=300,
-                        speech_pad_ms=150,
+                        min_silence_duration_ms=500,
+                        speech_pad_ms=200,
                     ),
-                    initial_prompt="Whis.",
+                    **transcribe_kwargs,
                 )
+                segments = list(segments)
+                if not segments:
+                    segments, _ = model_to_call.transcribe(
+                        audio_16k,
+                        vad_filter=False,
+                        **transcribe_kwargs,
+                    )
+                    segments = list(segments)
 
                 parts = []
                 for seg in segments:
@@ -432,7 +451,12 @@ class WhisWakeListener(QThread):
                 raw_text = " ".join(parts).strip()
                 # Deduplica loop di ripetizione (es. "ok Whis, ok Whis, ok Whis" -> "ok Whis")
                 raw_text = re.sub(r'(?i)\b((?:(?:ehi|hey|ok|ciao|allora|senti)\s+)?whis)\b(?:[\s,.;:!?]+\1\b)+', r'\1', raw_text).strip()
-                cleaned = re.sub(r'\bsullo scarbo\b', 'sullo schermo', raw_text, flags=re.IGNORECASE)
+                cleaned = re.sub(r'\bsullo scarbo\b', 'sullo schermo', raw_text, flags=re.IGNORECASE).strip()
+                try:
+                    from core.ai_pipeline import normalize_phonetic_variants
+                    cleaned = normalize_phonetic_variants(cleaned)
+                except Exception:
+                    pass
                 return cleaned.strip()
 
         except Exception as e:

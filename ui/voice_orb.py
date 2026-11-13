@@ -21,7 +21,8 @@ from PyQt6.QtCore import (
     Qt, QTimer, QPointF, QRectF, pyqtSignal, QObject, QPropertyAnimation, QEasingCurve
 )
 from PyQt6.QtGui import (
-    QPainter, QColor, QPainterPath, QRadialGradient, QPen, QAction, QFont, QFontMetrics
+    QPainter, QColor, QPainterPath, QRadialGradient, QLinearGradient, QConicalGradient,
+    QPen, QAction, QFont, QFontMetrics, QCursor, QGuiApplication
 )
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -297,13 +298,18 @@ class OrbSignalBridge(QObject):
     show_whis_response_signal = pyqtSignal(str, dict, float)
     set_whis_state_signal = pyqtSignal(str)
     dismiss_whis_signal = pyqtSignal()
+    startup_splash_signal = pyqtSignal()
+    launch_target_signal = pyqtSignal(int, int)
 
 
 class VoiceOrbOverlay(QWidget):
     IDLE_W = 60
     IDLE_H = 22
-    ACTIVE_W = 140
-    ACTIVE_H = 140
+    ACTIVE_W = 104
+    ACTIVE_H = 104
+    ORB_CX = 52.0
+    CORE_RADIUS = 17.0
+    BADGE_X = 76.0
 
     def __init__(self, on_click_toggle: Optional[Callable[[], None]] = None, on_open_hub: Optional[Callable[[], None]] = None, on_change_mode: Optional[Callable[[str], None]] = None):
         super().__init__()
@@ -319,6 +325,7 @@ class VoiceOrbOverlay(QWidget):
         # Badge Contesto Attivo ("{app_label} • {mode_label}")
         self.badge_text = ""
         self.badge_opacity = 0.0
+        self._badge_show_until = 0.0
 
         # Notifica Toast di Apprendimento ("+ Imparato: X → Y")
         self.toast_message = ""
@@ -331,6 +338,19 @@ class VoiceOrbOverlay(QWidget):
         self.spinner_angle = 0.0
         self.idle_breath = 0.0
         self.current_color = QColor("#64748B")
+        self._orb_scale = 0.0
+        self._shimmer_phase = 0.0
+        self._plasma_phase = 0.0
+        self._startup_active = False
+        self._startup_t = 0.0
+        self._startup_y_offset = 0.0
+        self._launch_active = False
+        self._launch_t = 0.0
+        self._launch_start = QPointF(0.0, 0.0)
+        self._launch_end = QPointF(0.0, 0.0)
+        self._target_w = float(self.ACTIVE_W)
+        self._anim_w = float(self.ACTIVE_W)
+        self._svg_cache: dict[str, QSvgRenderer] = {}
 
         # Ghost Mode (dopo 2 minuti di inattività)
         self.last_activity_time = time.time()
@@ -339,6 +359,7 @@ class VoiceOrbOverlay(QWidget):
         # Ancoraggio e trascinamento
         self.anchor_x = 0
         self.anchor_y = 0
+        self._user_dragged = False
         self._drag_start = None
         self._drag_moved = False
         self._press_time = 0.0
@@ -353,6 +374,8 @@ class VoiceOrbOverlay(QWidget):
         self.bridge.show_whis_response_signal.connect(self._show_whis_response_slot)
         self.bridge.set_whis_state_signal.connect(self._set_whis_state_slot)
         self.bridge.dismiss_whis_signal.connect(self._dismiss_whis_slot)
+        self.bridge.startup_splash_signal.connect(self._play_startup_splash_slot)
+        self.bridge.launch_target_signal.connect(self._launch_to_target_slot)
 
         self._setup_window()
         self.whis_bubble = WhisOrbBubble(self)
@@ -371,45 +394,73 @@ class VoiceOrbOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip("FlowLocal (Tieni premuto Shift Destro o clicca per parlare)")
 
-        avail = QApplication.primaryScreen().availableGeometry()
-        self.anchor_x = avail.x() + avail.width() // 2
-        self.anchor_y = avail.y() + avail.height() - 36
+        self._update_anchor_for_active_screen(force=True)
 
-        self._apply_geometry_for_state("IDLE")
+        self._apply_geometry_for_state("IDLE", immediate=True)
         self.hide()
 
-    def _apply_geometry_for_state(self, state: str):
+    def _update_anchor_for_active_screen(self, force: bool = False):
+        """Posiziona l'ancora sullo schermo attivo (dove si trova il cursore) se non trascinato manualmente."""
+        if self._user_dragged and not force:
+            return
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        if not screen:
+            return
+        avail = screen.availableGeometry()
+        self.anchor_x = avail.x() + avail.width() // 2
+        self.anchor_y = avail.y() + avail.height() - 48
+
+    def _get_svg_renderer(self, color_hex: str) -> QSvgRenderer:
+        """Restituisce un QSvgRenderer dalla cache per evitare allocazioni SVG a 60 FPS."""
+        renderer = self._svg_cache.get(color_hex)
+        if renderer is None:
+            svg_data = MIC_SVG.format(color=color_hex).encode("utf-8")
+            renderer = QSvgRenderer(svg_data)
+            self._svg_cache[color_hex] = renderer
+        return renderer
+
+    def _compute_target_width(self, state: str) -> tuple[int, int]:
         is_toast_active = bool(self.toast_message and time.time() < self.toast_end_time)
 
         if state == "IDLE" and not is_toast_active:
-            w, h = self.IDLE_W, self.IDLE_H
-        else:
-            active_text = self.toast_message if is_toast_active else self.badge_text
-            if active_text:
-                f_app = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
-                f_mode = QFont("Segoe UI", 9, QFont.Weight.Normal)
-                fm_app = QFontMetrics(f_app)
-                fm_mode = QFontMetrics(f_mode)
-                if " • " in active_text:
-                    p1, p2 = active_text.split(" • ", 1)
-                    text_w = fm_app.horizontalAdvance(p1) + fm_app.horizontalAdvance(" • ") + fm_mode.horizontalAdvance(p2)
-                else:
-                    text_w = fm_app.horizontalAdvance(active_text)
+            return self.IDLE_W, self.IDLE_H
 
-                badge_w = text_w + 36
-                gap = 12
-                orb_w = 140
-                w = int(orb_w + gap + badge_w + 14)
-                h = self.ACTIVE_H
+        if is_toast_active:
+            f_app = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+            fm_app = QFontMetrics(f_app)
+            text_w = fm_app.horizontalAdvance(self.toast_message)
+            badge_w = text_w + 26
+            return max(self.ACTIVE_W, int(self.BADGE_X + badge_w + 10)), self.ACTIVE_H
+
+        if self.badge_text:
+            f_app = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+            f_mode = QFont("Segoe UI", 8, QFont.Weight.Normal)
+            fm_app = QFontMetrics(f_app)
+            fm_mode = QFontMetrics(f_mode)
+            if " • " in self.badge_text:
+                p1, p2 = self.badge_text.split(" • ", 1)
+                text_w = fm_app.horizontalAdvance(p1) + fm_app.horizontalAdvance(" • ") + fm_mode.horizontalAdvance(p2)
             else:
-                w, h = self.ACTIVE_W, self.ACTIVE_H
+                text_w = fm_app.horizontalAdvance(self.badge_text)
+            return max(self.ACTIVE_W, int(text_w + 24)), self.ACTIVE_H
 
+        return self.ACTIVE_W, self.ACTIVE_H
+
+    def _apply_geometry_for_state(self, state: str, immediate: bool = False):
+        target_w, h = self._compute_target_width(state)
+        self._target_w = float(target_w)
+        if immediate or (state == "IDLE" and not self._startup_active and not (self.toast_message and time.time() < self.toast_end_time)):
+            self._anim_w = float(target_w)
+            w = target_w
+        else:
+            w = int(round(self._anim_w))
+
+        y_off = int(round(self._startup_y_offset)) if self._startup_active else 0
         self.setGeometry(
             int(self.anchor_x - w / 2),
-            int(self.anchor_y - h / 2),
+            int(self.anchor_y + y_off - h / 2),
             w,
             h
         )
@@ -419,6 +470,7 @@ class VoiceOrbOverlay(QWidget):
 
     def _set_badge_slot(self, text: str):
         self.badge_text = text
+        self._badge_show_until = (time.time() + 1.6) if text else 0.0
         if self.state != "IDLE" or (self.toast_message and time.time() < self.toast_end_time):
             self._apply_geometry_for_state(self.state)
         self.update()
@@ -427,6 +479,8 @@ class VoiceOrbOverlay(QWidget):
         self.bridge.show_toast_signal.emit(message, duration_s)
 
     def _show_toast_slot(self, message: str, duration_s: float):
+        if self.state == "IDLE":
+            self._update_anchor_for_active_screen()
         self.toast_message = message
         self.toast_end_time = time.time() + duration_s
         self.last_activity_time = time.time()
@@ -435,10 +489,81 @@ class VoiceOrbOverlay(QWidget):
         self.show()
         self.update()
 
+    def play_startup_splash(self):
+        """Avvia l'animazione di apertura: l'Orb salta da sotto lo schermo con uno schizzo fluido e sprofonda."""
+        self.bridge.startup_splash_signal.emit()
+
+    def _play_startup_splash_slot(self):
+        if self.state != "IDLE":
+            return
+        self._update_anchor_for_active_screen()
+        self._startup_active = True
+        self._startup_t = 0.0
+        self._startup_y_offset = 76.0
+        self._orb_scale = 0.85
+        self.wave_envelope = 0.3
+        self.current_color = QColor("#38BDF8")
+        self._anim_w = float(self.ACTIVE_W)
+        self._target_w = float(self.ACTIVE_W)
+        self.setGeometry(
+            int(self.anchor_x - self.ACTIVE_W / 2),
+            int(self.anchor_y + self._startup_y_offset - self.ACTIVE_H / 2),
+            self.ACTIVE_W,
+            self.ACTIVE_H,
+        )
+        self.show()
+        self.update()
+
+    def launch_to_target(self, tx: int, ty: int):
+        """Fa volare i 3 fuochi verso il punto (tx, ty) dello schermo come se sparassero il testo."""
+        self.bridge.launch_target_signal.emit(int(tx), int(ty))
+
+    def _launch_to_target_slot(self, tx: int, ty: int):
+        # Converte coordinate fisiche Win32 in coordinate logiche Qt (DIP)
+        dpr = max(1.0, float(self.devicePixelRatioF()))
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        if screen:
+            dpr = max(1.0, float(screen.devicePixelRatio()))
+
+        sx = float(self.anchor_x)
+        sy = float(self.anchor_y - (self.ACTIVE_H / 2.0) + 44.0)
+        ex = float(tx) / dpr
+        ey = float(ty) / dpr
+
+        margin = 56
+        min_x = int(min(sx, ex) - margin)
+        min_y = int(min(sy, ey) - margin)
+        max_x = int(max(sx, ex) + margin)
+        max_y = int(max(sy, ey) + margin)
+        w = max(80, max_x - min_x)
+        h = max(80, max_y - min_y)
+
+        self.state = "IDLE"
+        self.badge_text = ""
+        self.badge_opacity = 0.0
+        self.spinner_opacity = 0.0
+        self.wave_envelope = 0.0
+        self._launch_active = True
+        self._launch_t = 0.0
+        self._launch_start = QPointF(sx - min_x, sy - min_y)
+        self._launch_end = QPointF(ex - min_x, ey - min_y)
+
+        self.setGeometry(min_x, min_y, w, h)
+        self.show()
+        self.update()
+
     def set_state(self, new_state: str):
         self.bridge.change_state.emit(new_state)
 
     def _set_state_slot(self, new_state: str):
+        was_idle = (self.state == "IDLE")
+        if new_state != "IDLE":
+            if self._startup_active:
+                self._startup_active = False
+                self._startup_y_offset = 0.0
+            if self._launch_active:
+                self._launch_active = False
+                self._launch_t = 0.0
         self.state = new_state
         self.last_activity_time = time.time()
         self.ghost_opacity = 1.0
@@ -451,6 +576,9 @@ class VoiceOrbOverlay(QWidget):
                 self._apply_geometry_for_state("IDLE")
                 self.show()
         else:
+            if was_idle:
+                self._update_anchor_for_active_screen()
+                self._orb_scale = 0.78
             self._apply_geometry_for_state(new_state)
             self.show()
 
@@ -537,24 +665,95 @@ class VoiceOrbOverlay(QWidget):
     def _tick(self):
         self.idle_breath += 0.04
         self.spinner_angle = (self.spinner_angle + 6.5) % 360
+        self._shimmer_phase = (self._shimmer_phase + 0.032) % 1.0
+
+        # Avanzamento animazione di volo verso il campo di input
+        if self._launch_active:
+            self._launch_t += 0.052  # ~320ms a 60 FPS
+            if self._launch_t >= 1.0:
+                self._launch_active = False
+                self._launch_t = 0.0
+                if self.state == "IDLE":
+                    self.hide()
+                return
+            self.update()
+            return
+
+        # Avanzamento animazione di avvio (salto da sotto lo schermo + schizzo fluido + rientro)
+        if self._startup_active:
+            self._startup_t += 0.014  # ~1.15s a 60 FPS
+            t = self._startup_t
+            if t >= 1.0:
+                self._startup_active = False
+                self._startup_t = 0.0
+                self._startup_y_offset = 0.0
+                self.wave_envelope = 0.0
+                if self.state == "IDLE":
+                    self.hide()
+                return
+            # Curva verticale: parte a +76px (sotto), salta fino a -24px, sprofonda a +76px
+            jump_curve = math.sin(math.pi * t)
+            self._startup_y_offset = 76.0 - 100.0 * (jump_curve ** 0.78)
+            self.wave_envelope = math.sin(math.pi * min(1.0, t * 1.15))
+            self._orb_scale = 0.85 + 0.15 * jump_curve
+            self._plasma_phase += 0.12
+            self.setGeometry(
+                int(self.anchor_x - self.ACTIVE_W / 2),
+                int(self.anchor_y + self._startup_y_offset - self.ACTIVE_H / 2),
+                self.ACTIVE_W,
+                self.ACTIVE_H,
+            )
+            self.update()
+            return
 
         is_listening = self.state in ("LISTENING", "COMMAND_MODE", "STUDY_MODE")
         is_processing = self.state in ("WHISPER", "QWEN")
         is_toast_active = bool(self.toast_message and time.time() < self.toast_end_time)
+        is_visible_active = (self.state != "IDLE") or is_toast_active
 
         target_wave = 1.0 if is_listening else 0.0
         target_spin = 1.0 if is_processing else 0.0
-        target_badge = 1.0 if (self.state != "IDLE" and self.badge_text and not is_toast_active) else 0.0
+        badge_active = (
+            self.state != "IDLE"
+            and bool(self.badge_text)
+            and not is_toast_active
+            and time.time() < self._badge_show_until
+        )
+        target_badge = 1.0 if badge_active else 0.0
         target_toast = 1.0 if is_toast_active else 0.0
+        target_scale = 1.0 if is_visible_active else 0.78
 
         self.wave_envelope += (target_wave - self.wave_envelope) * 0.22
         self.spinner_opacity += (target_spin - self.spinner_opacity) * 0.22
         self.badge_opacity += (target_badge - self.badge_opacity) * 0.22
         self.toast_opacity += (target_toast - self.toast_opacity) * 0.22
+        self._orb_scale += (target_scale - self._orb_scale) * 0.24
+
+        # Movimento fluido del plasma: lento in attesa, bloccato quando parli per enfatizzare le frequenze vocali
+        cur_energy = float(max(np.mean(self.analyzer.current_levels), np.mean(self.analyzer.target_levels))) if is_listening else 0.0
+        if is_listening:
+            if cur_energy < 0.035:
+                self._plasma_phase += 0.025
+        else:
+            self._plasma_phase += 0.045
 
         if not is_toast_active and self.toast_opacity < 0.03 and self.toast_message:
             self.toast_message = ""
             self._apply_geometry_for_state(self.state)
+
+        # Interpolazione fluida della larghezza della pillola (niente scatti laterali)
+        if is_visible_active and abs(self._target_w - self._anim_w) >= 0.5:
+            self._anim_w += (self._target_w - self._anim_w) * 0.25
+            if abs(self._target_w - self._anim_w) < 0.5:
+                self._anim_w = self._target_w
+            w = int(round(self._anim_w))
+            h = self.ACTIVE_H
+            self.setGeometry(
+                int(self.anchor_x - w / 2),
+                int(self.anchor_y - h / 2),
+                w,
+                h,
+            )
 
         # Modalità Fantasma: in stato IDLE senza toast attivi, l'overlay resta completamente nascosto
         if self.state == "IDLE" and not is_toast_active and self.isVisible():
@@ -605,9 +804,10 @@ class VoiceOrbOverlay(QWidget):
             delta = event.globalPosition().toPoint() - self._drag_start
             if delta.manhattanLength() > 5:
                 self._drag_moved = True
+                self._user_dragged = True
                 self.anchor_x += delta.x()
                 self.anchor_y += delta.y()
-                self._apply_geometry_for_state(self.state)
+                self._apply_geometry_for_state(self.state, immediate=True)
                 self._drag_start = event.globalPosition().toPoint()
 
     def mouseReleaseEvent(self, event):
@@ -629,9 +829,72 @@ class VoiceOrbOverlay(QWidget):
         is_toast_active = bool(self.toast_message and time.time() < self.toast_end_time)
 
         # =========================================================
+        # 0. VOLO DEI 3 FUOCHI VERSO IL CAMPO DI INPUT ("spara il testo")
+        # =========================================================
+        if self._launch_active:
+            c_p1 = QColor(self.current_color)
+            c_p2 = QColor("#A855F7")
+            c_p3 = QColor("#10B981")
+
+            sx, sy = self._launch_start.x(), self._launch_start.y()
+            ex, ey = self._launch_end.x(), self._launch_end.y()
+            # Punto di controllo Bézier leggermente curvo verso l'alto/lato
+            ctrl_x = (sx + ex) * 0.5 + (ey - sy) * 0.14
+            ctrl_y = min(sy, ey) - 35.0
+
+            painter.save()
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+            painter.setPen(Qt.PenStyle.NoPen)
+
+            for idx, f_col in enumerate((c_p1, c_p2, c_p3)):
+                t_i = max(0.0, min(1.0, self._launch_t * 1.18 - idx * 0.07))
+                if t_i <= 0.01:
+                    continue
+
+                # Scia di 6 punti lungo la curva dietro la testa
+                for s in range(6, -1, -1):
+                    ts = max(0.0, t_i - s * 0.032)
+                    u = 1.0 - ts
+                    px = (u * u) * sx + 2 * u * ts * ctrl_x + (ts * ts) * ex
+                    py = (u * u) * sy + 2 * u * ts * ctrl_y + (ts * ts) * ey
+
+                    # Prospettiva: entra nello schermo restringendosi verso la fine
+                    depth_scale = max(0.22, 1.0 - 0.78 * (ts ** 1.5))
+                    tail_frac = 1.0 - (s / 6.0)
+                    rad = (2.2 + 5.0 * tail_frac) * depth_scale
+                    alpha = int(225 * (tail_frac ** 1.4) * (1.0 - 0.55 * max(0.0, ts - 0.75) / 0.25))
+
+                    g = QRadialGradient(px, py, rad * 1.7)
+                    if s == 0:
+                        g.setColorAt(0.0, QColor(255, 255, 255, max(0, min(255, alpha))))
+                        g.setColorAt(0.45, QColor(f_col.red(), f_col.green(), f_col.blue(), max(0, min(255, alpha))))
+                        g.setColorAt(1.0, QColor(f_col.red(), f_col.green(), f_col.blue(), 0))
+                    else:
+                        g.setColorAt(0.0, QColor(f_col.red(), f_col.green(), f_col.blue(), max(0, min(255, alpha))))
+                        g.setColorAt(1.0, QColor(f_col.red(), f_col.green(), f_col.blue(), 0))
+                    painter.setBrush(g)
+                    painter.drawEllipse(QPointF(px, py), rad * 1.7, rad * 1.7)
+
+            # Micro-flash d'impatto quando i fuochi entrano nel campo di input
+            if self._launch_t > 0.72:
+                imp = (self._launch_t - 0.72) / 0.28
+                imp_r = 6.0 + 18.0 * imp
+                imp_a = int(190 * (1.0 - imp))
+                if imp_a > 4:
+                    ig = QRadialGradient(ex, ey, imp_r)
+                    ig.setColorAt(0.0, QColor(255, 255, 255, imp_a))
+                    ig.setColorAt(0.45, QColor(c_p1.red(), c_p1.green(), c_p1.blue(), int(imp_a * 0.75)))
+                    ig.setColorAt(1.0, QColor(c_p1.red(), c_p1.green(), c_p1.blue(), 0))
+                    painter.setBrush(ig)
+                    painter.drawEllipse(QPointF(ex, ey), imp_r, imp_r)
+
+            painter.restore()
+            return
+
+        # =========================================================
         # 1. STATO IDLE PURO: BOTTONE SOTTILE MINIMALE (60x22 px)
         # =========================================================
-        if self.state == "IDLE" and not is_toast_active:
+        if self.state == "IDLE" and not is_toast_active and not self._startup_active:
             btn_w = float(self.width() - 2)
             btn_h = float(self.height() - 2)
             btn_rect = QRectF(1.0, 1.0, btn_w, btn_h)
@@ -643,10 +906,9 @@ class VoiceOrbOverlay(QWidget):
             painter.setPen(QPen(QColor(56, 189, 248, breath_alpha), 1.2))
             painter.drawRoundedRect(btn_rect, radius, radius)
 
-            # Icona microfono vettoriale centrata (Lucide SVG)
+            # Icona microfono vettoriale centrata (Lucide SVG in cache)
             icon_color = "#38BDF8" if breath_alpha > 90 else "#94A3B8"
-            svg_data = MIC_SVG.format(color=icon_color).encode("utf-8")
-            svg_renderer = QSvgRenderer(svg_data)
+            svg_renderer = self._get_svg_renderer(icon_color)
             icon_size = 13.0
             svg_renderer.render(
                 painter,
@@ -655,122 +917,185 @@ class VoiceOrbOverlay(QWidget):
             return
 
         # =========================================================
-        # 2. STATI ATTIVI O TOAST: VOICE ORB (140x140 px)
+        # 2. STATI ATTIVI, TOAST O STARTUP SPLASH: VOICE ORB
         # =========================================================
-        if self.badge_text or is_toast_active:
-            cx = 70.0
+        if is_toast_active:
+            cx = self.ORB_CX
             cy = self.height() / 2.0
         else:
-            cx, cy = self.width() / 2.0, self.height() / 2.0
+            cx = self.width() / 2.0
+            cy = 44.0
 
-        core_radius = 26.0  # Raggio cerchio centrale (diametro 52px)
         is_active = self.state in ("LISTENING", "COMMAND_MODE", "STUDY_MODE")
         levels = self.analyzer.update(active=is_active)
+        if self._startup_active:
+            avg_energy = 0.45 * math.sin(math.pi * self._startup_t)
+            levels = np.array([
+                0.25 + 0.25 * math.sin(self._plasma_phase * 1.4 + i * 0.55)
+                for i in range(len(levels))
+            ], dtype=np.float32)
+        else:
+            avg_energy = float(np.mean(levels)) if len(levels) > 0 else 0.0
 
-        # Bagliore radiale + Onda polare singola Catmull-Rom
-        if self.wave_envelope > 0.01:
-            max_wave_height = 24.0 * self.wave_envelope
-            avg_energy = float(np.mean(levels))
+        core_radius = self.CORE_RADIUS + (avg_energy * 2.0 if (is_active or self._startup_active) else 0.0)
 
-            glow_radius = core_radius + 14.0 + (avg_energy * 22.0)
-            grad = QRadialGradient(cx, cy, glow_radius)
-            c_center = QColor(self.current_color)
-            c_center.setAlpha(int(115 * self.wave_envelope))
-            c_edge = QColor(self.current_color)
-            c_edge.setAlpha(0)
-            grad.setColorAt(0.35, c_center)
-            grad.setColorAt(1.0, c_edge)
+        # Scale-in / scale-out fluido attorno al centro dell'Orb
+        orb_scale = max(0.75, min(1.0, self._orb_scale if self._orb_scale > 0.01 else 1.0))
+        painter.save()
+        if orb_scale < 0.999:
+            painter.translate(cx, cy)
+            painter.scale(orb_scale, orb_scale)
+            painter.translate(-cx, -cy)
 
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(grad)
-            painter.drawEllipse(QPointF(cx, cy), glow_radius, glow_radius)
+        # Palette plasma condivisa: gli stessi fuochi interni diventano le onde quando parli
+        c_p1 = QColor(self.current_color)
+        c_p2 = QColor("#A855F7") if self.state != "STUDY_MODE" else QColor("#38BDF8")
+        c_p3 = QColor("#10B981") if self.state != "QWEN" else QColor("#38BDF8")
 
-            num_pts = len(levels)
-            wave_points = []
-            for i in range(num_pts):
-                theta = (2.0 * math.pi * i) / num_pts - (math.pi / 2.0)
-                r = core_radius + (2.0 * self.wave_envelope) + (levels[i] * max_wave_height)
-                px = cx + r * math.cos(theta)
-                py = cy + r * math.sin(theta)
-                wave_points.append(QPointF(px, py))
+        # =========================================================
+        # UNICO FLUIDO VIVO: I 3 FUOCHI SI ESPANDONO E DIVENTANO LE ONDE
+        # (Nessun contenitore nero che si espande attorno ai colori)
+        # =========================================================
+        num_pts = len(levels)
 
-            wave_path = create_smooth_closed_path(wave_points)
-            wave_fill = QColor(self.current_color)
-            wave_fill.setAlpha(int(220 * self.wave_envelope))
-            painter.setBrush(wave_fill)
-            painter.drawPath(wave_path)
+        # 1. Schizzo fluido di gocce colorate intorno all'Orb durante l'animazione di apertura
+        if self._startup_active and self.wave_envelope > 0.01:
+            splash_p = min(1.0, self._startup_t * 1.25)
+            drop_alpha = int(210 * math.sin(math.pi * splash_p))
+            if drop_alpha > 5:
+                drop_colors = [c_p1, c_p2, c_p3, QColor("#38BDF8")]
+                for d_idx in range(8):
+                    ang = (2.0 * math.pi * d_idx / 8.0) + 0.35
+                    dist = core_radius + 6.0 + (18.0 * (splash_p ** 0.7)) + (4.0 if d_idx % 2 == 0 else 0.0)
+                    d_rad = max(1.4, (3.4 - 1.8 * splash_p) * (1.0 if d_idx % 2 == 0 else 0.75))
+                    dx = cx + dist * math.cos(ang)
+                    dy = cy + dist * math.sin(ang)
+                    dc = QColor(drop_colors[d_idx % len(drop_colors)])
+                    dc.setAlpha(drop_alpha)
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.setBrush(dc)
+                    painter.drawEllipse(QPointF(dx, dy), d_rad, d_rad)
 
-        # Cerchio nero centrale (nucleo da 52px)
-        painter.setBrush(QColor(10, 10, 14, 248))
-        border_color = QColor(self.current_color)
-        border_color.setAlpha(200)
-        painter.setPen(QPen(border_color, 1.6))
-        painter.drawEllipse(QPointF(cx, cy), core_radius, core_radius)
+        # 2. Piccolo fondo scuro morbido al centro per leggibilità/contrasto su sfondi chiari
+        base_r = core_radius * 1.05
+        base_grad = QRadialGradient(cx, cy, base_r)
+        base_grad.setColorAt(0.0, QColor(8, 10, 16, 215))
+        base_grad.setColorAt(0.70, QColor(8, 10, 16, 150))
+        base_grad.setColorAt(1.0, QColor(8, 10, 16, 0))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(base_grad)
+        painter.drawEllipse(QPointF(cx, cy), base_r, base_r)
 
-        # Icona SVG o Timer Hands-Free
+        # 3. I 3 fuochi fluidi indipendenti (si dissolvono dolcemente nelle 3 comete durante il caricamento)
+        flame_vis = max(0.0, 1.0 - self.spinner_opacity)
+        if flame_vis > 0.02:
+            max_wave_height = 20.0 * self.wave_envelope
+            speech_mix = min(1.0, avg_energy * 8.0) if is_active else 0.0
+            wobble_amp = 0.045 * (1.0 - speech_mix)
+            flame_layers = [
+                (c_p1, self._plasma_phase, 0, 1.00, int(195 * flame_vis)),
+                (c_p2, self._plasma_phase * 1.35 + 2.1, 8, 0.92, int(185 * flame_vis)),
+                (c_p3, -self._plasma_phase * 0.9 + 4.2, 16, 0.86, int(175 * flame_vis)),
+            ]
+
+            painter.save()
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+            for f_col, f_ang, band_offset, r_scale, f_alpha in flame_layers:
+                orbit_r = 2.4 * (1.0 - 0.5 * speech_mix)
+                fx = cx + orbit_r * math.cos(f_ang)
+                fy = cy + orbit_r * math.sin(f_ang * 1.15)
+
+                f_points = []
+                for i in range(num_pts):
+                    theta = (2.0 * math.pi * i) / num_pts - (math.pi / 2.0)
+                    raw_lvl = float(levels[(i + band_offset) % num_pts])
+                    lvl = min(1.0, (raw_lvl ** 0.80) * 1.28)
+                    wobble = 1.0 + wobble_amp * math.sin(theta * 2.0 + f_ang)
+                    r_pt = (core_radius * 0.88 * r_scale * wobble) + (lvl * max_wave_height * r_scale)
+                    f_points.append(QPointF(fx + r_pt * math.cos(theta), fy + r_pt * math.sin(theta)))
+
+                f_path = create_smooth_closed_path(f_points)
+                f_grad = QRadialGradient(fx, fy, core_radius * r_scale + max_wave_height + 2.0)
+                c_hot = QColor(f_col)
+                c_hot.setAlpha(f_alpha)
+                c_mid = QColor(f_col)
+                c_mid.setAlpha(int(f_alpha * 0.72))
+                c_tip = QColor(f_col)
+                c_tip.setAlpha(0)
+                f_grad.setColorAt(0.0, c_hot)
+                f_grad.setColorAt(0.68, c_mid)
+                f_grad.setColorAt(1.0, c_tip)
+
+                painter.setBrush(f_grad)
+                painter.drawPath(f_path)
+            painter.restore()
+
+        # Timer Hands-Free (se bloccato)
         if self.is_locked and is_active:
             elapsed = int(time.time() - self.lock_start_time)
             mins = elapsed // 60
             secs = elapsed % 60
             time_str = f"{mins:02d}:{secs:02d}"
 
-            painter.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
             painter.setPen(QColor("#F8FAFC"))
-            painter.drawText(QRectF(cx - 24, cy - 8, 48, 16), Qt.AlignmentFlag.AlignCenter, time_str)
+            painter.drawText(QRectF(cx - 18, cy - 7, 36, 14), Qt.AlignmentFlag.AlignCenter, time_str)
 
-            painter.setBrush(QColor("#EF4444"))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(QRectF(cx - 3, cy + 9, 6, 6), 1, 1)
-
-        else:
-            mic_opacity = 1.0 - self.spinner_opacity
-            if mic_opacity > 0.05:
-                painter.save()
-                painter.setOpacity(mic_opacity)
-                icon_hex = "#FFFFFF" if is_active else "#94A3B8"
-                svg_data = MIC_SVG.format(color=icon_hex).encode("utf-8")
-                renderer = QSvgRenderer(svg_data)
-                icon_size = 20.0
-                renderer.render(
-                    painter,
-                    QRectF(cx - icon_size / 2, cy - icon_size / 2, icon_size, icon_size)
-                )
-                painter.restore()
-
-        # Spinner circolare interno (Whisper -> Qwen)
-        if self.spinner_opacity > 0.05:
+        # 4. Caricamento Whisper -> Qwen: i 3 fuochi diventano 3 fiammelle/comete che si rincorrono
+        if self.spinner_opacity > 0.02:
             painter.save()
             painter.setOpacity(self.spinner_opacity)
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+            painter.setPen(Qt.PenStyle.NoPen)
 
-            spin_radius = core_radius - 6.5
-            spin_rect = QRectF(
-                cx - spin_radius, cy - spin_radius,
-                spin_radius * 2, spin_radius * 2
-            )
-            track_pen = QPen(QColor(255, 255, 255, 25), 2.5)
-            painter.setPen(track_pen)
-            painter.drawEllipse(spin_rect)
+            ring_r = core_radius * 0.78
+            speed_mult = 1.25 if self.state == "QWEN" else 1.0
+            base_rad = math.radians(self.spinner_angle * speed_mult)
+            comet_colors = (c_p1, c_p2, c_p3)
+            trail_steps = 9
 
-            arc_pen = QPen(self.current_color, 2.8)
-            arc_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            painter.setPen(arc_pen)
-            start_angle = int(-self.spinner_angle * 16)
-            span_angle = int(-110 * 16)
-            painter.drawArc(spin_rect, start_angle, span_angle)
+            for idx, com_col in enumerate(comet_colors):
+                chase_offset = 0.34 * math.sin(base_rad * 1.35 + idx * 2.1)
+                head_ang = base_rad + idx * (2.0 * math.pi / 3.0) + chase_offset
+
+                # Scia affusolata dietro la testa della cometa
+                for s in range(trail_steps, -1, -1):
+                    t_frac = 1.0 - (s / trail_steps)  # 0.0 coda -> 1.0 testa
+                    ang = head_ang - (s * 0.11)
+                    px = cx + ring_r * math.cos(ang)
+                    py = cy + ring_r * math.sin(ang)
+                    rad = 1.2 + 2.8 * (t_frac ** 1.35)
+                    alpha = int(215 * (t_frac ** 1.6))
+
+                    g = QRadialGradient(px, py, rad * 1.55)
+                    if s == 0:
+                        g.setColorAt(0.0, QColor(255, 255, 255, 235))
+                        g.setColorAt(0.45, QColor(com_col.red(), com_col.green(), com_col.blue(), 220))
+                        g.setColorAt(1.0, QColor(com_col.red(), com_col.green(), com_col.blue(), 0))
+                    else:
+                        g.setColorAt(0.0, QColor(com_col.red(), com_col.green(), com_col.blue(), alpha))
+                        g.setColorAt(1.0, QColor(com_col.red(), com_col.green(), com_col.blue(), 0))
+                    painter.setBrush(g)
+                    painter.drawEllipse(QPointF(px, py), rad * 1.55, rad * 1.55)
+
             painter.restore()
 
+        painter.restore()
+
         # =========================================================
-        # 3. NOTIFICA TOAST DI APPRENDIMENTO: "+ Imparato: {errata} → {corretta}"
+        # 3. NOTIFICA TOAST DI APPRENDIMENTO (esce dall'Orb)
         # =========================================================
         if is_toast_active and self.toast_opacity > 0.01:
             painter.save()
             painter.setOpacity(self.toast_opacity)
+            painter.setClipRect(QRectF(cx, 0.0, max(0.0, self.width() - cx), float(self.height())))
 
-            gap = 12.0
-            badge_h = 28.0
-            badge_x = 140.0 + gap
+            badge_h = 22.0
+            target_badge_x = self.BADGE_X
+            badge_w = max(36.0, self.width() - target_badge_x - 10.0)
+            slide_offset = (1.0 - self.toast_opacity) * (badge_w * 0.55 + (target_badge_x - cx))
+            badge_x = target_badge_x - slide_offset
             badge_y = cy - (badge_h / 2.0)
-            badge_w = max(40.0, self.width() - badge_x - 12.0)
             badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
             radius = badge_h / 2.0
 
@@ -778,23 +1103,23 @@ class VoiceOrbOverlay(QWidget):
             painter.setBrush(QColor(14, 18, 22, 235))
             border_col = QColor("#10B981")
             border_col.setAlpha(int(140 * self.toast_opacity))
-            painter.setPen(QPen(border_col, 1.3))
+            painter.setPen(QPen(border_col, 1.2))
             painter.drawRoundedRect(badge_rect, radius, radius)
 
             # 2. Dot indicatore smeraldo brillante
-            dot_radius = 3.5
-            dot_cx = badge_x + 13.0
+            dot_radius = 2.6
+            dot_cx = badge_x + 11.0
             dot_cy = cy
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor("#10B981"))
             painter.drawEllipse(QPointF(dot_cx, dot_cy), dot_radius, dot_radius)
 
             # 3. Testo toast
-            text_x = dot_cx + 9.0
-            avail_text_w = badge_rect.right() - text_x - 10.0
+            text_x = dot_cx + 7.5
+            avail_text_w = badge_rect.right() - text_x - 8.0
 
-            f_bold = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
-            f_norm = QFont("Segoe UI", 9, QFont.Weight.Normal)
+            f_bold = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+            f_norm = QFont("Segoe UI", 8, QFont.Weight.Normal)
             fm_bold = QFontMetrics(f_bold)
             fm_norm = QFontMetrics(f_norm)
 
@@ -805,19 +1130,16 @@ class VoiceOrbOverlay(QWidget):
                 start_x = text_x + max(0.0, (avail_text_w - total_w) / 2.0)
                 base_y = badge_y + (badge_h + fm_bold.ascent() - fm_bold.descent()) / 2.0
 
-                # Parte sinistra (es. "+ Imparato: errata")
                 painter.setFont(f_bold)
-                painter.setPen(QColor("#34D399"))  # Emerald soft
+                painter.setPen(QColor("#34D399"))
                 painter.drawText(QPointF(start_x, base_y), left_part)
                 start_x += fm_bold.horizontalAdvance(left_part)
 
-                # Freccia
                 painter.setFont(f_norm)
                 painter.setPen(QColor("#64748B"))
                 painter.drawText(QPointF(start_x, base_y), arrow_str)
                 start_x += fm_norm.horizontalAdvance(arrow_str)
 
-                # Parte destra (corretta)
                 painter.setFont(f_bold)
                 painter.setPen(QColor("#FFFFFF"))
                 painter.drawText(QPointF(start_x, base_y), right_part)
@@ -830,69 +1152,56 @@ class VoiceOrbOverlay(QWidget):
             painter.restore()
 
         # =========================================================
-        # 4. BADGE ACCANTO AL VOICE ORB: "{app_label} • {mode_label}"
+        # 4. MICRO-ETICHETTA FLUTTUANTE SOTTO L'ORB (senza box né bordo, svanisce dopo 1.6s)
         # =========================================================
         elif self.badge_text and self.badge_opacity > 0.01:
             painter.save()
             painter.setOpacity(self.badge_opacity)
 
-            gap = 12.0
-            badge_h = 28.0
-            badge_x = 140.0 + gap
-            badge_y = cy - (badge_h / 2.0)
-            badge_w = max(40.0, self.width() - badge_x - 12.0)
-            badge_rect = QRectF(badge_x, badge_y, badge_w, badge_h)
-            radius = badge_h / 2.0
-
-            # 1. Pill Background (Obsidian Glass dark semi-transparent)
-            painter.setBrush(QColor(15, 17, 24, 220))
-            border_col = QColor(self.current_color)
-            border_col.setAlpha(int(110 * self.badge_opacity))
-            painter.setPen(QPen(border_col, 1.2))
-            painter.drawRoundedRect(badge_rect, radius, radius)
-
-            # 2. Glowing Dot Indicator
-            dot_radius = 3.5
-            dot_cx = badge_x + 13.0
-            dot_cy = cy
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(self.current_color)
-            painter.drawEllipse(QPointF(dot_cx, dot_cy), dot_radius, dot_radius)
-
-            # 3. Text Formatting
-            text_x = dot_cx + 9.0
-            avail_text_w = badge_rect.right() - text_x - 10.0
-            text_rect = QRectF(text_x, badge_y, avail_text_w, badge_h)
+            # Leggero movimento verso l'alto durante la comparsa (vicino all'Orb, sopra la taskbar)
+            float_y = (1.0 - self.badge_opacity) * 3.0
+            label_y = cy + self.CORE_RADIUS + 10.0 + float_y
+            shadow_col = QColor(0, 0, 0, int(190 * self.badge_opacity))
 
             if " • " in self.badge_text:
                 app_part, mode_part = self.badge_text.split(" • ", 1)
-                f_app = QFont("Segoe UI", 9, QFont.Weight.DemiBold)
-                f_mode = QFont("Segoe UI", 9, QFont.Weight.Normal)
+                f_app = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+                f_mode = QFont("Segoe UI", 8, QFont.Weight.Normal)
                 fm_app = QFontMetrics(f_app)
                 fm_mode = QFontMetrics(f_mode)
-                bullet_str = " • "
+                bullet_str = " · "
 
-                total_content_w = fm_app.horizontalAdvance(app_part) + fm_app.horizontalAdvance(bullet_str) + fm_mode.horizontalAdvance(mode_part)
-                start_x = text_x + max(0.0, (avail_text_w - total_content_w) / 2.0)
-                base_y = badge_y + (badge_h + fm_app.ascent() - fm_app.descent()) / 2.0
+                total_w = fm_app.horizontalAdvance(app_part) + fm_app.horizontalAdvance(bullet_str) + fm_mode.horizontalAdvance(mode_part)
+                start_x = cx - (total_w / 2.0)
+                base_y = label_y + fm_app.ascent()
 
-                # App Label (Crisp White #F8FAFC)
+                # App Label + ombra morbida
                 painter.setFont(f_app)
+                painter.setPen(shadow_col)
+                painter.drawText(QPointF(start_x + 1.0, base_y + 1.0), app_part)
                 painter.setPen(QColor("#F8FAFC"))
                 painter.drawText(QPointF(start_x, base_y), app_part)
                 start_x += fm_app.horizontalAdvance(app_part)
 
-                # Bullet Dot (Current mode accent color)
+                # Separatore con colore plasma
+                painter.setPen(shadow_col)
+                painter.drawText(QPointF(start_x + 1.0, base_y + 1.0), bullet_str)
                 painter.setPen(self.current_color)
                 painter.drawText(QPointF(start_x, base_y), bullet_str)
                 start_x += fm_app.horizontalAdvance(bullet_str)
 
-                # Mode Label (#94A3B8 soft slate)
+                # Mode Label
                 painter.setFont(f_mode)
-                painter.setPen(QColor("#94A3B8"))
+                painter.setPen(shadow_col)
+                painter.drawText(QPointF(start_x + 1.0, base_y + 1.0), mode_part)
+                painter.setPen(QColor("#CBD5E1"))
                 painter.drawText(QPointF(start_x, base_y), mode_part)
             else:
-                painter.setFont(QFont("Segoe UI", 9, QFont.Weight.DemiBold))
+                f_single = QFont("Segoe UI", 8, QFont.Weight.DemiBold)
+                painter.setFont(f_single)
+                text_rect = QRectF(0.0, label_y, float(self.width()), 18.0)
+                painter.setPen(shadow_col)
+                painter.drawText(text_rect.translated(1.0, 1.0), Qt.AlignmentFlag.AlignCenter, self.badge_text)
                 painter.setPen(QColor("#F8FAFC"))
                 painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, self.badge_text)
 

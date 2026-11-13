@@ -134,19 +134,64 @@ CALENDAR_CREATE_KEYWORDS = re.compile(
 
 # Trigger ultra-flessibile per Domande e Lettura Google Calendar (giornata, orari, pomeriggio, cosa devo fare...)
 WEEKDAY_REGEX = r'(?:luned[ìi]|marted[ìi]|mercoled[ìi]|gioved[ìi]|venerd[ìi]|sabato|domenica)'
+TEMPORAL_REGEX = (
+    r'(?:oggi|domani|dopodomani|stasera|stamattina|stamane|stanotte|'
+    r'(?:questo\s+)?pomeriggio|(?:questa\s+)?settimana|(?:il\s+prossimo\s+)?mese|'
+    r'dopo|dopo\s+pranzo|in\s+programma|in\s+agenda|in\s+calendario|sul\s+calendario|nel\s+calendario|'
+    + WEEKDAY_REGEX + r'(?:\s+\d{1,2})?|(?:il\s+|del\s+|giorno\s+|per\s+il\s+)?\d{1,2})'
+)
 CALENDAR_READ_KEYWORDS = re.compile(
     r'\b('
     r'che\s+(?:[eè]\s+)?impegn[io](?:\s+[oòh])?|'
     r'l[\'’]?impegn[io]\b|'
-    r'(?:che|quali|cosa|mostra|mostrami|dimmi|leggi|controlla|ho|ci\s+sono)?\s*(?:impegn[io]|appuntament[io]|event[io]|agenda|calendario|programma)\s*(?:ho|abbiamo|ci\s+sono|avrei|avessi|per|di|il)?\s*(?:oggi|domani|dopodomani|settimana|mese|' + WEEKDAY_REGEX + r'|\d{1,2})|'
-    r'cosa\s+ho\s+(?:in|sul|nel)\s+calendario|'
-    r'cosa\s+ho\s+in\s+agenda|'
-    r'cosa\s+(?:ho|abbiamo|c[\'’][eè]|faccio|devo\s+fare)\s+(?:oggi|domani|dopodomani|stasera|questo\s+pomeriggio|stamattina|questa\s+settimana|dopo|dopo\s+pranzo|in\s+programma|in\s+agenda|in\s+calendario|' + WEEKDAY_REGEX + r')|'
-    r'quali\s+(?:sono\s+i\s+miei\s+|sono\s+gli\s+)?(?:appuntamenti|impegni)|'
-    r'sono\s+libero'
+    r'(?:ho|hai|abbiamo|ci\s+sono)\s+(?:qualche\s+|un\s+|degli\s+|dei\s+)?(?:impegn[io]|appuntament[io]|event[io])\b|'
+    r'(?:che|quali|cosa|mostra|mostrami|dimmi|leggi|controlla|vedi|guarda|ho|ci\s+sono)?\s*'
+    r'(?:(?:il|lo|la|i|gli|le|un|sul|nel|in|dal|del|al|il\s+mio|i\s+miei|gli\s+altri|prossim[ioa])\s+)*'
+    r'(?:impegn[io]|appuntament[io]|event[io]|agenda|calendario|programma)'
+    r'(?:\s+(?:ho|abbiamo|ci\s+sono|avrei|avessi|per|di|il|del|nel|sul))*\s*'
+    + TEMPORAL_REGEX + r'|'
+    r'(?:prossim[ioa]\s+(?:impegn[io]|appuntament[io]|event[io]))|'
+    r'cosa\s+ho\s+(?:in|sul|nel)\s+(?:calendario|agenda|programma)|'
+    r'(?:che\s+)?cosa\s+(?:ho|abbiamo|c[\'’][eè]|faccio|devo\s+fare|ho\s+da\s+fare)\s+(?:per\s+)?' + TEMPORAL_REGEX + r'|'
+    r'(?:ho|abbiamo|c[\'’][eè])\s+qualcosa\s+(?:da\s+fare\s+)?(?:per\s+)?' + TEMPORAL_REGEX + r'|'
+    r'(?:' + WEEKDAY_REGEX + r'(?:\s+\d{1,2})?|oggi|domani|dopodomani)\s+(?:che\s+)?(?:ho|abbiamo|c[\'’][eè]|ci\s+sono|impegn[io]|appuntament[io]|sono\s+(?:libero|impegnato|occupato)|ho\s+qualcosa)|'
+    r'quali\s+(?:sono\s+(?:i\s+miei\s+|gli\s+)?)?(?:appuntamenti|impegni)|'
+    r'sono\s+(?:libero|impegnato|occupato)(?:\s+(?:per\s+)?' + TEMPORAL_REGEX + r')?'
     r')\b',
     re.IGNORECASE
 )
+
+
+def normalize_calendar_prompt(prompt: str) -> str:
+    """Normalizza errori fonetici tipici di Whisper sui comandi italiani per il calendario."""
+    norm = prompt
+    # "impegnò" / "impegnio" -> "impegni ho" / "impegno" in contesto di domanda/agenda
+    norm = re.sub(
+        r'^\s*impegnò\b',
+        'impegni ho',
+        norm,
+        flags=re.IGNORECASE,
+    )
+    norm = re.sub(
+        r'\b(che|quali|se\s+ho|ho|miei|gli)\s+impegnò\b',
+        r'\1 impegni ho',
+        norm,
+        flags=re.IGNORECASE,
+    )
+    norm = re.sub(
+        r'\bimpegnò\s+(?=(?:oggi|domani|dopodomani|settimana|mese|stasera|stamattina|pomeriggio|per\b|il\b|' + WEEKDAY_REGEX + r'|\d{1,2}\b))',
+        'impegni ho ',
+        norm,
+        flags=re.IGNORECASE,
+    )
+    norm = re.sub(r'\bimpegnio\b', 'impegno', norm, flags=re.IGNORECASE)
+    norm = re.sub(r'\bche\s+(?:[eè]\s+)?impegn[io]\s+[oòh]\b', 'che impegni ho', norm, flags=re.IGNORECASE)
+    norm = re.sub(r'\bche\s+impegno\b', 'che impegni', norm, flags=re.IGNORECASE)
+    norm = re.sub(r'\bl[\'’]impegno\b', 'gli impegni', norm, flags=re.IGNORECASE)
+    norm = re.sub(r'\bcos[\'’]ho\b', 'cosa ho', norm, flags=re.IGNORECASE)
+    norm = re.sub(r'\bche\s+ho\b', 'cosa ho', norm, flags=re.IGNORECASE)
+    norm = re.sub(r'\bche\s+c[\'’][eè]\b', "cosa c'è", norm, flags=re.IGNORECASE)
+    return norm
 
 
 def generate_date_context_table() -> str:
@@ -389,11 +434,12 @@ class WhisAgent(QObject):
 
     def is_calendar_command(self, prompt: str) -> bool:
         """Restituisce True se la richiesta dell'utente è un comando per Google Calendar."""
+        norm_prompt = normalize_calendar_prompt(prompt)
         return bool(
-            CALENDAR_CREATE_KEYWORDS.search(prompt)
-            or CALENDAR_DELETE_KEYWORDS.search(prompt)
-            or CALENDAR_BRIEFING_KEYWORDS.search(prompt)
-            or CALENDAR_READ_KEYWORDS.search(prompt)
+            CALENDAR_CREATE_KEYWORDS.search(norm_prompt)
+            or CALENDAR_DELETE_KEYWORDS.search(norm_prompt)
+            or CALENDAR_BRIEFING_KEYWORDS.search(norm_prompt)
+            or CALENDAR_READ_KEYWORDS.search(norm_prompt)
         )
 
     def is_note_command(self, prompt: str) -> bool:
@@ -662,10 +708,7 @@ class WhisAgent(QObject):
             from core.calendar_sync import calendar_manager
 
             # Pre-normalizzazione fonetica e acustica per comandi calendario
-            norm_prompt = prompt
-            norm_prompt = re.sub(r'\bche\s+(?:[eè]\s+)?impegn[io]\s+[oòh]\b', 'che impegni ho', norm_prompt, flags=re.IGNORECASE)
-            norm_prompt = re.sub(r'\bche\s+impegno\b', 'che impegni', norm_prompt, flags=re.IGNORECASE)
-            norm_prompt = re.sub(r'\bl[\'’]impegno\b', 'gli impegni', norm_prompt, flags=re.IGNORECASE)
+            norm_prompt = normalize_calendar_prompt(prompt)
 
             # 1. INTENTO CALENDAR_CREATE
             if CALENDAR_CREATE_KEYWORDS.search(norm_prompt):
@@ -849,7 +892,7 @@ class WhisAgent(QObject):
                         return f"📅 Non risulta alcun appuntamento in programma {date_label} da cancellare.", meta
 
             # 3. INTENTO CALENDAR_READ / CALENDAR_BRIEFING: Risposta naturale contestuale con Qwen
-            if CALENDAR_READ_KEYWORDS.search(prompt) or CALENDAR_BRIEFING_KEYWORDS.search(prompt):
+            if CALENDAR_READ_KEYWORDS.search(norm_prompt) or CALENDAR_BRIEFING_KEYWORDS.search(norm_prompt):
                 if not calendar_manager.has_credentials_file() and not calendar_manager.has_token_file():
                     resp = (
                         "⚠️ Google Calendar non è ancora configurato:\n"

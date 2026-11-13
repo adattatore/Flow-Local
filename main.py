@@ -64,7 +64,7 @@ except Exception:
 
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 import keyboard
 
 from database import db
@@ -256,7 +256,7 @@ def main():
 
     # Modalità Fantasma: l'orb resta nascosto in IDLE e compare solo durante la dettatura
     orb.hide()
-    hub.show()
+    # L'Hub non si apre automaticamente all'avvio: resta accessibile dall'icona nella system tray.
 
     # 4. System Tray Icon nativa Qt
     tray = QSystemTrayIcon()
@@ -333,6 +333,7 @@ def main():
     tray.setContextMenu(menu)
     tray.activated.connect(lambda reason: toggle_hub() if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
     tray.show()
+    QTimer.singleShot(250, orb.play_startup_splash)
 
     # 5. Dual Key Engine con Hook Globale soppressivo su Shift Destro
     poller_thread = threading.Thread(target=run_keyboard_poller, args=(engine,), daemon=True)
