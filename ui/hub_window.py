@@ -1703,47 +1703,89 @@ class KnowledgeGraphWidget(QFrame):
         QTimer.singleShot(250, self._fit_view)
 
 
-class OrbBrandBadge(QWidget):
-    """Mini emblema fluido Obsidian + 3 Fuochi Plasma (allineato a VoiceOrbOverlay)."""
+from ui.voice_orb import create_smooth_closed_path
 
-    def __init__(self, size: int = 30, parent=None):
+
+class OrbBrandBadge(QWidget):
+    """Mini emblema animato identico all'Orb in ascolto (3 fuochi fluidi senza onde vocali)."""
+
+    def __init__(self, size: int = 32, parent=None):
         super().__init__(parent)
         self.setFixedSize(size, size)
+        self._plasma_phase = 0.0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self._timer.isActive():
+            self._timer.start(16)  # ~60 FPS come VoiceOrbOverlay
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if self._timer.isActive():
+            self._timer.stop()
+
+    def _tick(self):
+        if not self.isVisible():
+            return
+        self._plasma_phase += 0.025
+        self.update()
 
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         w, h = float(self.width()), float(self.height())
         cx, cy = w / 2.0, h / 2.0
-        r = min(w, h) * 0.44
+        core_radius = min(w, h) * 0.38
 
         # Piccolo fondo scuro morbido al centro (come VoiceOrbOverlay)
-        base_grad = QRadialGradient(cx, cy, r * 1.15)
+        base_r = core_radius * 1.12
+        base_grad = QRadialGradient(cx, cy, base_r)
         base_grad.setColorAt(0.0, QColor(8, 10, 16, 220))
-        base_grad.setColorAt(0.68, QColor(8, 10, 16, 150))
+        base_grad.setColorAt(0.70, QColor(8, 10, 16, 155))
         base_grad.setColorAt(1.0, QColor(8, 10, 16, 0))
         p.setPen(Qt.PenStyle.NoPen)
         p.setBrush(base_grad)
-        p.drawEllipse(QPointF(cx, cy), r * 1.15, r * 1.15)
+        p.drawEllipse(QPointF(cx, cy), base_r, base_r)
 
-        # 3 fuochi fluidi sovrapposti in Screen blending
+        # I 3 fuochi fluidi indipendenti in ascolto (senza onde vocali)
+        num_pts = 16
+        wobble_amp = 0.065
+        orbit_r = 1.6
+        flame_layers = [
+            (QColor("#38BDF8"), self._plasma_phase, 1.00, 195),
+            (QColor("#A855F7"), self._plasma_phase * 1.35 + 2.1, 0.92, 185),
+            (QColor("#10B981"), -self._plasma_phase * 0.9 + 4.2, 0.86, 175),
+        ]
+
         p.save()
         p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
-        lobes = [
-            (-r * 0.18, -r * 0.12, r * 0.88, QColor(56, 189, 248, 210)),   # Ciano
-            (r * 0.20, -r * 0.10, r * 0.82, QColor(168, 85, 247, 200)),   # Viola
-            (0.0, r * 0.20, r * 0.78, QColor(16, 185, 129, 195)),         # Smeraldo
-        ]
-        for dx, dy, lr, col in lobes:
-            fx, fy = cx + dx, cy + dy
-            g = QRadialGradient(fx, fy, lr)
-            c_mid = QColor(col.red(), col.green(), col.blue(), int(col.alpha() * 0.65))
-            c_tip = QColor(col.red(), col.green(), col.blue(), 0)
-            g.setColorAt(0.0, col)
-            g.setColorAt(0.55, c_mid)
-            g.setColorAt(1.0, c_tip)
-            p.setBrush(g)
-            p.drawEllipse(QPointF(fx, fy), lr, lr)
+        for f_col, f_ang, r_scale, f_alpha in flame_layers:
+            fx = cx + orbit_r * math.cos(f_ang)
+            fy = cy + orbit_r * math.sin(f_ang * 1.15)
+
+            f_points = []
+            for i in range(num_pts):
+                theta = (2.0 * math.pi * i) / num_pts - (math.pi / 2.0)
+                wobble = 1.0 + wobble_amp * math.sin(theta * 2.0 + f_ang)
+                r_pt = core_radius * 0.88 * r_scale * wobble
+                f_points.append(QPointF(fx + r_pt * math.cos(theta), fy + r_pt * math.sin(theta)))
+
+            f_path = create_smooth_closed_path(f_points)
+            f_grad = QRadialGradient(fx, fy, core_radius * r_scale + 2.0)
+            c_hot = QColor(f_col)
+            c_hot.setAlpha(f_alpha)
+            c_mid = QColor(f_col)
+            c_mid.setAlpha(int(f_alpha * 0.72))
+            c_tip = QColor(f_col)
+            c_tip.setAlpha(0)
+            f_grad.setColorAt(0.0, c_hot)
+            f_grad.setColorAt(0.68, c_mid)
+            f_grad.setColorAt(1.0, c_tip)
+
+            p.setBrush(f_grad)
+            p.drawPath(f_path)
         p.restore()
 
 
