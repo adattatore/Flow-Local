@@ -760,15 +760,6 @@ class WhisAgent(QObject):
                     meta["waiting_for_title"] = True
                     return resp, meta
 
-                # Verifica credenziali prima di salvare direttamente
-                if not calendar_manager.has_credentials_file() and not calendar_manager.has_token_file():
-                    resp = (
-                        "⚠️ Google Calendar non è ancora configurato:\n"
-                        "Per abilitare la sincronizzazione automatica, posiziona il file `credentials.json` "
-                        "nella cartella principale di FlowLocal e clicca su '📅 Connetti Google Calendar' nella scheda Whis dell'Hub."
-                    )
-                    return resp, meta
-
                 try:
                     created = calendar_manager.create_event(
                         summary=title,
@@ -777,26 +768,19 @@ class WhisAgent(QObject):
                         duration_minutes=duration
                     )
                 except Exception as e:
-                    return f"⚠️ Errore durante la creazione dell'evento su Google Calendar:\n{e}", meta
+                    return f"⚠️ Errore durante la creazione dell'evento in FlowTime:\n{e}", meta
 
+                sync_note = " (sincronizzazione Google attiva)" if calendar_manager.has_token_file() else ""
                 resp = (
-                    f"📅 Appuntamento salvato su Google Calendar:\n"
+                    f"📅 Appuntamento salvato in FlowTime{sync_note}:\n"
                     f"• Titolo: **{title}**\n"
                     f"• Data e ora: {target_phrase}"
                 )
-                self.set_status("Evento salvato in Google Calendar", prompt)
+                self.set_status("Evento salvato in FlowTime", prompt)
                 return resp, meta
 
             # 2. INTENTO CALENDAR_DELETE: Cancellazione appuntamenti a voce
             if CALENDAR_DELETE_KEYWORDS.search(prompt):
-                if not calendar_manager.has_credentials_file() and not calendar_manager.has_token_file():
-                    resp = (
-                        "⚠️ Google Calendar non è ancora configurato:\n"
-                        "Per abilitare la sincronizzazione automatica, posiziona il file `credentials.json` "
-                        "nella cartella principale di FlowLocal e clicca su '📅 Connetti Google Calendar' nella scheda Whis dell'Hub."
-                    )
-                    return resp, meta
-
                 now = datetime.datetime.now()
                 prompt_lower = prompt.lower()
                 target_date = None
@@ -878,10 +862,10 @@ class WhisAgent(QObject):
                     try:
                         calendar_manager.delete_event(target_ev["id"], calendar_id=target_ev.get("calendar_id", "primary"))
                         resp = (
-                            f"🗑️ Ho cancellato l'appuntamento da Google Calendar:\n"
+                            f"🗑️ Ho cancellato l'appuntamento da FlowTime:\n"
                             f"• {target_ev['summary']} ({target_ev['date']}, {target_ev['time']})"
                         )
-                        self.set_status("Evento eliminato da Google Calendar", prompt)
+                        self.set_status("Evento eliminato da FlowTime", prompt)
                         return resp, meta
                     except Exception as e:
                         return f"⚠️ Errore durante l'eliminazione dell'evento: {e}", meta
@@ -891,16 +875,8 @@ class WhisAgent(QObject):
                     else:
                         return f"📅 Non risulta alcun appuntamento in programma {date_label} da cancellare.", meta
 
-            # 3. INTENTO CALENDAR_READ / CALENDAR_BRIEFING: Risposta naturale contestuale con Qwen
+            # 3. INTENTO CALENDAR_READ / CALENDAR_BRIEFING: Risposta naturale contestuale con Qwen (lettura SQLite <1ms)
             if CALENDAR_READ_KEYWORDS.search(norm_prompt) or CALENDAR_BRIEFING_KEYWORDS.search(norm_prompt):
-                if not calendar_manager.has_credentials_file() and not calendar_manager.has_token_file():
-                    resp = (
-                        "⚠️ Google Calendar non è ancora configurato:\n"
-                        "Per abilitare la sincronizzazione automatica, posiziona il file `credentials.json` "
-                        "nella cartella principale di FlowLocal e clicca su '📅 Connetti Google Calendar' nella scheda Whis dell'Hub."
-                    )
-                    return resp, meta
-
                 now = datetime.datetime.now()
                 days_it = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
                 today_display = f"{days_it[now.weekday()]} {now.strftime('%d/%m/%Y')}"
@@ -986,7 +962,15 @@ class WhisAgent(QObject):
                 try:
                     events = calendar_manager.get_upcoming_events(days=days, target_date=target_date)
                 except Exception as e:
-                    return f"⚠️ Errore durante la lettura degli impegni da Google Calendar:\n{e}", meta
+                    return f"⚠️ Errore durante la lettura degli impegni da FlowTime:\n{e}", meta
+
+                temporal_notes: List[Dict[str, Any]] = []
+                if target_date:
+                    try:
+                        from database.db_manager import db
+                        temporal_notes = db.get_notes_for_date(target_date)
+                    except Exception:
+                        temporal_notes = []
 
                 if target_date_obj:
                     target_dow = days_it[target_date_obj.weekday()]
@@ -997,6 +981,20 @@ class WhisAgent(QObject):
                 tmrw_obj = now.date() + datetime.timedelta(days=1)
                 tmrw_display = f"{days_it[tmrw_obj.weekday()]} {tmrw_obj.strftime('%d/%m/%Y')}"
 
+                notes_ctx_block = ""
+                if temporal_notes:
+                    note_lines = [
+                        f"- {n['title']} ({n.get('subject') or 'Generale'}"
+                        + (f", collegata a: {n['linked_event_title']}" if n.get("linked_event_title") else "")
+                        + ")"
+                        for n in temporal_notes[:6]
+                    ]
+                    notes_ctx_block = (
+                        "\nNOTE DI STUDIO COLLEGATE / CREATE IN QUESTA DATA:\n"
+                        + "\n".join(note_lines)
+                        + "\n(Citali brevemente solo se rilevanti per lo studio o la giornata.)\n"
+                    )
+
                 # Sintesi conversazionale naturale potenziata con Qwen 2.5
                 if events:
                     events_text = "\n".join([ev["formatted"] for ev in events])
@@ -1005,7 +1003,8 @@ class WhisAgent(QObject):
                         f"OGGI è: {today_display} ore {now.strftime('%H:%M')}.\n"
                         f"DOMANI è: {tmrw_display}.\n\n"
                         f"IMPEGNI IN AGENDA TROVATI per il periodo richiesto ({period_label} - {target_display}):\n"
-                        f"{events_text}\n\n"
+                        f"{events_text}\n"
+                        f"{notes_ctx_block}\n"
                         "REGOLE TASSATIVE:\n"
                         "1. L'utente HA EFFETTIVAMENTE gli impegni sopra indicati: NON dire MAI che è libero o che non ha impegni!\n"
                         "2. Rispondi in perfetto italiano, chiaro, naturale ed elegante in 1-2 frasi elencando gli impegni con relativi orari e luoghi/aule.\n"
@@ -1018,7 +1017,8 @@ class WhisAgent(QObject):
                         "Sei Whis, l'assistente virtuale personale di FlowLocal.\n"
                         f"OGGI è: {today_display} ore {now.strftime('%H:%M')}.\n"
                         f"DOMANI è: {tmrw_display}.\n\n"
-                        f"Non risultano impegni segnati sul calendario per {period_label} ({target_display}).\n"
+                        f"Non risultano impegni segnati in FlowTime per {period_label} ({target_display}).\n"
+                        f"{notes_ctx_block}\n"
                         "Conferma con gentilezza e brevità in perfetto italiano che per quel periodo non ci sono impegni in programma ed è completamente libero."
                     )
 
@@ -1066,16 +1066,21 @@ class WhisAgent(QObject):
                 if not events:
                     resp = f"📅 Non hai impegni in programma per {period_label} ({target_display}). Sei completamente libero!"
                 else:
-                    lines = [f"📅 Appuntamenti in Google Calendar ({period_label}):"]
+                    lines = [f"📅 Appuntamenti in FlowTime ({period_label}):"]
                     for ev in events:
                         lines.append(ev["formatted"])
                     resp = "\n".join(lines)
 
-                self.set_status("Appuntamenti letti da Google Calendar", prompt)
+                if temporal_notes:
+                    resp += "\n\n📓 Note collegate/del giorno:\n" + "\n".join(
+                        f"• {n['title']} ({n.get('subject') or 'Generale'})" for n in temporal_notes[:4]
+                    )
+
+                self.set_status("Appuntamenti letti da FlowTime", prompt)
                 return resp, meta
 
         except Exception as e:
-            return f"⚠️ Errore imprevisto nella gestione di Google Calendar: {e}", meta
+            return f"⚠️ Errore imprevisto nella gestione di FlowTime: {e}", meta
 
         return "Nessuna azione calendario eseguita.", meta
 
@@ -1135,7 +1140,7 @@ class WhisAgent(QObject):
             "calendar": False
         }
 
-        # 0. Intercettazione Follow-up interattivo Google Calendar (titolo appuntamento in attesa)
+        # 0. Intercettazione Follow-up interattivo FlowTime (titolo appuntamento in attesa)
         if self.pending_calendar_create:
             if re.search(r'\b(annulla|cancella|lascia\s+stare|niente|lascia\s+perdere|stop|non\s+importa)\b', user_prompt, re.IGNORECASE):
                 self.pending_calendar_create = None
@@ -1145,7 +1150,7 @@ class WhisAgent(QObject):
                     on_metadata(metadata)
                 on_chunk(resp)
                 if on_done:
-                    on_done(resp, "Google Calendar", metadata)
+                    on_done(resp, "FlowTime", metadata)
                 return resp
 
             pending = self.pending_calendar_create
@@ -1164,21 +1169,22 @@ class WhisAgent(QObject):
                     duration_minutes=pending["duration_minutes"]
                 )
                 date_display = pending.get("date_display", pending["date"])
+                sync_note = " (sincronizzazione Google attiva)" if calendar_manager.has_token_file() else ""
                 resp = (
-                    f"✨ Perfetto! Ho salvato l'appuntamento su Google Calendar:\n"
+                    f"✨ Perfetto! Ho salvato l'appuntamento in FlowTime{sync_note}:\n"
                     f"• Titolo: **{final_title}**\n"
                     f"• Data e ora: {date_display}"
                 )
-                self.set_status("Evento salvato in Google Calendar", user_prompt)
+                self.set_status("Evento salvato in FlowTime", user_prompt)
             except Exception as e:
-                resp = f"⚠️ Errore durante la creazione dell'evento su Google Calendar:\n{e}"
+                resp = f"⚠️ Errore durante la creazione dell'evento in FlowTime:\n{e}"
 
             metadata["calendar"] = True
             if on_metadata:
                 on_metadata(metadata)
             on_chunk(resp)
             if on_done:
-                on_done(resp, "Google Calendar", metadata)
+                on_done(resp, "FlowTime", metadata)
             return resp
 
         # 1. Deissi / Lettura Clipboard preliminare
@@ -1187,9 +1193,9 @@ class WhisAgent(QObject):
             metadata["clipboard"] = True
             self.set_status("Lettura Clipboard...", user_prompt)
 
-        # 1b. SUPERPOTERE GOOGLE CALENDAR (Creazione e Lettura appuntamenti)
+        # 1b. SUPERPOTERE FLOWTIME / CALENDARIO (Creazione e Lettura appuntamenti <1ms)
         if self.is_calendar_command(user_prompt):
-            self.set_status("Google Calendar...", user_prompt)
+            self.set_status("FlowTime...", user_prompt)
             cal_resp, cal_meta = self.execute_calendar_action(user_prompt)
             metadata.update(cal_meta)
             if on_metadata:
@@ -1197,9 +1203,9 @@ class WhisAgent(QObject):
             on_chunk(cal_resp)
             if on_done:
                 try:
-                    on_done(cal_resp, "Google Calendar", metadata)
+                    on_done(cal_resp, "FlowTime", metadata)
                 except TypeError:
-                    on_done(cal_resp, "Google Calendar")
+                    on_done(cal_resp, "FlowTime")
             return cal_resp
 
         # 2. SUPERPOTERE AZIONI DB: 'segna negli appunti...' o 'crea una nota...'

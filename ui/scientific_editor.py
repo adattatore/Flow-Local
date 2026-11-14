@@ -145,7 +145,13 @@ def _render_cell_qimage(cell_tex: str, dpi: int = 160, ink_hex: str = "#0F172A")
     return out
 
 
-def _render_matrix_png_b64(expr: str, dark_mode: bool = False) -> Optional[Tuple[str, int, int]]:
+def _editor_ink_hex(dark_mode: bool = False, reading_mode: bool = False) -> str:
+    if reading_mode:
+        return "#EFE2CE" if dark_mode else "#2A1F14"
+    return "#F1F5F9" if dark_mode else "#0F172A"
+
+
+def _render_matrix_png_b64(expr: str, dark_mode: bool = False, reading_mode: bool = False) -> Optional[Tuple[str, int, int]]:
     """
     Renderer nativo ad alta risoluzione con QPainter per matrici \\begin{bmatrix} / \\begin{pmatrix} / \\begin{vmatrix}.
     Renderizza ogni cella tramite matplotlib.mathtext e disegna parentesi vettoriali spesse.
@@ -154,7 +160,7 @@ def _render_matrix_png_b64(expr: str, dark_mode: bool = False) -> Optional[Tuple
     if not m:
         return None
 
-    ink_hex = "#F1F5F9" if dark_mode else "#0F172A"
+    ink_hex = _editor_ink_hex(dark_mode, reading_mode)
     kind = m.group(1)
     body = m.group(2).strip()
     prefix = expr[: m.start()].strip()
@@ -271,7 +277,7 @@ def _render_matrix_png_b64(expr: str, dark_mode: bool = False) -> Optional[Tuple
     return _qimage_to_png_b64(canvas), disp_w, disp_h
 
 
-def render_latex_to_html(expr: str, is_display: bool = False, dark_mode: bool = False) -> str:
+def render_latex_to_html(expr: str, is_display: bool = False, dark_mode: bool = False, reading_mode: bool = False) -> str:
     """
     Renderizza un'espressione LaTeX su sfondo trasparente tramite matplotlib.mathtext
     e renderer QPainter per matrici bmatrix/pmatrix.
@@ -280,14 +286,14 @@ def render_latex_to_html(expr: str, is_display: bool = False, dark_mode: bool = 
     if not clean:
         return ""
 
-    ink_hex = "#F1F5F9" if dark_mode else "#0F172A"
-    cache_key = (clean, is_display, dark_mode)
+    ink_hex = _editor_ink_hex(dark_mode, reading_mode)
+    cache_key = (clean, is_display, dark_mode, reading_mode)
     if cache_key in _LATEX_PNG_CACHE:
         b64, w_px, h_px = _LATEX_PNG_CACHE[cache_key]
         return _format_math_img_tag(b64, w_px, h_px, is_display, clean)
 
     if is_display and re.search(r"\\begin\{[bp]matrix\}", clean):
-        mat_res = _render_matrix_png_b64(clean, dark_mode=dark_mode)
+        mat_res = _render_matrix_png_b64(clean, dark_mode=dark_mode, reading_mode=reading_mode)
         if mat_res is not None:
             b64, w_px, h_px = mat_res
             _LATEX_PNG_CACHE[cache_key] = (b64, w_px, h_px)
@@ -345,27 +351,42 @@ def _format_math_img_tag(b64: str, w_px: int, h_px: int, is_display: bool, alt: 
     return img
 
 
-def _render_inline_markdown_html(text: str, dark_mode: bool = False) -> str:
+def _render_inline_markdown_html(
+    text: str,
+    dark_mode: bool = False,
+    reading_mode: bool = False,
+    font_scale_pct: int = 100,
+) -> str:
     tokens = re.split(r"(\$\$.*?\$\$|\$[^$\n]+?\$|`[^`\n]+?`)", text)
     out: List[str] = []
-    code_bg = "#202020" if dark_mode else "#F7F6F3"
-    code_fg = "#E2E8F0" if dark_mode else "#0F172A"
-    code_bd = "#2F2F2F" if dark_mode else "#E5E7EB"
-    bold_fg = "#FFFFFF" if dark_mode else "#0F172A"
-    em_fg = "#CBD5E1" if dark_mode else "#334155"
+    scale = max(0.8, min(1.5, float(font_scale_pct or 100) / 100.0))
+    code_pt = round(10.0 * scale, 1)
+    if reading_mode:
+        code_bg = "#241D17" if dark_mode else "#F3E8D2"
+        code_fg = "#E8D9C5" if dark_mode else "#2A1F14"
+        code_bd = "#3A2F26" if dark_mode else "#E2D2B5"
+        bold_fg = "#F8EFE2" if dark_mode else "#2A1F14"
+        em_fg = "#D6C4AD" if dark_mode else "#4E3D2C"
+    else:
+        code_bg = "#202020" if dark_mode else "#F7F6F3"
+        code_fg = "#E2E8F0" if dark_mode else "#0F172A"
+        code_bd = "#2F2F2F" if dark_mode else "#E5E7EB"
+        bold_fg = "#FFFFFF" if dark_mode else "#0F172A"
+        em_fg = "#CBD5E1" if dark_mode else "#334155"
 
     for tok in tokens:
         if not tok:
             continue
         if tok.startswith("$$") and tok.endswith("$$") and len(tok) > 4:
-            out.append(render_latex_to_html(tok[2:-2], is_display=True, dark_mode=dark_mode))
+            out.append(render_latex_to_html(tok[2:-2], is_display=True, dark_mode=dark_mode, reading_mode=reading_mode))
         elif tok.startswith("$") and tok.endswith("$") and len(tok) > 2:
-            out.append(render_latex_to_html(tok[1:-1], is_display=False, dark_mode=dark_mode))
+            out.append(render_latex_to_html(tok[1:-1], is_display=False, dark_mode=dark_mode, reading_mode=reading_mode))
         elif tok.startswith("`") and tok.endswith("`") and len(tok) >= 2:
             out.append(
                 f'<code style="background-color: {code_bg}; color: {code_fg}; '
                 f'border: 1px solid {code_bd}; padding: 1px 5px; border-radius: 4px; '
-                f'font-family: Consolas, monospace; font-size: 10pt;">{html.escape(tok[1:-1])}</code>'
+                f'font-family: \'JetBrains Mono\', \'Cascadia Code\', Consolas, monospace; '
+                f'font-size: {code_pt:g}pt;">{html.escape(tok[1:-1])}</code>'
             )
         else:
             escaped = html.escape(tok)
@@ -398,18 +419,45 @@ def _resolve_image_uri_and_size(raw_path: str, base_dir: str) -> Tuple[str, Opti
     return uri, width_attr
 
 
-def markdown_to_studio_html(md_text: str, base_dir: str = BASE_DATA_DIR, dark_mode: bool = False) -> str:
+def markdown_to_studio_html(
+    md_text: str,
+    base_dir: str = BASE_DATA_DIR,
+    dark_mode: bool = False,
+    reading_mode: bool = False,
+    font_family_css: str = "'Segoe UI', sans-serif",
+    font_scale_pct: int = 100,
+    bg_page_override: str = "",
+    fg_text_override: str = "",
+) -> str:
     """Converte una nota Markdown + LaTeX in HTML impaginato stile Notion per la Vista Studio."""
-    bg_page = "#0D111A" if dark_mode else "#FFFFFF"
-    fg_text = "#E2E8F0" if dark_mode else "#1E293B"
-    fg_h1 = "#FFFFFF" if dark_mode else "#0F172A"
-    fg_h2 = "#F1F5F9" if dark_mode else "#1E293B"
-    fg_h3 = "#CBD5E1" if dark_mode else "#334155"
-    fg_muted = "#94A3B8" if dark_mode else "#64748B"
-    card_bg = "#202020" if dark_mode else "#F7F6F3"
-    card_bd = "#2F2F2F" if dark_mode else "#E5E7EB"
-    tbl_hdr_bg = "#161B26" if dark_mode else "#F8FAFC"
-    quote_bar = "#FFFFFF" if dark_mode else "#111827"
+    scale = max(0.8, min(1.5, font_scale_pct / 100.0))
+    body_pt = round(11.0 * scale, 1)
+    h1_pt = round(18.0 * scale, 1)
+    h2_pt = round(14.5 * scale, 1)
+    h3_pt = round(12.5 * scale, 1)
+    code_pt = round(10.0 * scale, 1)
+    if reading_mode:
+        bg_page = bg_page_override or ("#18130F" if dark_mode else "#FBF5E6")
+        fg_text = fg_text_override or ("#E8D9C5" if dark_mode else "#3E3022")
+        fg_h1 = "#F8EFE2" if dark_mode else "#2A1F14"
+        fg_h2 = "#EFE2CE" if dark_mode else "#35281B"
+        fg_h3 = "#D6C4AD" if dark_mode else "#4E3D2C"
+        fg_muted = "#A3917B" if dark_mode else "#7D6B57"
+        card_bg = "#241D17" if dark_mode else "#F3E8D2"
+        card_bd = "#3A2F26" if dark_mode else "#E2D2B5"
+        tbl_hdr_bg = "#201914" if dark_mode else "#EFE2C9"
+        quote_bar = "#D97706" if dark_mode else "#B45309"
+    else:
+        bg_page = bg_page_override or ("#0D111A" if dark_mode else "#FFFFFF")
+        fg_text = fg_text_override or ("#E2E8F0" if dark_mode else "#1E293B")
+        fg_h1 = "#FFFFFF" if dark_mode else "#0F172A"
+        fg_h2 = "#F1F5F9" if dark_mode else "#1E293B"
+        fg_h3 = "#CBD5E1" if dark_mode else "#334155"
+        fg_muted = "#94A3B8" if dark_mode else "#64748B"
+        card_bg = "#202020" if dark_mode else "#F7F6F3"
+        card_bd = "#2F2F2F" if dark_mode else "#E5E7EB"
+        tbl_hdr_bg = "#161B26" if dark_mode else "#F8FAFC"
+        quote_bar = "#FFFFFF" if dark_mode else "#111827"
 
     lines = (md_text or "").replace("\ufffc", "").splitlines()
     blocks: List[str] = []
@@ -449,7 +497,7 @@ def markdown_to_studio_html(md_text: str, base_dir: str = BASE_DATA_DIR, dark_mo
             blocks.append(
                 f'<div style="background-color: {card_bg}; border: 1px solid {card_bd}; '
                 f'padding: 14px 16px; margin: 12px 0; border-radius: 8px; '
-                f'font-family: Consolas, monospace; font-size: 10pt; color: {fg_text}; '
+                f'font-family: \'JetBrains Mono\', \'Cascadia Code\', Consolas, monospace; font-size: {code_pt}pt; color: {fg_text}; '
                 f'white-space: pre-wrap;">{lang_badge}{code_html}</div>'
             )
             i += 1
@@ -460,7 +508,7 @@ def markdown_to_studio_html(md_text: str, base_dir: str = BASE_DATA_DIR, dark_mo
             _close_lists()
             if stripped.endswith("$$") and len(stripped) > 4:
                 expr = stripped[2:-2].strip()
-                blocks.append(render_latex_to_html(expr, is_display=True, dark_mode=dark_mode))
+                blocks.append(render_latex_to_html(expr, is_display=True, dark_mode=dark_mode, reading_mode=reading_mode))
                 i += 1
                 continue
             math_lines = [stripped[2:]]
@@ -473,7 +521,7 @@ def markdown_to_studio_html(md_text: str, base_dir: str = BASE_DATA_DIR, dark_mo
                 math_lines.append(lines[i])
                 i += 1
             expr = "\n".join(math_lines).strip()
-            blocks.append(render_latex_to_html(expr, is_display=True, dark_mode=dark_mode))
+            blocks.append(render_latex_to_html(expr, is_display=True, dark_mode=dark_mode, reading_mode=reading_mode))
             i += 1
             continue
 
@@ -511,7 +559,7 @@ def markdown_to_studio_html(md_text: str, base_dir: str = BASE_DATA_DIR, dark_mo
                 for r_idx, row in enumerate(rows):
                     t_html.append("<tr>")
                     for cell in row:
-                        cell_html = _render_inline_markdown_html(cell, dark_mode=dark_mode)
+                        cell_html = _render_inline_markdown_html(cell, dark_mode=dark_mode, reading_mode=reading_mode, font_scale_pct=font_scale_pct)
                         if r_idx == 0:
                             t_html.append(
                                 f'<th style="background-color: {tbl_hdr_bg}; color: {fg_h1}; '
@@ -532,27 +580,27 @@ def markdown_to_studio_html(md_text: str, base_dir: str = BASE_DATA_DIR, dark_mo
         if stripped.startswith("### "):
             _close_lists()
             blocks.append(
-                f'<h3 style="color: {fg_h3}; font-size: 12.5pt; font-weight: 600; '
-                f'margin: 14px 0 4px 0;">{_render_inline_markdown_html(stripped[4:], dark_mode)}</h3>'
+                f'<h3 style="color: {fg_h3}; font-size: {h3_pt}pt; font-weight: 600; '
+                f'margin: 14px 0 4px 0;">{_render_inline_markdown_html(stripped[4:], dark_mode, reading_mode, font_scale_pct)}</h3>'
             )
         elif stripped.startswith("## "):
             _close_lists()
             blocks.append(
-                f'<h2 style="color: {fg_h2}; font-size: 14.5pt; font-weight: 700; '
+                f'<h2 style="color: {fg_h2}; font-size: {h2_pt}pt; font-weight: 700; '
                 f'margin: 16px 0 6px 0; border-bottom: 1px solid {card_bd}; '
-                f'padding-bottom: 4px;">{_render_inline_markdown_html(stripped[3:], dark_mode)}</h2>'
+                f'padding-bottom: 4px;">{_render_inline_markdown_html(stripped[3:], dark_mode, reading_mode, font_scale_pct)}</h2>'
             )
         elif stripped.startswith("# "):
             _close_lists()
             blocks.append(
-                f'<h1 style="color: {fg_h1}; font-size: 18pt; font-weight: 700; '
-                f'margin: 16px 0 8px 0;">{_render_inline_markdown_html(stripped[2:], dark_mode)}</h1>'
+                f'<h1 style="color: {fg_h1}; font-size: {h1_pt}pt; font-weight: 700; '
+                f'margin: 16px 0 8px 0;">{_render_inline_markdown_html(stripped[2:], dark_mode, reading_mode, font_scale_pct)}</h1>'
             )
         elif stripped.startswith("> "):
             _close_lists()
             quote_lines = []
             while i < len(lines) and lines[i].strip().startswith("> "):
-                quote_lines.append(_render_inline_markdown_html(lines[i].strip()[2:], dark_mode))
+                quote_lines.append(_render_inline_markdown_html(lines[i].strip()[2:], dark_mode, reading_mode, font_scale_pct))
                 i += 1
             blocks.append(
                 f'<div style="border-left: 3px solid {quote_bar}; '
@@ -564,7 +612,7 @@ def markdown_to_studio_html(md_text: str, base_dir: str = BASE_DATA_DIR, dark_mo
             _close_lists()
             m_todo = re.match(r"^[-*]\s+\[([ xX])\]\s+(.*)$", stripped)
             checked = (m_todo.group(1).lower() == "x")
-            txt_html = _render_inline_markdown_html(m_todo.group(2), dark_mode)
+            txt_html = _render_inline_markdown_html(m_todo.group(2), dark_mode, reading_mode, font_scale_pct)
             glyph = "☑" if checked else "☐"
             style = f"text-decoration: line-through; color: {fg_muted};" if checked else f"color: {fg_text};"
             blocks.append(f'<div style="margin: 3px 0; {style}">{glyph} {txt_html}</div>')
@@ -576,7 +624,7 @@ def markdown_to_studio_html(md_text: str, base_dir: str = BASE_DATA_DIR, dark_mo
                 blocks.append(f'<ul style="margin: 6px 0 6px 20px; color: {fg_text};">')
                 in_ul = True
             item_txt = re.sub(r"^[-*]\s+", "", stripped)
-            blocks.append(f'<li style="margin: 3px 0;">{_render_inline_markdown_html(item_txt, dark_mode)}</li>')
+            blocks.append(f'<li style="margin: 3px 0;">{_render_inline_markdown_html(item_txt, dark_mode, reading_mode, font_scale_pct)}</li>')
         elif re.match(r"^\d+\.\s+", stripped):
             if in_ul:
                 blocks.append("</ul>")
@@ -585,24 +633,27 @@ def markdown_to_studio_html(md_text: str, base_dir: str = BASE_DATA_DIR, dark_mo
                 blocks.append(f'<ol style="margin: 6px 0 6px 20px; color: {fg_text};">')
                 in_ol = True
             item_txt = re.sub(r"^\d+\.\s+", "", stripped)
-            blocks.append(f'<li style="margin: 3px 0;">{_render_inline_markdown_html(item_txt, dark_mode)}</li>')
+            blocks.append(f'<li style="margin: 3px 0;">{_render_inline_markdown_html(item_txt, dark_mode, reading_mode, font_scale_pct)}</li>')
         elif not stripped:
             _close_lists()
             blocks.append('<div style="height: 6px;"></div>')
         else:
             _close_lists()
+            p_lh = "1.78" if reading_mode else "1.6"
             blocks.append(
-                f'<p style="margin: 4px 0; line-height: 1.6; color: {fg_text};">'
-                f'{_render_inline_markdown_html(line, dark_mode)}</p>'
+                f'<p style="margin: 5px 0; line-height: {p_lh}; color: {fg_text};">'
+                f'{_render_inline_markdown_html(line, dark_mode, reading_mode, font_scale_pct)}</p>'
             )
 
         i += 1
 
     _close_lists()
     body = "\n".join(blocks)
+    body_lh = "1.75" if reading_mode else "1.55"
+    body_pad = "10px 18px" if reading_mode else "0px"
     return (
         f'<html><body style="background-color: {bg_page}; color: {fg_text}; '
-        'font-family: \'Segoe UI\', sans-serif; font-size: 11pt; line-height: 1.55;">'
+        f'font-family: {font_family_css}; font-size: {body_pt}pt; line-height: {body_lh}; padding: {body_pad};">'
         f"{body}</body></html>"
     )
 
@@ -617,6 +668,7 @@ class MarkdownLatexHighlighter(QSyntaxHighlighter):
         super().__init__(document)
         self._enabled = True
         self._dark_mode = dark_mode
+        self._font_scale: float = 1.0
         self._rules: List[Tuple[QRegularExpression, QTextCharFormat]] = []
         self._rebuild_rules()
 
@@ -624,6 +676,14 @@ class MarkdownLatexHighlighter(QSyntaxHighlighter):
         if self._dark_mode == dark_mode:
             return
         self._dark_mode = dark_mode
+        self._rebuild_rules()
+        self.rehighlight()
+
+    def set_font_scale(self, scale_pct: int):
+        new_scale = max(0.8, min(1.5, scale_pct / 100.0))
+        if abs(self._font_scale - new_scale) < 0.01:
+            return
+        self._font_scale = new_scale
         self._rebuild_rules()
         self.rehighlight()
 
@@ -640,19 +700,19 @@ class MarkdownLatexHighlighter(QSyntaxHighlighter):
         h1_fmt = QTextCharFormat()
         h1_fmt.setForeground(QColor(h1_fg))
         h1_fmt.setFontWeight(QFont.Weight.Bold)
-        h1_fmt.setFontPointSize(16)
+        h1_fmt.setFontPointSize(round(16 * self._font_scale, 1))
         self._rules.append((QRegularExpression(r"^#\s+.*$"), h1_fmt))
 
         h2_fmt = QTextCharFormat()
         h2_fmt.setForeground(QColor(h2_fg))
         h2_fmt.setFontWeight(QFont.Weight.DemiBold)
-        h2_fmt.setFontPointSize(13)
+        h2_fmt.setFontPointSize(round(13 * self._font_scale, 1))
         self._rules.append((QRegularExpression(r"^##\s+.*$"), h2_fmt))
 
         h3_fmt = QTextCharFormat()
         h3_fmt.setForeground(QColor(h3_fg))
         h3_fmt.setFontWeight(QFont.Weight.DemiBold)
-        h3_fmt.setFontPointSize(11.5)
+        h3_fmt.setFontPointSize(round(11.5 * self._font_scale, 1))
         self._rules.append((QRegularExpression(r"^###\s+.*$"), h3_fmt))
 
         bold_fmt = QTextCharFormat()
@@ -663,7 +723,7 @@ class MarkdownLatexHighlighter(QSyntaxHighlighter):
         self._code_fmt = QTextCharFormat()
         self._code_fmt.setForeground(QColor(code_fg))
         self._code_fmt.setFontFamily("Consolas")
-        self._code_fmt.setFontPointSize(10)
+        self._code_fmt.setFontPointSize(round(10 * self._font_scale, 1))
         self._rules.append((QRegularExpression(r"`[^`\n]+`"), self._code_fmt))
 
         img_fmt = QTextCharFormat()
@@ -1168,16 +1228,19 @@ class ScientificNoteEditor(QTextEdit):
     studioViewChanged = pyqtSignal(bool)
     markdownModified = pyqtSignal()
 
-    def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True):
+    def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True, reading_mode: bool = False):
         super().__init__(parent)
         self._dark_mode: bool = dark_mode
+        self._reading_mode: bool = reading_mode
+        self._font_family_css: str = "'Segoe UI', sans-serif"
+        self._font_scale_pct: int = 100
         self._raw_markdown: str = ""
         self._is_studio_view: bool = False
         self._internal_update: bool = False
         self._slash_start_pos: Optional[int] = None
 
         self.setAcceptRichText(False)
-        self.document().setDocumentMargin(4)
+        self.document().setDocumentMargin(12 if reading_mode else 4)
         self.highlighter = MarkdownLatexHighlighter(self.document(), dark_mode=dark_mode)
 
         self.slash_popup = SlashCommandPopup(self, dark_mode=dark_mode)
@@ -1190,16 +1253,44 @@ class ScientificNoteEditor(QTextEdit):
     def is_studio_view(self) -> bool:
         return self._is_studio_view
 
-    def set_dark_mode(self, dark_mode: bool):
-        if self._dark_mode == dark_mode:
+    def set_typography(self, font_family_css: str, font_scale_pct: int = 100):
+        font_family_css = font_family_css or "'Segoe UI', sans-serif"
+        font_scale_pct = max(80, min(150, int(font_scale_pct or 100)))
+        if self._font_family_css == font_family_css and self._font_scale_pct == font_scale_pct:
+            return
+        self._font_family_css = font_family_css
+        self._font_scale_pct = font_scale_pct
+        self.highlighter.set_font_scale(font_scale_pct)
+        # Apply primary font family and scaled base size to QTextEdit document
+        primary_family = font_family_css.split(",")[0].strip().strip("'").strip('"')
+        f = self.font()
+        if primary_family:
+            f.setFamily(primary_family)
+        f.setPointSizeF(round(11.0 * (font_scale_pct / 100.0), 1))
+        self.setFont(f)
+        self.document().setDefaultFont(f)
+        cur_md = self.get_markdown_text()
+        self.set_markdown_text(cur_md)
+        self.viewport().update()
+
+    def set_theme_modes(self, dark_mode: bool, reading_mode: bool):
+        if self._dark_mode == dark_mode and self._reading_mode == reading_mode:
             return
         self._dark_mode = dark_mode
+        self._reading_mode = reading_mode
+        self.document().setDocumentMargin(12 if reading_mode else 4)
         self.highlighter.set_dark_mode(dark_mode)
         self.slash_popup.apply_theme(dark_mode)
         # Aggiorna bordi tabelle e colori dei blocchi esistenti
         cur_md = self.get_markdown_text()
         self.set_markdown_text(cur_md)
         self.viewport().update()
+
+    def set_dark_mode(self, dark_mode: bool):
+        self.set_theme_modes(dark_mode, self._reading_mode)
+
+    def set_reading_mode(self, reading_mode: bool):
+        self.set_theme_modes(self._dark_mode, reading_mode)
 
     def _on_internal_text_changed(self):
         if self._internal_update or self._is_studio_view:
@@ -1310,7 +1401,16 @@ class ScientificNoteEditor(QTextEdit):
         self._internal_update = True
         try:
             if self._is_studio_view:
-                self.setHtml(markdown_to_studio_html(self._raw_markdown, BASE_DATA_DIR, dark_mode=self._dark_mode))
+                self.setHtml(
+                    markdown_to_studio_html(
+                        self._raw_markdown,
+                        BASE_DATA_DIR,
+                        dark_mode=self._dark_mode,
+                        reading_mode=self._reading_mode,
+                        font_family_css=self._font_family_css,
+                        font_scale_pct=self._font_scale_pct,
+                    )
+                )
             else:
                 self._populate_wysiwyg_document(self._raw_markdown)
         finally:
@@ -1324,12 +1424,21 @@ class ScientificNoteEditor(QTextEdit):
         i = 0
         first_block = True
 
+        def _default_block_format() -> QTextBlockFormat:
+            bf = QTextBlockFormat()
+            if self._reading_mode:
+                bf.setLineHeight(135.0, QTextBlockFormat.LineHeightTypes.ProportionalHeight.value)
+                bf.setBottomMargin(4)
+            return bf
+
         def _ensure_new_block():
             nonlocal first_block
             if not first_block:
                 cursor.insertBlock()
-                cursor.setBlockFormat(QTextBlockFormat())
+                cursor.setBlockFormat(_default_block_format())
                 cursor.setCharFormat(QTextCharFormat())
+            else:
+                cursor.setBlockFormat(_default_block_format())
             first_block = False
 
         while i < len(lines):
@@ -1513,9 +1622,10 @@ class ScientificNoteEditor(QTextEdit):
         bf.setProperty(PROP_BLOCK_KIND, f"h{level}")
         cursor.setBlockFormat(bf)
 
+        scale = max(0.8, min(1.5, self._font_scale_pct / 100.0))
         cf = QTextCharFormat()
         cf.setFontWeight(QFont.Weight.Bold)
-        cf.setFontPointSize(24 if level == 1 else 18)
+        cf.setFontPointSize(round((24 if level == 1 else 18) * scale, 1))
         cf.setForeground(QColor("#F8FAFC" if self._dark_mode else "#0F172A"))
         cursor.setCharFormat(cf)
         if text:
@@ -1528,13 +1638,13 @@ class ScientificNoteEditor(QTextEdit):
             return
         qimg = None
         if re.search(r"\\begin\{[bpv]matrix\}", clean):
-            mat_res = _render_matrix_png_b64(clean, dark_mode=self._dark_mode)
+            mat_res = _render_matrix_png_b64(clean, dark_mode=self._dark_mode, reading_mode=self._reading_mode)
             if mat_res is not None:
                 b64, w_px, h_px = mat_res
                 qimg = QImage.fromData(base64.b64decode(b64), "PNG")
         else:
             try:
-                ink_hex = "#F1F5F9" if self._dark_mode else "#0F172A"
+                ink_hex = _editor_ink_hex(self._dark_mode, self._reading_mode)
                 buf = io.BytesIO()
                 math_to_image(f"${clean}$", buf, dpi=175, format="png", color=ink_hex)
                 qimg = QImage.fromData(buf.getvalue(), "PNG")
@@ -1547,7 +1657,7 @@ class ScientificNoteEditor(QTextEdit):
             cursor.insertText(f"$$\n{clean}\n$$")
             return
 
-        res_name = f"latex://{abs(hash((clean, self._dark_mode)))}"
+        res_name = f"latex://{abs(hash((clean, self._dark_mode, self._reading_mode)))}"
         self.document().addResource(QTextDocument.ResourceType.ImageResource, QUrl(res_name), qimg)
         fmt = QTextImageFormat()
         fmt.setName(res_name)
@@ -1611,9 +1721,10 @@ class ScientificNoteEditor(QTextEdit):
 
         frame = cursor.insertFrame(f_fmt)
         inner_cur = frame.firstCursorPosition()
+        scale = max(0.8, min(1.5, self._font_scale_pct / 100.0))
         cf = QTextCharFormat()
         cf.setFontFamily("Consolas")
-        cf.setFontPointSize(10)
+        cf.setFontPointSize(round(10 * scale, 1))
         cf.setForeground(QColor("#E2E8F0" if self._dark_mode else "#1E293B"))
         inner_cur.setCharFormat(cf)
         if code_text:
@@ -1671,9 +1782,14 @@ class ScientificNoteEditor(QTextEdit):
         hx = -self.horizontalScrollBar().value()
         vy = -self.verticalScrollBar().value()
 
-        card_bg = QColor("#202020" if self._dark_mode else "#F7F6F3")
-        card_bd = QColor("#2F2F2F" if self._dark_mode else "#E5E7EB")
-        quote_bar_color = QColor("#FFFFFF" if self._dark_mode else "#111827")
+        if self._reading_mode:
+            card_bg = QColor("#241D17" if self._dark_mode else "#F3E8D2")
+            card_bd = QColor("#3A2F26" if self._dark_mode else "#E2D2B5")
+            quote_bar_color = QColor("#D97706" if self._dark_mode else "#B45309")
+        else:
+            card_bg = QColor("#202020" if self._dark_mode else "#F7F6F3")
+            card_bd = QColor("#2F2F2F" if self._dark_mode else "#E5E7EB")
+            quote_bar_color = QColor("#FFFFFF" if self._dark_mode else "#111827")
 
         # 1. Disegna card arrotondate (8px) per tutti i QTextFrame di tipo code/bibtex
         root = self.document().rootFrame()
@@ -1733,7 +1849,16 @@ class ScientificNoteEditor(QTextEdit):
             if enabled:
                 self.highlighter.set_enabled(False)
                 self.setReadOnly(True)
-                self.setHtml(markdown_to_studio_html(self._raw_markdown, BASE_DATA_DIR, dark_mode=self._dark_mode))
+                self.setHtml(
+                    markdown_to_studio_html(
+                        self._raw_markdown,
+                        BASE_DATA_DIR,
+                        dark_mode=self._dark_mode,
+                        reading_mode=self._reading_mode,
+                        font_family_css=self._font_family_css,
+                        font_scale_pct=self._font_scale_pct,
+                    )
+                )
             else:
                 self.setReadOnly(False)
                 self.highlighter.set_enabled(True)

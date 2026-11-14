@@ -14,13 +14,19 @@ Regole UI (AGENTS.md §7): solo QSS valido Qt6, form/ricerche fuori dalla QScrol
 con altezza minima esplicita, liste scorrevoli anti-compressione.
 """
 
-from datetime import datetime
+from datetime import datetime, date as dt_date, timedelta
 from typing import Callable, Dict, List, Optional, Any
+import ctypes
+from ctypes import wintypes
 import os
 import re
 import tempfile
 import threading
 import pyperclip
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # Compatibilità PyAV >= 13/14 con Faster-Whisper
 try:
@@ -39,17 +45,21 @@ except Exception:
 import math
 import random
 
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QPointF, QRectF, QLineF, QSettings, QByteArray, QSize
+from PyQt6.QtCore import (
+    Qt, QTimer, QThread, pyqtSignal, QPoint, QPointF, QRect, QRectF, QLineF,
+    QSettings, QByteArray, QSize, QDate, QLocale,
+    QPropertyAnimation, QParallelAnimationGroup, QEasingCurve,
+)
 from PyQt6.QtGui import (
-    QPainter, QPen, QBrush, QColor, QFont, QPainterPath, QRadialGradient,
-    QLinearGradient, QCursor, QPolygonF, QIcon, QPixmap, QKeySequence, QShortcut
+    QPainter, QPen, QBrush, QColor, QFont, QFontMetrics, QPainterPath, QRadialGradient,
+    QLinearGradient, QCursor, QPolygonF, QIcon, QPixmap, QKeySequence, QShortcut, QTextCharFormat
 )
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QDialog, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-    QLineEdit, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
+    QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+    QLineEdit, QListWidget, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QGraphicsView, QGraphicsScene, QGraphicsItem,
-    QComboBox, QTreeWidget, QTreeWidgetItem, QSplitter
+    QComboBox, QFontComboBox, QSlider, QSpinBox, QTreeWidget, QTreeWidgetItem, QSplitter
 )
 
 from database import db
@@ -78,8 +88,31 @@ except Exception:
 
 # =====================================================================
 # STYLESHEET GLOBALE MULTI-TEMA (solo proprietà QSS supportate da Qt6)
-# Temi: "obsidian" (scuro), "light" (chiaro minimale), "orb" (chiaro aurora 3 fuochi)
+# Temi: "obsidian" (scuro), "light" (chiaro minimale), "orb" (chiaro aurora 3 fuochi),
+#       "dark_orb" (scuro obsidian + riflessi aurora 3 fuochi),
+#       "ghibli_spring" (floreale anime pastello), "pixel_chill" (arcade 16-bit lo-fi),
+#       "katana" (dark fantasy affilato metallico),
+#       "tactical_hud" (visore tattico notturno), "industrial_mecha" (hangar robotico heavy-duty),
+#       "amber_crt" (terminale fosforo ambra anni '80), "starfield_alabaster" (NASA-punk ceramica/ottone),
+#       "cyber_synthwave" (outrun neon ciano/magenta)
+# Modalità Lettura: overlay di toni caldi riposanti (seppia / ambra espresso)
 # =====================================================================
+_DARK_THEME_KEYS = {
+    "obsidian",
+    "dark_orb",
+    "pixel_chill",
+    "katana",
+    "tactical_hud",
+    "industrial_mecha",
+    "amber_crt",
+    "cyber_synthwave",
+}
+
+
+def _is_dark_theme(theme_key: str) -> bool:
+    return theme_key in _DARK_THEME_KEYS
+
+
 _THEME_PALETTES = {
     "obsidian": {
         "text": "#E2E8F0",
@@ -276,7 +309,1817 @@ _THEME_PALETTES = {
         "nk_pill_hover_bg": "#E2E8F0",
         "chevron_color": "#64748B",
     },
+    "dark_orb": {
+        "text": "#F1F5F9",
+        "title": "#F8FAFC",
+        "subtitle": "#BAE6FD",
+        "muted": "#7DD3FC",
+        "sec_header": "#38BDF8",
+        "root_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #0C2D48, stop:0.48 #241242, stop:1 #0A3328)"
+        ),
+        "sidebar_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 #0E3250, stop:0.50 #28144A, stop:1 #0B382C)"
+        ),
+        "sidebar_border": "rgba(56, 189, 248, 0.45)",
+        "nav_hover": "rgba(56, 189, 248, 0.16)",
+        "nav_hover_text": "#FFFFFF",
+        "nav_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(56, 189, 248, 0.44), stop:0.52 rgba(168, 85, 247, 0.40), stop:1 rgba(16, 185, 129, 0.34))"
+        ),
+        "nav_checked_border": "rgba(56, 189, 248, 0.65)",
+        "nav_checked_text": "#FFFFFF",
+        "surface_soft": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(56, 189, 248, 0.14), stop:0.50 rgba(168, 85, 247, 0.14), stop:1 rgba(16, 185, 129, 0.12))"
+        ),
+        "card_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 rgba(14, 52, 82, 0.65), stop:0.52 rgba(42, 20, 74, 0.60), stop:1 rgba(12, 54, 42, 0.60))"
+        ),
+        "card_hover_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 rgba(20, 70, 108, 0.82), stop:0.52 rgba(58, 28, 102, 0.78), stop:1 rgba(16, 72, 56, 0.78))"
+        ),
+        "card_border": "rgba(56, 189, 248, 0.38)",
+        "card_hover_border": "rgba(168, 85, 247, 0.70)",
+        "card_body": "#E2E8F0",
+        "input_bg": "rgba(10, 34, 56, 0.82)",
+        "input_focus_bg": "rgba(16, 48, 78, 0.95)",
+        "input_border": "rgba(56, 189, 248, 0.42)",
+        "input_text": "#F8FAFC",
+        "btn_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(14, 56, 88, 0.78), stop:0.52 rgba(46, 22, 82, 0.74), stop:1 rgba(12, 58, 44, 0.74))"
+        ),
+        "btn_hover_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(24, 82, 126, 0.92), stop:0.52 rgba(68, 32, 118, 0.88), stop:1 rgba(18, 82, 64, 0.88))"
+        ),
+        "btn_pressed_bg": "#0D2338",
+        "btn_border": "rgba(56, 189, 248, 0.42)",
+        "btn_hover_border": "rgba(168, 85, 247, 0.75)",
+        "btn_text": "#F1F5F9",
+        "pill_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(14, 52, 82, 0.72), stop:0.55 rgba(44, 20, 78, 0.68), stop:1 rgba(12, 54, 42, 0.68))"
+        ),
+        "pill_border": "rgba(56, 189, 248, 0.40)",
+        "pill_hover_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(24, 76, 118, 0.88), stop:0.55 rgba(64, 30, 112, 0.85), stop:1 rgba(18, 76, 58, 0.85))"
+        ),
+        "pill_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(56, 189, 248, 0.45), stop:0.52 rgba(168, 85, 247, 0.42), stop:1 rgba(16, 185, 129, 0.36))"
+        ),
+        "pill_checked_text": "#F0F9FF",
+        "badge_bg": "rgba(56, 189, 248, 0.24)",
+        "badge_border": "rgba(56, 189, 248, 0.55)",
+        "badge_text": "#BAE6FD",
+        "badge_muted_bg": "rgba(168, 85, 247, 0.24)",
+        "badge_muted_border": "rgba(168, 85, 247, 0.50)",
+        "badge_muted_text": "#E9D5FF",
+        "engine_bg": "rgba(16, 185, 129, 0.22)",
+        "engine_border": "rgba(16, 185, 129, 0.52)",
+        "engine_text": "#6EE7B7",
+        "shortcut_key_bg": "rgba(56, 189, 248, 0.22)",
+        "shortcut_key_border": "rgba(56, 189, 248, 0.52)",
+        "shortcut_key_text": "#7DD3FC",
+        "scroll_handle": "rgba(56, 189, 248, 0.45)",
+        "dialog_bg": "#0D2036",
+        "combo_popup_bg": "#0D2036",
+        "divider": "rgba(56, 189, 248, 0.30)",
+        "editor_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #091E30, stop:0.50 #180D2E, stop:1 #07221B)"
+        ),
+        "nk_container_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #0A253B, stop:0.50 #1E1038, stop:1 #082B22)"
+        ),
+        "nk_sidebar_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 rgba(14, 58, 90, 0.75), stop:0.52 rgba(48, 22, 84, 0.75), stop:1 rgba(12, 60, 46, 0.75))"
+        ),
+        "nk_card_active_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(56, 189, 248, 0.36), stop:0.55 rgba(168, 85, 247, 0.34), stop:1 rgba(16, 185, 129, 0.28))"
+        ),
+        "nk_pill_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(56, 189, 248, 0.22), stop:0.55 rgba(168, 85, 247, 0.22), stop:1 rgba(16, 185, 129, 0.18))"
+        ),
+        "nk_pill_hover_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 rgba(56, 189, 248, 0.36), stop:0.55 rgba(168, 85, 247, 0.34), stop:1 rgba(16, 185, 129, 0.28))"
+        ),
+        "chevron_color": "#7DD3FC",
+    },
+    "ghibli_spring": {
+        "text": "#2D312E",
+        "title": "#222623",
+        "subtitle": "#525B54",
+        "muted": "#6E7870",
+        "sec_header": "#5B9BD5",
+        "root_bg": "#FCF9F2",
+        "sidebar_bg": "#EDF3E8",
+        "sidebar_border": "#D3E2CA",
+        "nav_hover": "rgba(242, 132, 158, 0.16)",
+        "nav_hover_text": "#2D312E",
+        "nav_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #F69DB2, stop:1 #F2849E)"
+        ),
+        "nav_checked_border": "#D96B85",
+        "nav_checked_text": "#FFFFFF",
+        "surface_soft": "#EBF3F9",
+        "card_bg": "#EDF3E8",
+        "card_hover_bg": "#F4F8F0",
+        "card_border": "#CFE0C5",
+        "card_hover_border": "#F2849E",
+        "card_body": "#2D312E",
+        "input_bg": "#FFFFFF",
+        "input_focus_bg": "#FFFDF9",
+        "input_border": "#C5D9BC",
+        "input_text": "#2D312E",
+        "btn_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #F69DB2, stop:1 #F2849E)"
+        ),
+        "btn_hover_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #FFADC0, stop:1 #F69DB2)"
+        ),
+        "btn_pressed_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #F2849E, stop:1 #D96B85)"
+        ),
+        "btn_border": "#F7B2C4",
+        "btn_hover_border": "#F7B2C4",
+        "btn_text": "#FFFFFF",
+        "pill_bg": "#EBF3F9",
+        "pill_border": "#BFD8EC",
+        "pill_hover_bg": "#DCECF8",
+        "pill_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #F69DB2, stop:1 #F2849E)"
+        ),
+        "pill_checked_text": "#FFFFFF",
+        "badge_bg": "#EBF3F9",
+        "badge_border": "#5B9BD5",
+        "badge_text": "#2B6CB0",
+        "badge_muted_bg": "#FEF6DF",
+        "badge_muted_border": "#F4C44E",
+        "badge_muted_text": "#9C6B10",
+        "engine_bg": "#E2F0DA",
+        "engine_border": "#8CC078",
+        "engine_text": "#2E6B22",
+        "shortcut_key_bg": "#FEF6DF",
+        "shortcut_key_border": "#F4C44E",
+        "shortcut_key_text": "#9C6B10",
+        "scroll_handle": "#F2849E",
+        "scroll_handle_hover": "#D96B85",
+        "dialog_bg": "#FCF9F2",
+        "combo_popup_bg": "#FCF9F2",
+        "divider": "#D3E2CA",
+        "editor_bg": "#FCF9F2",
+        "nk_container_bg": "#FCF9F2",
+        "nk_sidebar_bg": "#EDF3E8",
+        "nk_card_active_bg": "#FADCE4",
+        "nk_pill_bg": "#EBF3F9",
+        "nk_pill_hover_bg": "#DCECF8",
+        "chevron_color": "#5B9BD5",
+        "focus_border": "#F2849E",
+        "selection_bg": "#F2849E",
+        "accent": "#F2849E",
+        "primary_grad": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #F69DB2, stop:1 #F2849E)"
+        ),
+        "primary_hover_grad": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #FFADC0, stop:1 #F69DB2)"
+        ),
+        "card_radius": "14px",
+        "input_radius": "14px",
+        "combo_radius": "14px",
+        "btn_radius": "18px",
+        "pill_radius": "18px",
+        "top_box_radius": "18px",
+        "top_btn_radius": "15px",
+        "sub_btn_radius": "14px",
+        "nav_btn_radius": "16px",
+        "nk_radius": "14px",
+        "badge_radius": "12px",
+        "small_radius": "10px",
+        "scroll_radius": "3px",
+        "scroll_width": "6px",
+        "card_border_qss": "border: 1px solid #CFE0C5; border-bottom: 2px solid #B8D0AA;",
+        "card_hover_border_qss": "border: 1px solid #F2849E; border-bottom: 2px solid #D96B85;",
+        "input_border_qss": "border: 1px solid #C5D9BC; border-bottom: 2px solid #AFC9A4;",
+        "input_focus_border_qss": "border: 1px solid #F2849E; border-bottom: 2px solid #D96B85;",
+        "topbar_border_qss": "border-bottom: 2px solid #D3E2CA;",
+        "sidebar_border_qss": "border-right: 2px solid #D3E2CA;",
+        "top_box_border_qss": "border: 1px solid #BFD8EC; border-bottom: 2px solid #A4C7E4;",
+        "btn_padding": "4px 16px",
+        "btn_border_qss": "border: 1px solid #F7B2C4; border-bottom: 3px solid #D96B85;",
+        "btn_hover_qss": (
+            "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FFADC0, stop:1 #F69DB2);\n"
+            "    border: 1px solid #F7B2C4;\n"
+            "    border-bottom: 3px solid #D96B85;\n"
+            "    color: #FFFFFF;"
+        ),
+        "btn_pressed_qss": (
+            "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #F2849E, stop:1 #D96B85);\n"
+            "    border: 1px solid #D96B85;\n"
+            "    border-bottom: 1px solid #D96B85;\n"
+            "    padding-top: 6px;\n"
+            "    padding-bottom: 2px;"
+        ),
+        "primary_border_qss": "border: 1px solid #F7B2C4; border-bottom: 3px solid #D96B85;",
+        "primary_hover_qss": (
+            "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #FFADC0, stop:1 #F69DB2);\n"
+            "    border: 1px solid #F7B2C4;\n"
+            "    border-bottom: 3px solid #D96B85;\n"
+            "    color: #FFFFFF;"
+        ),
+        "primary_pressed_qss": (
+            "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #F2849E, stop:1 #D96B85);\n"
+            "    border: 1px solid #D96B85;\n"
+            "    border-bottom: 1px solid #D96B85;\n"
+            "    padding-top: 6px;\n"
+            "    padding-bottom: 2px;"
+        ),
+        "top_btn_hover_qss": (
+            "color: #2D312E;\n"
+            "    background-color: rgba(242, 132, 158, 0.16);\n"
+            "    border: 1px solid #F7B2C4;"
+        ),
+        "top_btn_pressed_qss": (
+            "background-color: rgba(242, 132, 158, 0.28);\n"
+            "    padding-top: 7px;\n"
+            "    padding-bottom: 3px;"
+        ),
+        "top_btn_checked_qss": (
+            "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #F69DB2, stop:1 #F2849E);\n"
+            "    border: 1px solid #F7B2C4;\n"
+            "    border-bottom: 2px solid #D96B85;\n"
+            "    color: #FFFFFF;"
+        ),
+        "pill_border_qss": "border: 1px solid #BFD8EC; border-bottom: 2px solid #A4C7E4;",
+        "pill_hover_qss": (
+            "background-color: #DCECF8;\n"
+            "    border: 1px solid #5B9BD5;\n"
+            "    border-bottom: 2px solid #4A86C0;\n"
+            "    color: #222623;"
+        ),
+        "pill_pressed_qss": (
+            "border-bottom: 1px solid #D96B85;\n"
+            "    padding-top: 2px;"
+        ),
+        "pill_checked_qss": (
+            "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #F69DB2, stop:1 #F2849E);\n"
+            "    border: 1px solid #F7B2C4;\n"
+            "    border-bottom: 2px solid #D96B85;\n"
+            "    color: #FFFFFF;"
+        ),
+    },
+    "pixel_chill": {
+        "text": "#F0EAD6",
+        "title": "#F0EAD6",
+        "subtitle": "#DFC89A",
+        "muted": "#A9B4B8",
+        "sec_header": "#8CA87C",
+        "root_bg": "#4A5559",
+        "sidebar_bg": "#374044",
+        "sidebar_border": "#1E2426",
+        "nav_hover": "#4A5559",
+        "nav_hover_text": "#F0EAD6",
+        "nav_checked_bg": "#D94E34",
+        "nav_checked_border": "#1E2426",
+        "nav_checked_text": "#F0EAD6",
+        "surface_soft": "#3E484C",
+        "card_bg": "#374044",
+        "card_hover_bg": "#3F494E",
+        "card_border": "#1E2426",
+        "card_hover_border": "#8CA87C",
+        "card_body": "#F0EAD6",
+        "input_bg": "#2B3236",
+        "input_focus_bg": "#23292C",
+        "input_border": "#1E2426",
+        "input_text": "#F0EAD6",
+        "btn_bg": "#D94E34",
+        "btn_hover_bg": "#E55A40",
+        "btn_pressed_bg": "#C04129",
+        "btn_border": "#1E2426",
+        "btn_hover_border": "#1E2426",
+        "btn_text": "#F0EAD6",
+        "pill_bg": "#374044",
+        "pill_border": "#1E2426",
+        "pill_hover_bg": "#4A5559",
+        "pill_checked_bg": "#D94E34",
+        "pill_checked_text": "#F0EAD6",
+        "badge_bg": "#2B3236",
+        "badge_border": "#8CA87C",
+        "badge_text": "#8CA87C",
+        "badge_muted_bg": "#2B3236",
+        "badge_muted_border": "#DFC89A",
+        "badge_muted_text": "#DFC89A",
+        "engine_bg": "#2B3629",
+        "engine_border": "#8CA87C",
+        "engine_text": "#A5C494",
+        "shortcut_key_bg": "#2B3236",
+        "shortcut_key_border": "#DFC89A",
+        "shortcut_key_text": "#DFC89A",
+        "scroll_handle": "#8CA87C",
+        "scroll_handle_hover": "#DFC89A",
+        "dialog_bg": "#374044",
+        "combo_popup_bg": "#2B3236",
+        "divider": "#1E2426",
+        "editor_bg": "#2E363A",
+        "nk_container_bg": "#374044",
+        "nk_sidebar_bg": "#2F373B",
+        "nk_card_active_bg": "#4A5559",
+        "nk_pill_bg": "#2B3236",
+        "nk_pill_hover_bg": "#4A5559",
+        "chevron_color": "#DFC89A",
+        "focus_border": "#8CA87C",
+        "selection_bg": "#D94E34",
+        "accent": "#D94E34",
+        "primary_grad": "#D94E34",
+        "primary_hover_grad": "#E55A40",
+        "font_family": "'Consolas', 'JetBrains Mono', 'Courier New', monospace",
+        "card_radius": "0px",
+        "input_radius": "0px",
+        "combo_radius": "0px",
+        "btn_radius": "0px",
+        "pill_radius": "0px",
+        "top_box_radius": "0px",
+        "top_btn_radius": "0px",
+        "sub_btn_radius": "0px",
+        "nav_btn_radius": "0px",
+        "nk_radius": "0px",
+        "badge_radius": "0px",
+        "small_radius": "0px",
+        "scroll_radius": "0px",
+        "scroll_width": "8px",
+        "card_border_qss": (
+            "border-top: 2px solid #627075;\n"
+            "    border-left: 2px solid #627075;\n"
+            "    border-right: 3px solid #1E2426;\n"
+            "    border-bottom: 3px solid #1E2426;"
+        ),
+        "card_hover_border_qss": (
+            "border-top: 2px solid #8CA87C;\n"
+            "    border-left: 2px solid #8CA87C;\n"
+            "    border-right: 3px solid #1E2426;\n"
+            "    border-bottom: 3px solid #1E2426;"
+        ),
+        "input_border_qss": (
+            "border-top: 2px solid #1E2426;\n"
+            "    border-left: 2px solid #1E2426;\n"
+            "    border-right: 2px solid #627075;\n"
+            "    border-bottom: 2px solid #627075;"
+        ),
+        "input_focus_border_qss": (
+            "border-top: 2px solid #8CA87C;\n"
+            "    border-left: 2px solid #8CA87C;\n"
+            "    border-right: 2px solid #DFC89A;\n"
+            "    border-bottom: 2px solid #DFC89A;"
+        ),
+        "topbar_border_qss": "border-bottom: 3px solid #1E2426;",
+        "sidebar_border_qss": "border-right: 3px solid #1E2426;",
+        "top_box_border_qss": (
+            "border-top: 2px solid #627075;\n"
+            "    border-left: 2px solid #627075;\n"
+            "    border-right: 3px solid #1E2426;\n"
+            "    border-bottom: 3px solid #1E2426;"
+        ),
+        "btn_padding": "6px 14px",
+        "btn_border_qss": (
+            "border-top: 2px solid #F07B65;\n"
+            "    border-left: 2px solid #F07B65;\n"
+            "    border-right: 4px solid #1E2426;\n"
+            "    border-bottom: 4px solid #1E2426;"
+        ),
+        "btn_hover_qss": (
+            "background-color: #E55A40;\n"
+            "    border-top: 2px solid #F07B65;\n"
+            "    border-left: 2px solid #F07B65;\n"
+            "    border-right: 4px solid #1E2426;\n"
+            "    border-bottom: 4px solid #1E2426;"
+        ),
+        "btn_pressed_qss": (
+            "background-color: #C04129;\n"
+            "    border-right: 1px solid #1E2426;\n"
+            "    border-bottom: 1px solid #1E2426;\n"
+            "    border-top: 2px solid #1E2426;\n"
+            "    border-left: 2px solid #1E2426;\n"
+            "    padding-top: 9px;\n"
+            "    padding-left: 17px;\n"
+            "    padding-bottom: 3px;\n"
+            "    padding-right: 11px;"
+        ),
+        "primary_border_qss": (
+            "border-top: 2px solid #F07B65;\n"
+            "    border-left: 2px solid #F07B65;\n"
+            "    border-right: 4px solid #1E2426;\n"
+            "    border-bottom: 4px solid #1E2426;"
+        ),
+        "primary_hover_qss": (
+            "background-color: #E55A40;\n"
+            "    border-top: 2px solid #F07B65;\n"
+            "    border-left: 2px solid #F07B65;\n"
+            "    border-right: 4px solid #1E2426;\n"
+            "    border-bottom: 4px solid #1E2426;"
+        ),
+        "primary_pressed_qss": (
+            "background-color: #C04129;\n"
+            "    border-right: 1px solid #1E2426;\n"
+            "    border-bottom: 1px solid #1E2426;\n"
+            "    border-top: 2px solid #1E2426;\n"
+            "    border-left: 2px solid #1E2426;\n"
+            "    padding-top: 9px;\n"
+            "    padding-left: 17px;\n"
+            "    padding-bottom: 3px;\n"
+            "    padding-right: 11px;"
+        ),
+        "top_btn_hover_qss": (
+            "color: #F0EAD6;\n"
+            "    background-color: #4A5559;\n"
+            "    border-top: 2px solid #627075;\n"
+            "    border-left: 2px solid #627075;\n"
+            "    border-right: 2px solid #1E2426;\n"
+            "    border-bottom: 2px solid #1E2426;"
+        ),
+        "top_btn_pressed_qss": (
+            "background-color: #C04129;\n"
+            "    border: 2px solid #1E2426;\n"
+            "    padding-top: 7px;\n"
+            "    padding-left: 18px;\n"
+            "    padding-bottom: 3px;\n"
+            "    padding-right: 14px;"
+        ),
+        "top_btn_checked_qss": (
+            "background-color: #D94E34;\n"
+            "    border-top: 2px solid #F07B65;\n"
+            "    border-left: 2px solid #F07B65;\n"
+            "    border-right: 3px solid #1E2426;\n"
+            "    border-bottom: 3px solid #1E2426;\n"
+            "    color: #F0EAD6;"
+        ),
+        "pill_border_qss": (
+            "border-top: 2px solid #627075;\n"
+            "    border-left: 2px solid #627075;\n"
+            "    border-right: 3px solid #1E2426;\n"
+            "    border-bottom: 3px solid #1E2426;"
+        ),
+        "pill_hover_qss": (
+            "background-color: #4A5559;\n"
+            "    border-top: 2px solid #8CA87C;\n"
+            "    border-left: 2px solid #8CA87C;\n"
+            "    border-right: 3px solid #1E2426;\n"
+            "    border-bottom: 3px solid #1E2426;\n"
+            "    color: #F0EAD6;"
+        ),
+        "pill_pressed_qss": (
+            "border: 1px solid #1E2426;\n"
+            "    padding-top: 2px;\n"
+            "    padding-left: 16px;\n"
+            "    padding-right: 12px;"
+        ),
+        "pill_checked_qss": (
+            "background-color: #D94E34;\n"
+            "    border-top: 2px solid #F07B65;\n"
+            "    border-left: 2px solid #F07B65;\n"
+            "    border-right: 3px solid #1E2426;\n"
+            "    border-bottom: 3px solid #1E2426;\n"
+            "    color: #F0EAD6;"
+        ),
+    },
+    "katana": {
+        "text": "#E5DEC9",
+        "title": "#F2ECE1",
+        "subtitle": "#C59B5F",
+        "muted": "#8C7F70",
+        "sec_header": "#C59B5F",
+        "root_bg": "#141111",
+        "sidebar_bg": "#1F1A1A",
+        "sidebar_border": "#3D312A",
+        "nav_hover": "#2A1A1A",
+        "nav_hover_text": "#FFFFFF",
+        "nav_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #591515, stop:0.45 #8F1D1D, stop:0.5 #C92A2A, stop:0.55 #8F1D1D, stop:1 #2A1212)"
+        ),
+        "nav_checked_border": "#C59B5F",
+        "nav_checked_text": "#FFFFFF",
+        "surface_soft": "#1A1515",
+        "card_bg": "#1F1A1A",
+        "card_hover_bg": "#272020",
+        "card_border": "#3D312A",
+        "card_hover_border": "#C59B5F",
+        "card_body": "#E5DEC9",
+        "input_bg": "#181313",
+        "input_focus_bg": "#211919",
+        "input_border": "#3D312A",
+        "input_text": "#E5DEC9",
+        "btn_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #2A2222, stop:0.5 #1A1414, stop:1 #241A1A)"
+        ),
+        "btn_hover_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #591515, stop:0.45 #8F1D1D, stop:0.5 #D93838, stop:0.55 #8F1D1D, stop:1 #2A1212)"
+        ),
+        "btn_pressed_bg": "#3D0E0E",
+        "btn_border": "#7A603B",
+        "btn_hover_border": "#E6B875",
+        "btn_text": "#E5DEC9",
+        "pill_bg": "#1F1A1A",
+        "pill_border": "#3D312A",
+        "pill_hover_bg": "#2D1818",
+        "pill_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #591515, stop:0.45 #8F1D1D, stop:0.5 #C92A2A, stop:0.55 #8F1D1D, stop:1 #2A1212)"
+        ),
+        "pill_checked_text": "#FFFFFF",
+        "badge_bg": "rgba(201, 42, 42, 0.18)",
+        "badge_border": "#C92A2A",
+        "badge_text": "#FF8787",
+        "badge_muted_bg": "rgba(197, 155, 95, 0.14)",
+        "badge_muted_border": "#C59B5F",
+        "badge_muted_text": "#E6B875",
+        "engine_bg": "rgba(197, 155, 95, 0.15)",
+        "engine_border": "#C59B5F",
+        "engine_text": "#E6B875",
+        "shortcut_key_bg": "rgba(201, 42, 42, 0.18)",
+        "shortcut_key_border": "#C59B5F",
+        "shortcut_key_text": "#E5DEC9",
+        "scroll_handle": "#7A603B",
+        "scroll_handle_hover": "#C92A2A",
+        "dialog_bg": "#181414",
+        "combo_popup_bg": "#181414",
+        "divider": "#3D312A",
+        "editor_bg": "#161212",
+        "nk_container_bg": "#181414",
+        "nk_sidebar_bg": "#1F1A1A",
+        "nk_card_active_bg": "rgba(201, 42, 42, 0.24)",
+        "nk_pill_bg": "#261F1F",
+        "nk_pill_hover_bg": "#382626",
+        "chevron_color": "#C59B5F",
+        "focus_border": "#C92A2A",
+        "selection_bg": "#C92A2A",
+        "accent": "#C92A2A",
+        "primary_grad": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #2A2222, stop:0.5 #1A1414, stop:1 #241A1A)"
+        ),
+        "primary_hover_grad": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #591515, stop:0.45 #8F1D1D, stop:0.5 #D93838, stop:0.55 #8F1D1D, stop:1 #2A1212)"
+        ),
+        "card_radius": "2px",
+        "input_radius": "2px",
+        "combo_radius": "2px",
+        "btn_radius": "2px",
+        "pill_radius": "2px",
+        "top_box_radius": "2px",
+        "top_btn_radius": "2px",
+        "sub_btn_radius": "2px",
+        "nav_btn_radius": "2px",
+        "nk_radius": "2px",
+        "badge_radius": "2px",
+        "small_radius": "2px",
+        "scroll_radius": "1px",
+        "scroll_width": "5px",
+        "card_border_qss": "border: 1px solid #3D312A; border-top: 1px solid #6E583B;",
+        "card_hover_border_qss": "border: 1px solid #7A603B; border-top: 1px solid #C59B5F; border-left: 2px solid #C92A2A;",
+        "input_border_qss": "border: 1px solid #3D312A; border-left: 2px solid #7A603B;",
+        "input_focus_border_qss": "border: 1px solid #C59B5F; border-left: 3px solid #C92A2A;",
+        "topbar_border_qss": "border-bottom: 1px solid #6E583B;",
+        "sidebar_border_qss": "border-right: 1px solid #6E583B;",
+        "top_box_border_qss": "border: 1px solid #3D312A; border-top: 1px solid #6E583B;",
+        "btn_padding": "5px 13px",
+        "btn_border_qss": "border: 1px solid #7A603B; border-left: 3px solid #C59B5F;",
+        "btn_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #591515, stop:0.45 #8F1D1D, stop:0.5 #D93838, stop:0.55 #8F1D1D, stop:1 #2A1212);\n"
+            "    border: 1px solid #E6B875;\n"
+            "    border-left: 3px solid #FF4D4D;\n"
+            "    color: #FFFFFF;"
+        ),
+        "btn_pressed_qss": (
+            "background-color: #3D0E0E;\n"
+            "    border-color: #C92A2A;\n"
+            "    padding-top: 7px;\n"
+            "    padding-left: 15px;\n"
+            "    padding-bottom: 3px;\n"
+            "    padding-right: 11px;"
+        ),
+        "primary_border_qss": "border: 1px solid #7A603B; border-left: 3px solid #C59B5F;",
+        "primary_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #591515, stop:0.45 #8F1D1D, stop:0.5 #D93838, stop:0.55 #8F1D1D, stop:1 #2A1212);\n"
+            "    border: 1px solid #E6B875;\n"
+            "    border-left: 3px solid #FF4D4D;\n"
+            "    color: #FFFFFF;"
+        ),
+        "primary_pressed_qss": (
+            "background-color: #3D0E0E;\n"
+            "    border-color: #C92A2A;\n"
+            "    padding-top: 7px;\n"
+            "    padding-left: 15px;\n"
+            "    padding-bottom: 3px;\n"
+            "    padding-right: 11px;"
+        ),
+        "top_btn_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #591515, stop:0.45 #8F1D1D, stop:0.5 #D93838, stop:0.55 #8F1D1D, stop:1 #2A1212);\n"
+            "    border: 1px solid #E6B875;\n"
+            "    border-left: 3px solid #FF4D4D;\n"
+            "    color: #FFFFFF;"
+        ),
+        "top_btn_pressed_qss": (
+            "background-color: #3D0E0E;\n"
+            "    border-color: #C92A2A;\n"
+            "    padding-top: 7px;\n"
+            "    padding-left: 18px;\n"
+            "    padding-bottom: 3px;\n"
+            "    padding-right: 14px;"
+        ),
+        "top_btn_checked_qss": (
+            "background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #3A1818, stop:0.5 #241010, stop:1 #301414);\n"
+            "    border: 1px solid #7A603B;\n"
+            "    border-left: 3px solid #C59B5F;\n"
+            "    color: #FFFFFF;"
+        ),
+        "pill_border_qss": "border: 1px solid #7A603B; border-left: 2px solid #C59B5F;",
+        "pill_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #591515, stop:0.45 #8F1D1D, stop:0.5 #D93838, stop:0.55 #8F1D1D, stop:1 #2A1212);\n"
+            "    border: 1px solid #E6B875;\n"
+            "    border-left: 2px solid #FF4D4D;\n"
+            "    color: #FFFFFF;"
+        ),
+        "pill_pressed_qss": (
+            "background-color: #3D0E0E;\n"
+            "    border-color: #C92A2A;\n"
+            "    padding-top: 2px;\n"
+            "    padding-left: 15px;\n"
+            "    padding-right: 13px;"
+        ),
+        "pill_checked_qss": (
+            "background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, "
+            "stop:0 #591515, stop:0.45 #8F1D1D, stop:0.5 #C92A2A, stop:0.55 #8F1D1D, stop:1 #2A1212);\n"
+            "    border: 1px solid #C59B5F;\n"
+            "    border-left: 3px solid #FF4D4D;\n"
+            "    color: #FFFFFF;"
+        ),
+    },
+    "tactical_hud": {
+        "text": "#D4F5E2",
+        "title": "#D4F5E2",
+        "subtitle": "#6C9980",
+        "muted": "#507862",
+        "sec_header": "#00FF66",
+        "root_bg": "#0B0E11",
+        "sidebar_bg": "#13181D",
+        "sidebar_border": "#1E3A2B",
+        "nav_hover": "#152E20",
+        "nav_hover_text": "#FFFFFF",
+        "nav_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #152E20, stop:0.5 #1F4730, stop:1 #152E20)"
+        ),
+        "nav_checked_border": "#00FF66",
+        "nav_checked_text": "#00FF66",
+        "surface_soft": "#0F1419",
+        "card_bg": "#13181D",
+        "card_hover_bg": "#172026",
+        "card_border": "#1E3A2B",
+        "card_hover_border": "#00FF66",
+        "card_body": "#D4F5E2",
+        "input_bg": "#0D1317",
+        "input_focus_bg": "#111C16",
+        "input_border": "#1E3A2B",
+        "input_text": "#D4F5E2",
+        "btn_bg": "#111C16",
+        "btn_hover_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #152E20, stop:0.5 #1F4730, stop:1 #152E20)"
+        ),
+        "btn_pressed_bg": "#00FF66",
+        "btn_border": "#1E3A2B",
+        "btn_hover_border": "#33FF85",
+        "btn_text": "#00FF66",
+        "pill_bg": "#111C16",
+        "pill_border": "#1E3A2B",
+        "pill_hover_bg": "#152E20",
+        "pill_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #152E20, stop:0.5 #1F4730, stop:1 #152E20)"
+        ),
+        "pill_checked_text": "#00FF66",
+        "badge_bg": "rgba(0, 255, 102, 0.12)",
+        "badge_border": "#00FF66",
+        "badge_text": "#00FF66",
+        "badge_muted_bg": "rgba(255, 176, 0, 0.12)",
+        "badge_muted_border": "#FFB000",
+        "badge_muted_text": "#FFB000",
+        "engine_bg": "rgba(0, 255, 102, 0.14)",
+        "engine_border": "#00FF66",
+        "engine_text": "#00FF66",
+        "shortcut_key_bg": "rgba(255, 176, 0, 0.14)",
+        "shortcut_key_border": "#FFB000",
+        "shortcut_key_text": "#FFB000",
+        "scroll_handle": "#1E3A2B",
+        "scroll_handle_hover": "#00FF66",
+        "dialog_bg": "#0B0E11",
+        "combo_popup_bg": "#0B0E11",
+        "divider": "#1E3A2B",
+        "editor_bg": "#0D1115",
+        "nk_container_bg": "#0F1419",
+        "nk_sidebar_bg": "#13181D",
+        "nk_card_active_bg": "rgba(0, 255, 102, 0.18)",
+        "nk_pill_bg": "#111C16",
+        "nk_pill_hover_bg": "#152E20",
+        "chevron_color": "#00FF66",
+        "focus_border": "#00FF66",
+        "selection_bg": "#1F4730",
+        "accent": "#00FF66",
+        "danger_color": "#FF2A2A",
+        "primary_grad": "#111C16",
+        "primary_hover_grad": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #152E20, stop:0.5 #1F4730, stop:1 #152E20)"
+        ),
+        "font_family": "'JetBrains Mono', 'Consolas', 'Courier New', monospace",
+        "card_radius": "0px",
+        "input_radius": "0px",
+        "combo_radius": "0px",
+        "btn_radius": "0px",
+        "pill_radius": "0px",
+        "top_box_radius": "0px",
+        "top_btn_radius": "0px",
+        "sub_btn_radius": "0px",
+        "nav_btn_radius": "0px",
+        "nk_radius": "0px",
+        "badge_radius": "0px",
+        "small_radius": "0px",
+        "scroll_radius": "0px",
+        "scroll_width": "6px",
+        "card_border_qss": "border: 1px solid #1E3A2B; border-left: 3px solid #00FF66;",
+        "card_hover_border_qss": "border: 1px solid #00FF66; border-left: 3px solid #33FF85;",
+        "input_border_qss": "border-top: 1px solid #1E3A2B; border-bottom: 1px solid #1E3A2B; border-left: 3px solid #00FF66; border-right: 3px solid #00FF66;",
+        "input_focus_border_qss": "border-top: 1px solid #33FF85; border-bottom: 1px solid #33FF85; border-left: 4px solid #33FF85; border-right: 4px solid #33FF85;",
+        "topbar_border_qss": "border-bottom: 2px solid #00FF66;",
+        "sidebar_border_qss": "border-right: 2px solid #1E3A2B;",
+        "top_box_border_qss": "border-top: 1px solid #1E3A2B; border-bottom: 1px solid #1E3A2B; border-left: 3px solid #00FF66; border-right: 3px solid #00FF66;",
+        "btn_padding": "6px 14px",
+        "btn_border_qss": "border-top: 1px solid #1E3A2B; border-bottom: 1px solid #1E3A2B; border-left: 4px solid #00FF66; border-right: 4px solid #00FF66;",
+        "btn_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #152E20, stop:0.5 #1F4730, stop:1 #152E20);\n"
+            "    color: #FFFFFF;\n"
+            "    border-color: #33FF85;"
+        ),
+        "btn_pressed_qss": (
+            "background-color: #00FF66;\n"
+            "    color: #0B0E11;\n"
+            "    border-color: #00FF66;\n"
+            "    padding-top: 7px;\n"
+            "    padding-left: 15px;\n"
+            "    padding-bottom: 5px;\n"
+            "    padding-right: 13px;"
+        ),
+        "primary_text": "#00FF66",
+        "primary_border_qss": "border-top: 1px solid #00FF66; border-bottom: 1px solid #00FF66; border-left: 4px solid #00FF66; border-right: 4px solid #00FF66;",
+        "primary_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #152E20, stop:0.5 #1F4730, stop:1 #152E20);\n"
+            "    color: #FFFFFF;\n"
+            "    border-color: #33FF85;"
+        ),
+        "primary_pressed_qss": (
+            "background-color: #00FF66;\n"
+            "    color: #0B0E11;\n"
+            "    border-color: #00FF66;\n"
+            "    padding-top: 7px;\n"
+            "    padding-left: 15px;\n"
+            "    padding-bottom: 5px;\n"
+            "    padding-right: 13px;"
+        ),
+        "top_btn_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #152E20, stop:0.5 #1F4730, stop:1 #152E20);\n"
+            "    color: #FFFFFF;\n"
+            "    border-top: 1px solid #33FF85;\n"
+            "    border-bottom: 1px solid #33FF85;\n"
+            "    border-left: 3px solid #33FF85;\n"
+            "    border-right: 3px solid #33FF85;"
+        ),
+        "top_btn_pressed_qss": (
+            "background-color: #00FF66;\n"
+            "    color: #0B0E11;\n"
+            "    padding-top: 7px;\n"
+            "    padding-left: 17px;\n"
+            "    padding-bottom: 3px;\n"
+            "    padding-right: 15px;"
+        ),
+        "top_btn_checked_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #152E20, stop:0.5 #1F4730, stop:1 #152E20);\n"
+            "    color: #00FF66;\n"
+            "    border-top: 1px solid #1E3A2B;\n"
+            "    border-bottom: 1px solid #1E3A2B;\n"
+            "    border-left: 4px solid #00FF66;\n"
+            "    border-right: 4px solid #00FF66;"
+        ),
+        "pill_border_qss": "border-top: 1px solid #1E3A2B; border-bottom: 1px solid #1E3A2B; border-left: 3px solid #00FF66; border-right: 3px solid #00FF66;",
+        "pill_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #152E20, stop:0.5 #1F4730, stop:1 #152E20);\n"
+            "    color: #FFFFFF;\n"
+            "    border-color: #33FF85;"
+        ),
+        "pill_pressed_qss": (
+            "background-color: #00FF66;\n"
+            "    color: #0B0E11;\n"
+            "    padding-top: 2px;\n"
+            "    padding-left: 15px;\n"
+            "    padding-right: 13px;"
+        ),
+        "pill_checked_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #152E20, stop:0.5 #1F4730, stop:1 #152E20);\n"
+            "    color: #00FF66;\n"
+            "    border-top: 1px solid #33FF85;\n"
+            "    border-bottom: 1px solid #33FF85;\n"
+            "    border-left: 4px solid #00FF66;\n"
+            "    border-right: 4px solid #00FF66;"
+        ),
+    },
+    "industrial_mecha": {
+        "text": "#ECEEEF",
+        "title": "#ECEEEF",
+        "subtitle": "#9AA0A6",
+        "muted": "#7A8086",
+        "sec_header": "#F5B700",
+        "root_bg": "#232528",
+        "sidebar_bg": "#1A1C1E",
+        "sidebar_border": "#383B40",
+        "nav_hover": "#2F3338",
+        "nav_hover_text": "#FFFFFF",
+        "nav_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #32363B, stop:1 #26292D)"
+        ),
+        "nav_checked_border": "#FF5500",
+        "nav_checked_text": "#FFFFFF",
+        "surface_soft": "#1E2023",
+        "card_bg": "#1A1C1E",
+        "card_hover_bg": "#222528",
+        "card_border": "#383B40",
+        "card_hover_border": "#FF5500",
+        "card_body": "#ECEEEF",
+        "input_bg": "#16181A",
+        "input_focus_bg": "#1D2024",
+        "input_border": "#383B40",
+        "input_text": "#ECEEEF",
+        "btn_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #32363B, stop:1 #26292D)"
+        ),
+        "btn_hover_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #3E434A, stop:1 #2F3338)"
+        ),
+        "btn_pressed_bg": "#202225",
+        "btn_border": "#4A4F57",
+        "btn_hover_border": "#F5B700",
+        "btn_text": "#ECEEEF",
+        "pill_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #32363B, stop:1 #26292D)"
+        ),
+        "pill_border": "#383B40",
+        "pill_hover_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #3E434A, stop:1 #2F3338)"
+        ),
+        "pill_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #3E434A, stop:1 #26292D)"
+        ),
+        "pill_checked_text": "#FFFFFF",
+        "badge_bg": "rgba(255, 85, 0, 0.16)",
+        "badge_border": "#FF5500",
+        "badge_text": "#FF7733",
+        "badge_muted_bg": "rgba(245, 183, 0, 0.14)",
+        "badge_muted_border": "#F5B700",
+        "badge_muted_text": "#F5B700",
+        "engine_bg": "rgba(245, 183, 0, 0.15)",
+        "engine_border": "#F5B700",
+        "engine_text": "#F5B700",
+        "shortcut_key_bg": "rgba(255, 85, 0, 0.16)",
+        "shortcut_key_border": "#FF5500",
+        "shortcut_key_text": "#FF7733",
+        "scroll_handle": "#4A4F57",
+        "scroll_handle_hover": "#FF5500",
+        "dialog_bg": "#1A1C1E",
+        "combo_popup_bg": "#1A1C1E",
+        "divider": "#383B40",
+        "editor_bg": "#1D1F22",
+        "nk_container_bg": "#1A1C1E",
+        "nk_sidebar_bg": "#1A1C1E",
+        "nk_card_active_bg": "rgba(255, 85, 0, 0.22)",
+        "nk_pill_bg": "#26292D",
+        "nk_pill_hover_bg": "#32363B",
+        "chevron_color": "#F5B700",
+        "focus_border": "#FF5500",
+        "selection_bg": "#FF5500",
+        "accent": "#FF5500",
+        "primary_grad": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #32363B, stop:1 #26292D)"
+        ),
+        "primary_hover_grad": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #3E434A, stop:1 #2F3338)"
+        ),
+        "card_radius": "3px",
+        "input_radius": "3px",
+        "combo_radius": "3px",
+        "btn_radius": "3px",
+        "pill_radius": "3px",
+        "top_box_radius": "3px",
+        "top_btn_radius": "3px",
+        "sub_btn_radius": "3px",
+        "nav_btn_radius": "3px",
+        "nk_radius": "3px",
+        "badge_radius": "3px",
+        "small_radius": "3px",
+        "scroll_radius": "2px",
+        "scroll_width": "6px",
+        "card_border_qss": "border: 1px solid #383B40; border-bottom: 3px solid #141517;",
+        "card_hover_border_qss": "border: 1px solid #FF5500; border-bottom: 3px solid #141517; border-left: 4px solid #F5B700;",
+        "input_border_qss": "border: 1px solid #383B40; border-left: 3px solid #FF5500;",
+        "input_focus_border_qss": "border: 1px solid #F5B700; border-left: 4px solid #F5B700;",
+        "topbar_border_qss": "border-bottom: 2px solid #383B40;",
+        "sidebar_border_qss": "border-right: 2px solid #383B40;",
+        "top_box_border_qss": "border: 1px solid #383B40; border-bottom: 3px solid #141517;",
+        "btn_padding": "6px 14px",
+        "btn_border_qss": (
+            "border-top: 1px solid #4A4F57;\n"
+            "    border-right: 2px solid #141517;\n"
+            "    border-bottom: 4px solid #141517;\n"
+            "    border-left: 5px solid #FF5500;"
+        ),
+        "btn_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3E434A, stop:1 #2F3338);\n"
+            "    border-top: 1px solid #5A606A;\n"
+            "    border-right: 2px solid #141517;\n"
+            "    border-bottom: 4px solid #141517;\n"
+            "    border-left: 5px solid #F5B700;\n"
+            "    color: #FFFFFF;"
+        ),
+        "btn_pressed_qss": (
+            "background-color: #202225;\n"
+            "    border-bottom: 1px solid #141517;\n"
+            "    border-top: 2px solid #141517;\n"
+            "    border-right: 2px solid #141517;\n"
+            "    border-left: 5px solid #FF5500;\n"
+            "    padding-top: 9px;\n"
+            "    padding-bottom: 3px;"
+        ),
+        "primary_text": "#ECEEEF",
+        "primary_border_qss": (
+            "border-top: 1px solid #4A4F57;\n"
+            "    border-right: 2px solid #141517;\n"
+            "    border-bottom: 4px solid #141517;\n"
+            "    border-left: 5px solid #FF5500;"
+        ),
+        "primary_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3E434A, stop:1 #2F3338);\n"
+            "    border-top: 1px solid #5A606A;\n"
+            "    border-right: 2px solid #141517;\n"
+            "    border-bottom: 4px solid #141517;\n"
+            "    border-left: 5px solid #F5B700;\n"
+            "    color: #FFFFFF;"
+        ),
+        "primary_pressed_qss": (
+            "background-color: #202225;\n"
+            "    border-bottom: 1px solid #141517;\n"
+            "    border-top: 2px solid #141517;\n"
+            "    border-right: 2px solid #141517;\n"
+            "    border-left: 5px solid #FF5500;\n"
+            "    padding-top: 9px;\n"
+            "    padding-bottom: 3px;"
+        ),
+        "top_btn_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3E434A, stop:1 #2F3338);\n"
+            "    border-top: 1px solid #4A4F57;\n"
+            "    border-right: 1px solid #141517;\n"
+            "    border-bottom: 2px solid #141517;\n"
+            "    border-left: 4px solid #F5B700;\n"
+            "    color: #FFFFFF;"
+        ),
+        "top_btn_pressed_qss": (
+            "background-color: #202225;\n"
+            "    border-bottom: 1px solid #141517;\n"
+            "    border-top: 2px solid #141517;\n"
+            "    border-left: 4px solid #FF5500;\n"
+            "    padding-top: 7px;\n"
+            "    padding-bottom: 3px;"
+        ),
+        "top_btn_checked_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #32363B, stop:1 #26292D);\n"
+            "    border-top: 1px solid #4A4F57;\n"
+            "    border-right: 2px solid #141517;\n"
+            "    border-bottom: 3px solid #141517;\n"
+            "    border-left: 5px solid #FF5500;\n"
+            "    color: #FFFFFF;"
+        ),
+        "pill_border_qss": (
+            "border-top: 1px solid #4A4F57;\n"
+            "    border-right: 2px solid #141517;\n"
+            "    border-bottom: 3px solid #141517;\n"
+            "    border-left: 4px solid #FF5500;"
+        ),
+        "pill_hover_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3E434A, stop:1 #2F3338);\n"
+            "    border-top: 1px solid #5A606A;\n"
+            "    border-right: 2px solid #141517;\n"
+            "    border-bottom: 3px solid #141517;\n"
+            "    border-left: 4px solid #F5B700;\n"
+            "    color: #FFFFFF;"
+        ),
+        "pill_pressed_qss": (
+            "background-color: #202225;\n"
+            "    border-bottom: 1px solid #141517;\n"
+            "    border-top: 2px solid #141517;\n"
+            "    border-left: 4px solid #FF5500;\n"
+            "    padding-top: 3px;"
+        ),
+        "pill_checked_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #3E434A, stop:1 #26292D);\n"
+            "    border-top: 1px solid #5A606A;\n"
+            "    border-right: 2px solid #141517;\n"
+            "    border-bottom: 3px solid #141517;\n"
+            "    border-left: 5px solid #F5B700;\n"
+            "    color: #FFFFFF;"
+        ),
+    },
+    "amber_crt": {
+        "text": "#E6CFA8",
+        "title": "#E6CFA8",
+        "subtitle": "#B89C72",
+        "muted": "#7D6340",
+        "sec_header": "#FFB642",
+        "root_bg": "#120D07",
+        "sidebar_bg": "#1A1209",
+        "sidebar_border": "#4A3516",
+        "nav_hover": "#FFB642",
+        "nav_hover_text": "#120D07",
+        "nav_checked_bg": "#FFB642",
+        "nav_checked_border": "#FFB642",
+        "nav_checked_text": "#120D07",
+        "surface_soft": "#160F08",
+        "card_bg": "#1A1209",
+        "card_hover_bg": "#24190C",
+        "card_border": "#4A3516",
+        "card_hover_border": "#FFB642",
+        "card_body": "#E6CFA8",
+        "input_bg": "#140E07",
+        "input_focus_bg": "#1E150A",
+        "input_border": "#4A3516",
+        "input_text": "#E6CFA8",
+        "btn_bg": "#1A1209",
+        "btn_hover_bg": "#FFB642",
+        "btn_pressed_bg": "#CC8E2E",
+        "btn_border": "#4A3516",
+        "btn_hover_border": "#FFB642",
+        "btn_text": "#E6CFA8",
+        "pill_bg": "#1A1209",
+        "pill_border": "#4A3516",
+        "pill_hover_bg": "#FFB642",
+        "pill_checked_bg": "#FFB642",
+        "pill_checked_text": "#120D07",
+        "badge_bg": "rgba(255, 182, 66, 0.14)",
+        "badge_border": "#FFB642",
+        "badge_text": "#FFB642",
+        "badge_muted_bg": "rgba(74, 53, 22, 0.35)",
+        "badge_muted_border": "#4A3516",
+        "badge_muted_text": "#B89C72",
+        "engine_bg": "rgba(255, 182, 66, 0.16)",
+        "engine_border": "#FFB642",
+        "engine_text": "#FFB642",
+        "shortcut_key_bg": "rgba(255, 182, 66, 0.14)",
+        "shortcut_key_border": "#FFB642",
+        "shortcut_key_text": "#FFB642",
+        "scroll_handle": "#4A3516",
+        "scroll_handle_hover": "#FFB642",
+        "dialog_bg": "#120D07",
+        "combo_popup_bg": "#120D07",
+        "divider": "#4A3516",
+        "editor_bg": "#140E07",
+        "nk_container_bg": "#160F08",
+        "nk_sidebar_bg": "#1A1209",
+        "nk_card_active_bg": "rgba(255, 182, 66, 0.20)",
+        "nk_pill_bg": "#1A1209",
+        "nk_pill_hover_bg": "#2B1E0F",
+        "chevron_color": "#E6CFA8",
+        "focus_border": "#FFB642",
+        "selection_bg": "#7A541E",
+        "accent": "#FFB642",
+        "primary_grad": "#1F150A",
+        "primary_hover_grad": "#FFB642",
+        "font_family": "'Consolas', 'JetBrains Mono', 'Courier New', monospace",
+        "card_radius": "2px",
+        "input_radius": "2px",
+        "combo_radius": "2px",
+        "btn_radius": "2px",
+        "pill_radius": "2px",
+        "top_box_radius": "2px",
+        "top_btn_radius": "2px",
+        "sub_btn_radius": "2px",
+        "nav_btn_radius": "2px",
+        "nk_radius": "2px",
+        "badge_radius": "2px",
+        "small_radius": "2px",
+        "scroll_radius": "1px",
+        "scroll_width": "6px",
+        "card_border_qss": "border: 1px solid #4A3516; border-bottom: 2px solid #4A3516;",
+        "card_hover_border_qss": "border: 1px solid #FFB642; border-bottom: 2px solid #FFB642;",
+        "input_border_qss": "border: 1px solid #4A3516; border-bottom: 2px solid #4A3516;",
+        "input_focus_border_qss": "border: 1px solid #FFB642; border-bottom: 2px solid #FFB642;",
+        "topbar_border_qss": "border-bottom: 1px solid #4A3516;",
+        "sidebar_border_qss": "border-right: 1px solid #4A3516;",
+        "top_box_border_qss": "border: 1px solid #4A3516; border-bottom: 2px solid #4A3516;",
+        "btn_padding": "6px 14px",
+        "btn_border_qss": "border: 1px solid #4A3516; border-bottom: 2px solid #4A3516;",
+        "btn_hover_qss": (
+            "background-color: #FFB642;\n"
+            "    color: #120D07;\n"
+            "    border: 1px solid #FFB642;"
+        ),
+        "btn_pressed_qss": (
+            "background-color: #CC8E2E;\n"
+            "    color: #120D07;\n"
+            "    border: 1px solid #FFB642;\n"
+            "    padding-top: 8px;\n"
+            "    padding-left: 16px;\n"
+            "    padding-bottom: 4px;\n"
+            "    padding-right: 12px;"
+        ),
+        "primary_text": "#FFB642",
+        "primary_border_qss": "border: 1px solid #4A3516; border-bottom: 2px solid #FFB642;",
+        "primary_hover_qss": (
+            "background-color: #FFB642;\n"
+            "    color: #120D07;\n"
+            "    border: 1px solid #FFB642;"
+        ),
+        "primary_pressed_qss": (
+            "background-color: #CC8E2E;\n"
+            "    color: #120D07;\n"
+            "    border: 1px solid #FFB642;\n"
+            "    padding-top: 8px;\n"
+            "    padding-left: 16px;\n"
+            "    padding-bottom: 4px;\n"
+            "    padding-right: 12px;"
+        ),
+        "top_btn_hover_qss": (
+            "background-color: #FFB642;\n"
+            "    color: #120D07;\n"
+            "    border: 1px solid #FFB642;"
+        ),
+        "top_btn_pressed_qss": (
+            "background-color: #CC8E2E;\n"
+            "    color: #120D07;\n"
+            "    padding-top: 8px;\n"
+            "    padding-left: 18px;\n"
+            "    padding-bottom: 2px;\n"
+            "    padding-right: 14px;"
+        ),
+        "top_btn_checked_qss": (
+            "background-color: #FFB642;\n"
+            "    color: #120D07;\n"
+            "    border: 1px solid #FFB642;\n"
+            "    border-bottom: 2px solid #FFB642;"
+        ),
+        "pill_border_qss": "border: 1px solid #4A3516; border-bottom: 2px solid #4A3516;",
+        "pill_hover_qss": (
+            "background-color: #FFB642;\n"
+            "    color: #120D07;\n"
+            "    border: 1px solid #FFB642;"
+        ),
+        "pill_pressed_qss": (
+            "background-color: #CC8E2E;\n"
+            "    color: #120D07;\n"
+            "    padding-top: 2px;\n"
+            "    padding-left: 16px;\n"
+            "    padding-right: 12px;"
+        ),
+        "pill_checked_qss": (
+            "background-color: #FFB642;\n"
+            "    color: #120D07;\n"
+            "    border: 1px solid #FFB642;\n"
+            "    border-bottom: 2px solid #FFB642;"
+        ),
+    },
+    "starfield_alabaster": {
+        "text": "#14213D",
+        "title": "#14213D",
+        "subtitle": "#5C677D",
+        "muted": "#6E788E",
+        "sec_header": "#1B365D",
+        "root_bg": "#F4F3EF",
+        "sidebar_bg": "#E6E4DD",
+        "sidebar_border": "#C59B27",
+        "nav_hover": "#D8D5CA",
+        "nav_hover_text": "#14213D",
+        "nav_checked_bg": "#1B365D",
+        "nav_checked_border": "#C59B27",
+        "nav_checked_text": "#FFFFFF",
+        "surface_soft": "#ECEAE3",
+        "card_bg": "#E6E4DD",
+        "card_hover_bg": "#EFECE6",
+        "card_border": "#C59B27",
+        "card_hover_border": "#1B365D",
+        "card_body": "#14213D",
+        "input_bg": "#FFFFFF",
+        "input_focus_bg": "#FFFFFF",
+        "input_border": "#C59B27",
+        "input_text": "#14213D",
+        "btn_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #FFFFFF, stop:1 #EAE8E1)"
+        ),
+        "btn_hover_bg": "#25477A",
+        "btn_pressed_bg": "#1B365D",
+        "btn_border": "#C59B27",
+        "btn_hover_border": "#E5B83B",
+        "btn_text": "#1B365D",
+        "pill_bg": (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 #FFFFFF, stop:1 #EAE8E1)"
+        ),
+        "pill_border": "#C59B27",
+        "pill_hover_bg": "#25477A",
+        "pill_checked_bg": "#1B365D",
+        "pill_checked_text": "#FFFFFF",
+        "badge_bg": "rgba(27, 54, 93, 0.12)",
+        "badge_border": "#1B365D",
+        "badge_text": "#1B365D",
+        "badge_muted_bg": "rgba(197, 155, 39, 0.16)",
+        "badge_muted_border": "#C59B27",
+        "badge_muted_text": "#7A5E10",
+        "engine_bg": "rgba(197, 155, 39, 0.18)",
+        "engine_border": "#C59B27",
+        "engine_text": "#1B365D",
+        "shortcut_key_bg": "rgba(200, 62, 43, 0.12)",
+        "shortcut_key_border": "#C83E2B",
+        "shortcut_key_text": "#C83E2B",
+        "scroll_handle": "#C59B27",
+        "scroll_handle_hover": "#1B365D",
+        "dialog_bg": "#F4F3EF",
+        "combo_popup_bg": "#FFFFFF",
+        "divider": "#CFCBC0",
+        "editor_bg": "#FAF9F6",
+        "nk_container_bg": "#F4F3EF",
+        "nk_sidebar_bg": "#E6E4DD",
+        "nk_card_active_bg": "rgba(27, 54, 93, 0.14)",
+        "nk_pill_bg": "#FFFFFF",
+        "nk_pill_hover_bg": "#EAE8E1",
+        "chevron_color": "#1B365D",
+        "focus_border": "#1B365D",
+        "selection_bg": "#1B365D",
+        "accent": "#1B365D",
+        "danger_color": "#C83E2B",
+        "primary_grad": "#1B365D",
+        "primary_hover_grad": "#25477A",
+        "card_radius": "5px",
+        "input_radius": "5px",
+        "combo_radius": "5px",
+        "btn_radius": "5px",
+        "pill_radius": "5px",
+        "top_box_radius": "5px",
+        "top_btn_radius": "5px",
+        "sub_btn_radius": "5px",
+        "nav_btn_radius": "5px",
+        "nk_radius": "5px",
+        "badge_radius": "5px",
+        "small_radius": "5px",
+        "scroll_radius": "2px",
+        "scroll_width": "6px",
+        "card_border_qss": "border: 1px solid #C59B27; border-bottom: 2px solid #9E7B1C;",
+        "card_hover_border_qss": "border: 1px solid #1B365D; border-bottom: 2px solid #C59B27;",
+        "input_border_qss": "border: 1px solid #C59B27; border-bottom: 2px solid #9E7B1C;",
+        "input_focus_border_qss": "border: 1px solid #1B365D; border-bottom: 2px solid #C59B27;",
+        "topbar_border_qss": "border-bottom: 2px solid #C59B27;",
+        "sidebar_border_qss": "border-right: 1px solid #C59B27;",
+        "top_box_border_qss": "border: 1px solid #C59B27; border-bottom: 2px solid #9E7B1C;",
+        "btn_padding": "6px 14px",
+        "btn_border_qss": "border: 1px solid #C59B27; border-bottom: 2px solid #9E7B1C;",
+        "btn_hover_qss": (
+            "background-color: #25477A;\n"
+            "    border: 1px solid #14213D;\n"
+            "    border-bottom: 2px solid #E5B83B;\n"
+            "    color: #FFFFFF;"
+        ),
+        "btn_pressed_qss": (
+            "background-color: #1B365D;\n"
+            "    color: #FFFFFF;\n"
+            "    border: 1px solid #14213D;\n"
+            "    border-bottom-width: 1px;\n"
+            "    border-bottom-color: #C59B27;\n"
+            "    padding-top: 8px;\n"
+            "    padding-bottom: 4px;"
+        ),
+        "primary_text": "#FFFFFF",
+        "primary_border_qss": "border: 1px solid #14213D; border-bottom: 3px solid #C59B27;",
+        "primary_hover_qss": (
+            "background-color: #25477A;\n"
+            "    border: 1px solid #14213D;\n"
+            "    border-bottom: 3px solid #E5B83B;\n"
+            "    color: #FFFFFF;"
+        ),
+        "primary_pressed_qss": (
+            "background-color: #14213D;\n"
+            "    border: 1px solid #14213D;\n"
+            "    border-bottom: 1px solid #C59B27;\n"
+            "    padding-top: 8px;\n"
+            "    padding-bottom: 4px;\n"
+            "    color: #FFFFFF;"
+        ),
+        "top_btn_hover_qss": (
+            "background-color: #25477A;\n"
+            "    border: 1px solid #14213D;\n"
+            "    border-bottom: 2px solid #E5B83B;\n"
+            "    color: #FFFFFF;"
+        ),
+        "top_btn_pressed_qss": (
+            "background-color: #14213D;\n"
+            "    color: #FFFFFF;\n"
+            "    border-bottom-width: 1px;\n"
+            "    padding-top: 8px;\n"
+            "    padding-bottom: 2px;"
+        ),
+        "top_btn_checked_qss": (
+            "background-color: #1B365D;\n"
+            "    border: 1px solid #14213D;\n"
+            "    border-bottom: 3px solid #C59B27;\n"
+            "    color: #FFFFFF;"
+        ),
+        "pill_border_qss": "border: 1px solid #C59B27; border-bottom: 2px solid #9E7B1C;",
+        "pill_hover_qss": (
+            "background-color: #25477A;\n"
+            "    border: 1px solid #14213D;\n"
+            "    border-bottom: 2px solid #E5B83B;\n"
+            "    color: #FFFFFF;"
+        ),
+        "pill_pressed_qss": (
+            "border-bottom-width: 1px;\n"
+            "    padding-top: 3px;"
+        ),
+        "pill_checked_qss": (
+            "background-color: #1B365D;\n"
+            "    border: 1px solid #14213D;\n"
+            "    border-bottom: 3px solid #C59B27;\n"
+            "    color: #FFFFFF;"
+        ),
+    },
+    "cyber_synthwave": {
+        "text": "#F0F6FF",
+        "title": "#F0F6FF",
+        "subtitle": "#B892FF",
+        "muted": "#8A63D2",
+        "sec_header": "#00F0FF",
+        "root_bg": "#0D0814",
+        "sidebar_bg": "#160E24",
+        "sidebar_border": "#FF007F",
+        "nav_hover": "#2A0E3D",
+        "nav_hover_text": "#FFFFFF",
+        "nav_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 #FF007F, stop:1 #7928CA)"
+        ),
+        "nav_checked_border": "#00F0FF",
+        "nav_checked_text": "#FFFFFF",
+        "surface_soft": "#120B1E",
+        "card_bg": "#160E24",
+        "card_hover_bg": "#1F1333",
+        "card_border": "#4A1C6D",
+        "card_hover_border": "#00F0FF",
+        "card_body": "#F0F6FF",
+        "input_bg": "#11091C",
+        "input_focus_bg": "#1B0E2E",
+        "input_border": "#FF007F",
+        "input_text": "#F0F6FF",
+        "btn_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 #2A0E3D, stop:1 #0F2537)"
+        ),
+        "btn_hover_bg": (
+            "qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, "
+            "stop:0 #FF3399, stop:1 #1F0A33)"
+        ),
+        "btn_pressed_bg": "#1F0A33",
+        "btn_border": "#FF007F",
+        "btn_hover_border": "#00F0FF",
+        "btn_text": "#F0F6FF",
+        "pill_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 #2A0E3D, stop:1 #0F2537)"
+        ),
+        "pill_border": "#FF007F",
+        "pill_hover_bg": (
+            "qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, "
+            "stop:0 #FF3399, stop:1 #1F0A33)"
+        ),
+        "pill_checked_bg": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 #FF007F, stop:1 #7928CA)"
+        ),
+        "pill_checked_text": "#FFFFFF",
+        "badge_bg": "rgba(255, 0, 127, 0.16)",
+        "badge_border": "#FF007F",
+        "badge_text": "#FF66B2",
+        "badge_muted_bg": "rgba(0, 240, 255, 0.14)",
+        "badge_muted_border": "#00F0FF",
+        "badge_muted_text": "#00F0FF",
+        "engine_bg": "rgba(0, 240, 255, 0.16)",
+        "engine_border": "#00F0FF",
+        "engine_text": "#00F0FF",
+        "shortcut_key_bg": "rgba(255, 0, 127, 0.18)",
+        "shortcut_key_border": "#00F0FF",
+        "shortcut_key_text": "#00F0FF",
+        "scroll_handle": "#FF007F",
+        "scroll_handle_hover": "#00F0FF",
+        "dialog_bg": "#120A1E",
+        "combo_popup_bg": "#120A1E",
+        "divider": "#4A1C6D",
+        "editor_bg": "#11091C",
+        "nk_container_bg": "#120B1E",
+        "nk_sidebar_bg": "#160E24",
+        "nk_card_active_bg": "rgba(255, 0, 127, 0.24)",
+        "nk_pill_bg": "#211235",
+        "nk_pill_hover_bg": "#321A52",
+        "chevron_color": "#00F0FF",
+        "focus_border": "#00F0FF",
+        "selection_bg": "#FF007F",
+        "accent": "#FF007F",
+        "primary_grad": (
+            "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+            "stop:0 #FF007F, stop:1 #7928CA)"
+        ),
+        "primary_hover_grad": (
+            "qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, "
+            "stop:0 #FF3399, stop:1 #1F0A33)"
+        ),
+        "card_radius": "8px",
+        "input_radius": "8px",
+        "combo_radius": "8px",
+        "btn_radius": "8px",
+        "pill_radius": "8px",
+        "top_box_radius": "8px",
+        "top_btn_radius": "8px",
+        "sub_btn_radius": "8px",
+        "nav_btn_radius": "8px",
+        "nk_radius": "8px",
+        "badge_radius": "8px",
+        "small_radius": "8px",
+        "scroll_radius": "4px",
+        "scroll_width": "6px",
+        "card_border_qss": "border: 1px solid #4A1C6D; border-bottom: 2px solid #00F0FF;",
+        "card_hover_border_qss": "border: 1px solid #FF007F; border-bottom: 2px solid #00F0FF;",
+        "input_border_qss": "border: 1px solid #FF007F; border-bottom: 2px solid #00F0FF;",
+        "input_focus_border_qss": "border: 1px solid #00F0FF; border-bottom: 2px solid #FF007F;",
+        "topbar_border_qss": "border-bottom: 2px solid #00F0FF;",
+        "sidebar_border_qss": "border-right: 1px solid #FF007F;",
+        "top_box_border_qss": "border: 1px solid #FF007F; border-bottom: 2px solid #00F0FF;",
+        "btn_padding": "6px 14px",
+        "btn_border_qss": "border: 1px solid #FF007F; border-bottom: 2px solid #00F0FF;",
+        "btn_hover_qss": (
+            "background: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, stop:0 #FF3399, stop:1 #1F0A33);\n"
+            "    border: 1px solid #00F0FF;\n"
+            "    border-bottom: 2px solid #00F0FF;\n"
+            "    color: #FFFFFF;"
+        ),
+        "btn_pressed_qss": (
+            "background-color: #1F0A33;\n"
+            "    border-color: #FF007F;\n"
+            "    padding-top: 8px;\n"
+            "    padding-bottom: 4px;"
+        ),
+        "primary_text": "#FFFFFF",
+        "primary_border_qss": "border: 1px solid #FF007F; border-bottom: 2px solid #00F0FF;",
+        "primary_hover_qss": (
+            "background: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, stop:0 #FF3399, stop:1 #1F0A33);\n"
+            "    border: 1px solid #00F0FF;\n"
+            "    border-bottom: 2px solid #00F0FF;\n"
+            "    color: #FFFFFF;"
+        ),
+        "primary_pressed_qss": (
+            "background-color: #1F0A33;\n"
+            "    border-color: #FF007F;\n"
+            "    padding-top: 8px;\n"
+            "    padding-bottom: 4px;\n"
+            "    color: #FFFFFF;"
+        ),
+        "top_btn_hover_qss": (
+            "background: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, stop:0 #FF3399, stop:1 #1F0A33);\n"
+            "    border: 1px solid #00F0FF;\n"
+            "    color: #FFFFFF;"
+        ),
+        "top_btn_pressed_qss": (
+            "padding-top: 8px;\n"
+            "    padding-bottom: 2px;\n"
+            "    border-color: #FF007F;"
+        ),
+        "top_btn_checked_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF007F, stop:1 #7928CA);\n"
+            "    border: 1px solid #FF007F;\n"
+            "    border-bottom: 2px solid #00F0FF;\n"
+            "    color: #FFFFFF;"
+        ),
+        "pill_border_qss": "border: 1px solid #FF007F; border-bottom: 2px solid #00F0FF;",
+        "pill_hover_qss": (
+            "background: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, stop:0 #FF3399, stop:1 #1F0A33);\n"
+            "    border: 1px solid #00F0FF;\n"
+            "    border-bottom: 2px solid #00F0FF;\n"
+            "    color: #FFFFFF;"
+        ),
+        "pill_pressed_qss": (
+            "padding-top: 3px;\n"
+            "    border-color: #FF007F;"
+        ),
+        "pill_checked_qss": (
+            "background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF007F, stop:1 #7928CA);\n"
+            "    border: 1px solid #FF007F;\n"
+            "    border-bottom: 2px solid #00F0FF;\n"
+            "    color: #FFFFFF;"
+        ),
+    },
 }
+
+# Varianti Adattive per la Modalità Lettura (Non distruttiva: conserva l'identità e le forme del tema attivo,
+# ma rilassa lo sfondo/testo dell'Editor e attenua del 50% i bordi secondari nella sidebar/card)
+_THEME_READING_VARIANTS: Dict[str, Dict[str, str]] = {
+    "obsidian": {
+        "editor_bg": "#171411",
+        "nk_container_bg": "#15120F",
+        "nk_sidebar_bg": "#110E0C",
+        "text": "#E6D9C6",
+        "card_body": "#DFD1BC",
+    },
+    "light": {
+        "editor_bg": "#FBF5E6",
+        "nk_container_bg": "#F8F0DE",
+        "nk_sidebar_bg": "#F1E7D2",
+        "root_bg": "#F6EFE0",
+        "text": "#3A2D20",
+        "card_body": "#463728",
+    },
+    "orb": {
+        "editor_bg": "#FAF5E8",
+        "nk_container_bg": "#F6EFE0",
+        "nk_sidebar_bg": "#EFE6D4",
+        "text": "#352B20",
+        "card_body": "#423629",
+    },
+    "dark_orb": {
+        "editor_bg": "#121C24",
+        "nk_container_bg": "#101820",
+        "nk_sidebar_bg": "#0D151C",
+        "text": "#DCE6EC",
+        "card_body": "#D2DEE6",
+    },
+    "ghibli_spring": {
+        "editor_bg": "#FAF3E3",
+        "nk_container_bg": "#F7EFE0",
+        "nk_sidebar_bg": "#EBEFE0",
+        "root_bg": "#F8F2E4",
+        "text": "#36332C",
+        "card_body": "#3E3A32",
+    },
+    "pixel_chill": {
+        "editor_bg": "#2B302E",
+        "nk_container_bg": "#323836",
+        "nk_sidebar_bg": "#2C3230",
+        "text": "#E6DFCE",
+        "card_body": "#DFD7C4",
+    },
+    "katana": {
+        "editor_bg": "#191513",
+        "nk_container_bg": "#1C1715",
+        "nk_sidebar_bg": "#171311",
+        "text": "#E2D8C5",
+        "card_body": "#DBD0BC",
+    },
+    "tactical_hud": {
+        "editor_bg": "#0E1412",
+        "nk_container_bg": "#111815",
+        "nk_sidebar_bg": "#0F1513",
+        "text": "#C2E2CF",
+        "card_body": "#B8D9C6",
+    },
+    "industrial_mecha": {
+        "editor_bg": "#1E1E1D",
+        "nk_container_bg": "#212120",
+        "nk_sidebar_bg": "#1A1B1A",
+        "text": "#DFDCD4",
+        "card_body": "#D6D2C9",
+    },
+    "amber_crt": {
+        "editor_bg": "#14100A",
+        "nk_container_bg": "#17120B",
+        "nk_sidebar_bg": "#130E08",
+        "text": "#DFCAA6",
+        "card_body": "#D8C29D",
+    },
+    "starfield_alabaster": {
+        "editor_bg": "#F9F3E5",
+        "nk_container_bg": "#F4EDE0",
+        "nk_sidebar_bg": "#E9E2D4",
+        "text": "#252B3B",
+        "card_body": "#303646",
+    },
+    "cyber_synthwave": {
+        "editor_bg": "#140E1D",
+        "nk_container_bg": "#171022",
+        "nk_sidebar_bg": "#130C1C",
+        "text": "#E2DCF0",
+        "card_body": "#D8D1E8",
+    },
+}
+
+
+def _dim_hex_colors_in_qss(qss_str: str, alpha: float = 0.50) -> str:
+    """Attenua del 50% il contrasto dei colori esadecimali nei bordi secondari per la Modalità Lettura."""
+    if not qss_str:
+        return qss_str
+
+    def _repl(m):
+        hex_code = m.group(1)
+        if len(hex_code) == 6:
+            r = int(hex_code[0:2], 16)
+            g = int(hex_code[2:4], 16)
+            b = int(hex_code[4:6], 16)
+            return f"rgba({r}, {g}, {b}, {alpha:.2f})"
+        return m.group(0)
+
+    return re.sub(r"#([0-9A-Fa-f]{6})\b", _repl, qss_str)
+
+
+# Preset Tipografici Curati (Override Utente + Auto Predefinito del Tema)
+FONT_PRESETS: Dict[str, Dict[str, str]] = {
+    "auto": {
+        "label": "Auto (Tema)",
+        "subtitle": "Usa il font nativo del tema (monospace per Pixel/HUD/CRT, sans-serif per gli altri)",
+        "family": "",
+    },
+    "modern_sans": {
+        "label": "Modern Sans",
+        "subtitle": "Inter / Segoe UI / System Sans (Default UI)",
+        "family": "'Inter', 'Segoe UI', sans-serif",
+    },
+    "geometric": {
+        "label": "Geometric & Clean",
+        "subtitle": "Plus Jakarta Sans / DM Sans / Aptos",
+        "family": "'Plus Jakarta Sans', 'DM Sans', 'Aptos', 'Segoe UI', sans-serif",
+    },
+    "academic_serif": {
+        "label": "Academic / Serif",
+        "subtitle": "Georgia / Merriweather / Cambria (Ideale per Studio & Lettura)",
+        "family": "'Georgia', 'Merriweather', 'Cambria', serif",
+    },
+    "dev_mono": {
+        "label": "Developer / Mono",
+        "subtitle": "JetBrains Mono / Cascadia Code / Consolas (Tech & Arcade)",
+        "family": "'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace",
+    },
+    "custom": {
+        "label": "Font di Sistema",
+        "subtitle": "Qualsiasi font installato su Windows",
+        "family": "",
+    },
+}
+
+
+def _resolve_font_family(theme: str, font_preset: str = "auto", custom_font: str = "") -> str:
+    """Risolve la font-family CSS per QSS e Editor rispettando Auto (Tema), Preset o Font di Sistema."""
+    theme_default = _THEME_PALETTES.get(theme, _THEME_PALETTES["obsidian"]).get("font_family", "'Segoe UI'")
+    if not font_preset or font_preset == "auto":
+        return theme_default
+    if font_preset == "custom":
+        clean = (custom_font or "").strip().replace("'", "").replace('"', "")
+        if clean:
+            return f"'{clean}', 'Segoe UI', sans-serif"
+        return theme_default
+    preset_info = FONT_PRESETS.get(font_preset)
+    if preset_info and preset_info.get("family"):
+        return preset_info["family"]
+    return theme_default
+
+
+def _resolve_palette(
+    theme: str = "obsidian",
+    reading_mode: bool = False,
+    font_preset: str = "auto",
+    custom_font: str = "",
+) -> dict:
+    base = dict(_THEME_PALETTES.get(theme, _THEME_PALETTES["obsidian"]))
+    base.setdefault("focus_border", "#38BDF8")
+    base.setdefault("selection_bg", "#0284C7")
+    base.setdefault("accent", "#6366F1")
+    base.setdefault("primary_text", "#FFFFFF")
+    base.setdefault("danger_color", "#E11D48")
+    base.setdefault(
+        "primary_grad",
+        "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0284C7, stop:0.55 #6366F1, stop:1 #9333EA)",
+    )
+    base.setdefault(
+        "primary_hover_grad",
+        "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0EA5E9, stop:0.55 #818CF8, stop:1 #A855F7)",
+    )
+    base["font_family"] = _resolve_font_family(theme, font_preset, custom_font)
+    base.setdefault("card_radius", "14px")
+    base.setdefault("input_radius", "10px")
+    base.setdefault("combo_radius", "8px")
+    base.setdefault("btn_radius", "9px")
+    base.setdefault("pill_radius", "15px")
+    base.setdefault("top_box_radius", "10px")
+    base.setdefault("top_btn_radius", "7px")
+    base.setdefault("sub_btn_radius", "6px")
+    base.setdefault("nav_btn_radius", "10px")
+    base.setdefault("nk_radius", "12px")
+    base.setdefault("badge_radius", "9px")
+    base.setdefault("small_radius", "6px")
+    base.setdefault("scroll_radius", "2px")
+    base.setdefault("scroll_width", "5px")
+    base.setdefault("scroll_handle_hover", "#94A3B8")
+    base.setdefault("card_border_qss", f"border: 1px solid {base['card_border']};")
+    base.setdefault("card_hover_border_qss", f"border: 1px solid {base['card_hover_border']};")
+    base.setdefault("input_border_qss", f"border: 1px solid {base['input_border']};")
+    base.setdefault("input_focus_border_qss", f"border: 1px solid {base['focus_border']};")
+    base.setdefault("topbar_border_qss", f"border-bottom: 1px solid {base['sidebar_border']};")
+    base.setdefault("sidebar_border_qss", f"border-right: 1px solid {base['sidebar_border']};")
+    base.setdefault("top_box_border_qss", f"border: 1px solid {base['divider']};")
+    base.setdefault("btn_padding", "0 14px")
+    base.setdefault("btn_border_qss", f"border: 1px solid {base['btn_border']};")
+    base.setdefault(
+        "btn_hover_qss",
+        f"background-color: {base['btn_hover_bg']};\n    border: 1px solid {base['btn_hover_border']};",
+    )
+    base.setdefault("btn_pressed_qss", f"background-color: {base['btn_pressed_bg']};")
+    base.setdefault("primary_border_qss", "border: 1px solid rgba(125, 211, 252, 0.35);")
+    base.setdefault(
+        "primary_hover_qss",
+        f"background-color: {base['primary_hover_grad']};\n    border: 1px solid rgba(125, 211, 252, 0.65);",
+    )
+    base.setdefault("primary_pressed_qss", f"background-color: {base['btn_pressed_bg']};")
+    base.setdefault(
+        "top_btn_hover_qss",
+        f"color: {base['title']};\n    background-color: {base['nav_hover']};",
+    )
+    base.setdefault("top_btn_pressed_qss", f"background-color: {base['nav_hover']};")
+    base.setdefault(
+        "top_btn_checked_qss",
+        f"background-color: {base['nav_checked_bg']};\n    color: {base['nav_checked_text']};",
+    )
+    base.setdefault("pill_border_qss", f"border: 1px solid {base['pill_border']};")
+    base.setdefault(
+        "pill_hover_qss",
+        f"background-color: {base['pill_hover_bg']};\n    color: {base['title']};\n    border: 1px solid {base['btn_hover_border']};",
+    )
+    base.setdefault("pill_pressed_qss", f"background-color: {base['btn_pressed_bg']};")
+    base.setdefault(
+        "pill_checked_qss",
+        f"background-color: {base['pill_checked_bg']};\n    border: 1px solid {base['nav_checked_border']};\n    color: {base['pill_checked_text']};",
+    )
+
+    if reading_mode:
+        # Modalità Lettura Adattiva (Non distruttiva): mantiene colori d'accento e forme del tema attivo,
+        # rilassa sfondo/testo dell'area di lettura e attenua del 50% i bordi secondari nella sidebar/card.
+        variant = _THEME_READING_VARIANTS.get(theme)
+        if variant:
+            base.update(variant)
+        for border_key in (
+            "sidebar_border",
+            "divider",
+            "card_border",
+            "input_border",
+            "sidebar_border_qss",
+            "topbar_border_qss",
+            "card_border_qss",
+            "input_border_qss",
+            "top_box_border_qss",
+        ):
+            if border_key in base:
+                base[border_key] = _dim_hex_colors_in_qss(str(base[border_key]), alpha=0.50)
+
+    return base
 
 
 def _get_chevron_icon_path(color: str) -> str:
@@ -313,34 +2156,48 @@ def _make_svg_icon(svg_inner: str, color: str = "#64748B", size: int = 15) -> QI
     return QIcon(pm)
 
 
-def get_hub_qss(theme: str = "obsidian") -> str:
-    p = _THEME_PALETTES.get(theme, _THEME_PALETTES["obsidian"])
+def get_hub_qss(
+    theme: str = "obsidian",
+    reading_mode: bool = False,
+    font_preset: str = "auto",
+    custom_font: str = "",
+    font_scale: int = 100,
+) -> str:
+    p = _resolve_palette(theme, reading_mode, font_preset=font_preset, custom_font=custom_font)
     chevron_url = _get_chevron_icon_path(p["chevron_color"])
-    return f"""
+    qss = f"""
 QWidget {{
     color: {p['text']};
-    font-family: 'Segoe UI';
+    font-family: {p['font_family']};
     font-size: 13px;
 }}
 
-QWidget#HubRoot, QStackedWidget#Pages, QWidget#Page {{
+QMainWindow, QWidget#HubRoot, QStackedWidget#Pages, QWidget#Page {{
     background-color: {p['root_bg']};
 }}
 
 /* ---------------- TOP BAR & SEGMENTED NAV ---------------- */
 QFrame#TopNavBar {{
     background-color: {p['sidebar_bg']};
-    border-bottom: 1px solid {p['sidebar_border']};
+    {p['topbar_border_qss']}
 }}
 QFrame#TopSegmentBox {{
     background-color: {p['surface_soft']};
-    border: 1px solid {p['divider']};
-    border-radius: 10px;
+    {p['top_box_border_qss']}
+    border-radius: {p['top_box_radius']};
+}}
+QFrame#TopSlidingPill {{
+    {p['top_btn_checked_qss']}
+    border-radius: {p['top_btn_radius']};
+}}
+QFrame#SubSlidingPill {{
+    {p['pill_checked_qss']}
+    border-radius: {p['sub_btn_radius']};
 }}
 QPushButton#TopSegmentBtn {{
     background-color: transparent;
-    border: none;
-    border-radius: 7px;
+    border: 1px solid transparent;
+    border-radius: {p['top_btn_radius']};
     padding: 5px 16px;
     color: {p['subtitle']};
     font-size: 13px;
@@ -348,11 +2205,14 @@ QPushButton#TopSegmentBtn {{
     min-height: 28px;
 }}
 QPushButton#TopSegmentBtn:hover {{
-    color: {p['title']};
-    background-color: {p['nav_hover']};
+    {p['top_btn_hover_qss']}
+}}
+QPushButton#TopSegmentBtn:pressed {{
+    {p['top_btn_pressed_qss']}
 }}
 QPushButton#TopSegmentBtn:checked {{
-    background-color: {p['nav_checked_bg']};
+    background-color: transparent;
+    border: 1px solid transparent;
     color: {p['nav_checked_text']};
 }}
 QFrame#SubNavBar {{
@@ -361,8 +2221,8 @@ QFrame#SubNavBar {{
 }}
 QPushButton#SubNavBtn {{
     background-color: transparent;
-    border: none;
-    border-radius: 6px;
+    border: 1px solid transparent;
+    border-radius: {p['sub_btn_radius']};
     padding: 4px 12px;
     color: {p['subtitle']};
     font-size: 12px;
@@ -370,19 +2230,26 @@ QPushButton#SubNavBtn {{
     min-height: 26px;
 }}
 QPushButton#SubNavBtn:hover {{
-    background-color: {p['nav_hover']};
-    color: {p['title']};
+    {p['pill_hover_qss']}
+}}
+QPushButton#SubNavBtn:pressed {{
+    {p['pill_pressed_qss']}
 }}
 QPushButton#SubNavBtn:checked {{
-    background-color: {p['nk_card_active_bg']};
-    color: {p['title']};
+    {p['pill_checked_qss']}
+    font-weight: 600;
+}}
+QPushButton#SubNavBtn[has_sliding_pill="true"]:checked {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: {p['pill_checked_text']};
     font-weight: 600;
 }}
 
 /* ---------------- SIDEBAR ---------------- */
 QFrame#Sidebar {{
     background-color: {p['sidebar_bg']};
-    border-right: 1px solid {p['sidebar_border']};
+    {p['sidebar_border_qss']}
 }}
 QLabel#AppTitle {{
     font-size: 18px;
@@ -393,7 +2260,7 @@ QLabel#AppTitle {{
 QLabel#EngineStatus {{
     background-color: {p['engine_bg']};
     border: 1px solid {p['engine_border']};
-    border-radius: 11px;
+    border-radius: {p['badge_radius']};
     padding: 4px 10px;
     color: {p['engine_text']};
     font-size: 11px;
@@ -413,7 +2280,7 @@ QPushButton#NavButton {{
     text-align: left;
     padding: 0 12px;
     border: 1px solid transparent;
-    border-radius: 10px;
+    border-radius: {p['nav_btn_radius']};
     background-color: transparent;
     color: {p['subtitle']};
     font-size: 12px;
@@ -423,6 +2290,9 @@ QPushButton#NavButton:hover {{
     background-color: {p['nav_hover']};
     color: {p['nav_hover_text']};
 }}
+QPushButton#NavButton:pressed {{
+    {p['pill_pressed_qss']}
+}}
 QPushButton#NavButton:checked {{
     background-color: {p['nav_checked_bg']};
     border: 1px solid {p['nav_checked_border']};
@@ -430,13 +2300,13 @@ QPushButton#NavButton:checked {{
 }}
 QFrame#ShortcutBox {{
     background-color: {p['surface_soft']};
-    border: 1px solid {p['card_border']};
-    border-radius: 14px;
+    {p['card_border_qss']}
+    border-radius: {p['card_radius']};
 }}
 QLabel#ShortcutKey {{
     background-color: {p['shortcut_key_bg']};
     border: 1px solid {p['shortcut_key_border']};
-    border-radius: 8px;
+    border-radius: {p['small_radius']};
     padding: 2px 8px;
     color: {p['shortcut_key_text']};
     font-weight: 700;
@@ -464,43 +2334,43 @@ QLabel#PageSubtitle {{
 QLineEdit {{
     min-height: 36px;
     background-color: {p['input_bg']};
-    border: 1px solid {p['input_border']};
-    border-radius: 10px;
+    {p['input_border_qss']}
+    border-radius: {p['input_radius']};
     padding: 0 12px;
     color: {p['input_text']};
     font-size: 13px;
-    selection-background-color: #0284C7;
+    selection-background-color: {p['selection_bg']};
 }}
 QLineEdit:focus {{
-    border: 1px solid #38BDF8;
+    {p['input_focus_border_qss']}
     background-color: {p['input_focus_bg']};
 }}
 QTextEdit {{
     min-height: 120px;
     background-color: {p['input_bg']};
-    border: 1px solid {p['input_border']};
-    border-radius: 10px;
+    {p['input_border_qss']}
+    border-radius: {p['input_radius']};
     padding: 10px 12px;
     color: {p['input_text']};
     font-size: 13px;
-    selection-background-color: #0284C7;
+    selection-background-color: {p['selection_bg']};
 }}
 QTextEdit:focus {{
-    border: 1px solid #38BDF8;
+    {p['input_focus_border_qss']}
     background-color: {p['input_focus_bg']};
 }}
 QComboBox {{
     min-height: 28px;
     background-color: {p['input_bg']};
-    border: 1px solid {p['input_border']};
-    border-radius: 8px;
+    {p['input_border_qss']}
+    border-radius: {p['combo_radius']};
     padding: 0 26px 0 10px;
     color: {p['input_text']};
     font-size: 12px;
     font-weight: 500;
 }}
 QComboBox:focus {{
-    border: 1px solid #38BDF8;
+    {p['input_focus_border_qss']}
 }}
 QComboBox::drop-down {{
     subcontrol-origin: padding;
@@ -517,42 +2387,37 @@ QComboBox::down-arrow {{
 QComboBox QAbstractItemView {{
     background-color: {p['combo_popup_bg']};
     color: {p['input_text']};
-    selection-background-color: #0284C7;
+    selection-background-color: {p['selection_bg']};
     selection-color: #FFFFFF;
-    border: 1px solid {p['input_border']};
+    {p['input_border_qss']}
 }}
 
-/* ---------------- PULSANTI (Plasma 3 Fuochi) ---------------- */
+/* ---------------- PULSANTI (Tattili & Multi-Tema) ---------------- */
 QPushButton {{
     min-height: 34px;
-    border-radius: 9px;
-    padding: 0 14px;
+    border-radius: {p['btn_radius']};
+    padding: {p['btn_padding']};
     font-weight: 600;
     background-color: {p['btn_bg']};
     color: {p['btn_text']};
-    border: 1px solid {p['btn_border']};
+    {p['btn_border_qss']}
 }}
 QPushButton:hover {{
-    background-color: {p['btn_hover_bg']};
-    border: 1px solid {p['btn_hover_border']};
+    {p['btn_hover_qss']}
 }}
 QPushButton:pressed {{
-    background-color: {p['btn_pressed_bg']};
+    {p['btn_pressed_qss']}
 }}
 QPushButton[variant="primary"] {{
-    background-color: qlineargradient(
-        x1:0, y1:0, x2:1, y2:0,
-        stop:0 #0284C7, stop:0.55 #6366F1, stop:1 #9333EA
-    );
-    border: 1px solid rgba(125, 211, 252, 0.35);
-    color: #FFFFFF;
+    background-color: {p['primary_grad']};
+    {p['primary_border_qss']}
+    color: {p['primary_text']};
 }}
 QPushButton[variant="primary"]:hover {{
-    background-color: qlineargradient(
-        x1:0, y1:0, x2:1, y2:0,
-        stop:0 #0EA5E9, stop:0.55 #818CF8, stop:1 #A855F7
-    );
-    border: 1px solid rgba(125, 211, 252, 0.65);
+    {p['primary_hover_qss']}
+}}
+QPushButton[variant="primary"]:pressed {{
+    {p['primary_pressed_qss']}
 }}
 QPushButton[variant="success"] {{
     background-color: qlineargradient(
@@ -569,13 +2434,13 @@ QPushButton[variant="success"]:hover {{
 }}
 QPushButton[variant="success"]:disabled {{
     background-color: {p['btn_bg']};
-    border: 1px solid {p['btn_border']};
+    {p['btn_border_qss']}
     color: {p['muted']};
 }}
 QPushButton[variant="danger"] {{
     background-color: transparent;
     border: 1px solid rgba(244, 63, 94, 0.32);
-    color: #E11D48;
+    color: {p['danger_color']};
 }}
 QPushButton[variant="danger"]:hover {{
     background-color: rgba(244, 63, 94, 0.12);
@@ -583,23 +2448,24 @@ QPushButton[variant="danger"]:hover {{
 }}
 QPushButton#ModeTab {{
     background-color: {p['pill_bg']};
-    border: 1px solid {p['pill_border']};
-    border-radius: 9px;
+    {p['pill_border_qss']}
+    border-radius: {p['btn_radius']};
     color: {p['subtitle']};
+    padding: 0 14px;
 }}
 QPushButton#ModeTab:hover {{
-    color: {p['title']};
-    border: 1px solid {p['btn_hover_border']};
+    {p['pill_hover_qss']}
+}}
+QPushButton#ModeTab:pressed {{
+    {p['pill_pressed_qss']}
 }}
 QPushButton#ModeTab:checked {{
-    background-color: {p['pill_checked_bg']};
-    border: 1px solid #38BDF8;
-    color: {p['pill_checked_text']};
+    {p['pill_checked_qss']}
 }}
 QPushButton#FilterPill {{
     background-color: {p['pill_bg']};
-    border: 1px solid {p['pill_border']};
-    border-radius: 15px;
+    {p['pill_border_qss']}
+    border-radius: {p['pill_radius']};
     color: {p['subtitle']};
     font-size: 12px;
     font-weight: 600;
@@ -608,16 +2474,16 @@ QPushButton#FilterPill {{
     max-height: 28px;
 }}
 QPushButton#FilterPill:hover {{
-    background-color: {p['pill_hover_bg']};
-    color: {p['title']};
+    {p['pill_hover_qss']}
+}}
+QPushButton#FilterPill:pressed {{
+    {p['pill_pressed_qss']}
 }}
 QPushButton#FilterPill:checked {{
-    background-color: {p['pill_checked_bg']};
-    border: 1px solid rgba(56, 189, 248, 0.55);
-    color: {p['pill_checked_text']};
+    {p['pill_checked_qss']}
 }}
 
-/* ---------------- LISTE SCORREVOLI ---------------- */
+/* ---------------- LISTE SCORREVOLI & QLISTWIDGET ---------------- */
 QScrollArea {{
     background-color: transparent;
     border: none;
@@ -625,18 +2491,38 @@ QScrollArea {{
 QWidget#ScrollContent {{
     background-color: transparent;
 }}
+QListWidget {{
+    background-color: {p['card_bg']};
+    {p['card_border_qss']}
+    border-radius: {p['card_radius']};
+    color: {p['text']};
+    padding: 4px;
+    outline: none;
+}}
+QListWidget::item {{
+    padding: 6px 10px;
+    border-radius: {p['small_radius']};
+    margin: 2px 0;
+}}
+QListWidget::item:hover {{
+    background-color: {p['nav_hover']};
+}}
+QListWidget::item:selected {{
+    background-color: {p['nk_card_active_bg']};
+    color: {p['title']};
+}}
 QScrollBar:vertical {{
     background-color: transparent;
-    width: 5px;
+    width: {p['scroll_width']};
     margin: 2px 1px;
 }}
 QScrollBar::handle:vertical {{
-    background-color: #CBD5E1;
-    border-radius: 2px;
+    background-color: {p['scroll_handle']};
+    border-radius: {p['scroll_radius']};
     min-height: 28px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background-color: #94A3B8;
+    background-color: {p['scroll_handle_hover']};
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0px;
@@ -644,16 +2530,35 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background-color: transparent;
 }}
+QScrollBar:horizontal {{
+    background-color: transparent;
+    height: {p['scroll_width']};
+    margin: 1px 2px;
+}}
+QScrollBar::handle:horizontal {{
+    background-color: {p['scroll_handle']};
+    border-radius: {p['scroll_radius']};
+    min-width: 28px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background-color: {p['scroll_handle_hover']};
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+}}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+    background-color: transparent;
+}}
 
 /* ---------------- CARD ---------------- */
 QFrame#Card {{
     background-color: {p['card_bg']};
-    border: 1px solid {p['card_border']};
-    border-radius: 14px;
+    {p['card_border_qss']}
+    border-radius: {p['card_radius']};
 }}
 QFrame#Card:hover {{
     background-color: {p['card_hover_bg']};
-    border: 1px solid {p['card_hover_border']};
+    {p['card_hover_border_qss']}
 }}
 QFrame#Card QLabel {{
     background-color: transparent;
@@ -676,7 +2581,7 @@ QLabel#CardBody {{
 QLabel#Badge {{
     background-color: {p['badge_bg']};
     border: 1px solid {p['badge_border']};
-    border-radius: 9px;
+    border-radius: {p['badge_radius']};
     padding: 2px 9px;
     color: {p['badge_text']};
     font-size: 11px;
@@ -685,7 +2590,7 @@ QLabel#Badge {{
 QLabel#BadgeMuted {{
     background-color: {p['badge_muted_bg']};
     border: 1px solid {p['badge_muted_border']};
-    border-radius: 9px;
+    border-radius: {p['badge_radius']};
     padding: 2px 9px;
     color: {p['badge_muted_text']};
     font-size: 11px;
@@ -693,7 +2598,7 @@ QLabel#BadgeMuted {{
 QLabel#BadgeQuickNote {{
     background-color: {p['engine_bg']};
     border: 1px solid {p['engine_border']};
-    border-radius: 9px;
+    border-radius: {p['badge_radius']};
     padding: 2px 9px;
     color: {p['engine_text']};
     font-size: 11px;
@@ -712,14 +2617,14 @@ QDialog, QMessageBox {{
 /* ---------------- GRAFO & QUADERNO ---------------- */
 QFrame#KnowledgeGraphFrame {{
     background-color: {p['card_bg']};
-    border: 1px solid {p['card_border']};
-    border-radius: 14px;
+    {p['card_border_qss']}
+    border-radius: {p['card_radius']};
 }}
 QFrame#KnowledgeGraphToolbar {{
     background-color: {p['surface_soft']};
     border-bottom: 1px solid {p['card_border']};
-    border-top-left-radius: 14px;
-    border-top-right-radius: 14px;
+    border-top-left-radius: {p['card_radius']};
+    border-top-right-radius: {p['card_radius']};
 }}
 QGraphicsView#KnowledgeGraphView {{
     background-color: transparent;
@@ -738,7 +2643,7 @@ QSplitter::handle:hover {{
     background-color: qlineargradient(
         x1:0, y1:0, x2:1, y2:0,
         stop:0 transparent, stop:0.32 transparent,
-        stop:0.35 #6366F1, stop:0.65 #6366F1,
+        stop:0.35 {p['accent']}, stop:0.65 {p['accent']},
         stop:0.68 transparent, stop:1 transparent
     );
 }}
@@ -748,51 +2653,60 @@ QPushButton#NKCollapseBtn {{
     min-width: 26px;
     max-width: 26px;
     padding: 0px;
-    border: 1px solid {p['divider']};
-    border-radius: 6px;
+    {p['pill_border_qss']}
+    border-radius: {p['small_radius']};
     background-color: {p['nk_pill_bg']};
     color: {p['subtitle']};
     font-size: 13px;
     font-weight: 700;
 }}
 QPushButton#NKCollapseBtn:hover {{
-    background-color: {p['nk_pill_hover_bg']};
-    border-color: #6366F1;
-    color: {p['title']};
+    {p['pill_hover_qss']}
+}}
+QPushButton#NKCollapseBtn:pressed {{
+    {p['pill_pressed_qss']}
+    padding: 0px;
+    padding-top: 2px;
 }}
 QPushButton#NKRestorePill {{
     min-height: 26px;
     max-height: 26px;
     padding: 0 10px;
-    border: 1px solid {p['divider']};
-    border-radius: 13px;
+    {p['pill_border_qss']}
+    border-radius: {p['pill_radius']};
     background-color: {p['nk_pill_bg']};
     color: {p['subtitle']};
     font-size: 11.5px;
     font-weight: 600;
 }}
 QPushButton#NKRestorePill:hover {{
-    background-color: {p['nk_pill_hover_bg']};
-    border-color: #6366F1;
-    color: {p['title']};
+    {p['pill_hover_qss']}
+}}
+QPushButton#NKRestorePill:pressed {{
+    {p['pill_pressed_qss']}
+    padding: 2px 10px 0 10px;
+}}
+QPushButton#NKRestorePill:checked {{
+    {p['pill_checked_qss']}
 }}
 QFrame#NotekeeperContainer {{
     background-color: {p['nk_container_bg']};
-    border: 1px solid {p['divider']};
-    border-radius: 12px;
+    {p['card_border_qss']}
+    border-radius: {p['nk_radius']};
 }}
 QWidget#NKCol1 {{
     background-color: {p['nk_sidebar_bg']};
-    border-top-left-radius: 12px;
-    border-bottom-left-radius: 12px;
+    {p['sidebar_border_qss']}
+    border-top-left-radius: {p['nk_radius']};
+    border-bottom-left-radius: {p['nk_radius']};
 }}
 QWidget#NKCol2 {{
     background-color: transparent;
 }}
 QWidget#NKCol3 {{
     background-color: {p['editor_bg']};
-    border-top-right-radius: 12px;
-    border-bottom-right-radius: 12px;
+    border-top-right-radius: {p['nk_radius']};
+    border-bottom-right-radius: {p['nk_radius']};
 }}
 QTreeWidget {{
     background-color: transparent;
@@ -804,7 +2718,7 @@ QTreeWidget {{
 }}
 QTreeWidget::item {{
     padding: 5px 6px;
-    border-radius: 6px;
+    border-radius: {p['small_radius']};
     margin: 1px 0;
 }}
 QTreeWidget::item:hover {{
@@ -817,8 +2731,8 @@ QTreeWidget::item:selected {{
 QLabel#CloudBadge {{
     background-color: {p['surface_soft']};
     color: {p['muted']};
-    border: 1px solid {p['divider']};
-    border-radius: 8px;
+    {p['pill_border_qss']}
+    border-radius: {p['small_radius']};
     padding: 0 12px;
     min-height: 32px;
     max-height: 32px;
@@ -828,7 +2742,7 @@ QLabel#CloudBadge {{
 QPushButton#NKHeaderBtn {{
     min-height: 32px;
     max-height: 32px;
-    border-radius: 8px;
+    border-radius: {p['btn_radius']};
     padding: 0 12px;
     font-size: 12px;
 }}
@@ -842,7 +2756,7 @@ QFrame#NKNoteCard {{
     background-color: transparent;
     border: 1px solid transparent;
     border-bottom: 1px solid {p['divider']};
-    border-radius: 8px;
+    border-radius: {p['small_radius']};
     padding: 4px 6px;
 }}
 QFrame#NKNoteCard:hover {{
@@ -851,7 +2765,7 @@ QFrame#NKNoteCard:hover {{
 QFrame#NKNoteCard[selected="true"] {{
     background-color: {p['nk_card_active_bg']};
     border: 1px solid transparent;
-    border-left: 3px solid #6366F1;
+    border-left: 3px solid {p['accent']};
 }}
 QLabel#NKNoteTitle {{
     color: {p['title']};
@@ -884,8 +2798,8 @@ QLineEdit#NKEditorTitle:focus {{
 }}
 QLineEdit#NKEditorPill {{
     background-color: {p['nk_pill_bg']};
-    border: none;
-    border-radius: 6px;
+    {p['pill_border_qss']}
+    border-radius: {p['small_radius']};
     padding: 0 8px;
     color: {p['subtitle']};
     font-size: 12px;
@@ -893,15 +2807,15 @@ QLineEdit#NKEditorPill {{
     min-height: 26px;
     max-height: 26px;
 }}
-QLineEdit#NKEditorPill:focus {{
+QLineEdit#NKEditorPill:hover, QLineEdit#NKEditorPill:focus {{
     background-color: {p['nk_pill_hover_bg']};
-    border: none;
+    {p['input_focus_border_qss']}
     color: {p['title']};
 }}
 QComboBox#NKEditorPillCombo {{
     background-color: {p['nk_pill_bg']};
-    border: none;
-    border-radius: 6px;
+    {p['pill_border_qss']}
+    border-radius: {p['small_radius']};
     padding: 0 22px 0 8px;
     color: {p['subtitle']};
     font-size: 12px;
@@ -911,7 +2825,7 @@ QComboBox#NKEditorPillCombo {{
 }}
 QComboBox#NKEditorPillCombo:hover, QComboBox#NKEditorPillCombo:focus {{
     background-color: {p['nk_pill_hover_bg']};
-    border: none;
+    {p['input_focus_border_qss']}
     color: {p['title']};
 }}
 QFrame#NKEditorDivider {{
@@ -935,20 +2849,320 @@ QTextEdit#NKEditorBody:focus {{
 QPushButton#NKActionBtn {{
     min-height: 30px;
     max-height: 30px;
-    border-radius: 7px;
+    border-radius: {p['btn_radius']};
     padding: 0 11px;
     font-size: 12px;
     font-weight: 500;
 }}
+QPushButton#NKActionBtn:pressed {{
+    padding-top: 2px;
+    padding-left: 12px;
+    padding-right: 10px;
+}}
 QPushButton#NKCol1Btn {{
     min-height: 34px;
     max-height: 34px;
-    border-radius: 8px;
+    border-radius: {p['btn_radius']};
     padding: 0 10px;
     font-size: 12px;
     font-weight: 600;
 }}
+QPushButton#NKCol1Btn:pressed {{
+    padding-top: 2px;
+    padding-left: 11px;
+    padding-right: 9px;
+}}
+
+/* ---------------- SPOTIFY MINI BAR & SETTINGS GEAR ---------------- */
+QFrame#SpotifyMiniBar {{
+    background-color: {p['surface_soft']};
+    {p['top_box_border_qss']}
+    border-radius: {p['pill_radius']};
+}}
+QPushButton#SpotifyTrackBtn {{
+    background-color: transparent;
+    border: none;
+    border-radius: {p['small_radius']};
+    padding: 0 8px;
+    color: {p['text']};
+    font-size: 11.5px;
+    font-weight: 600;
+    min-height: 24px;
+    max-height: 24px;
+    text-align: left;
+}}
+QPushButton#SpotifyTrackBtn:hover {{
+    background-color: {p['nav_hover']};
+    color: {p['title']};
+}}
+QPushButton#SpotifyTrackBtn:pressed {{
+    padding: 2px 8px 0 8px;
+}}
+QPushButton#SpotifyCtrlBtn {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: {p['small_radius']};
+    padding: 0px;
+    color: {p['subtitle']};
+    font-size: 11px;
+    font-weight: 600;
+    min-height: 24px;
+    max-height: 24px;
+    min-width: 24px;
+    max-width: 24px;
+}}
+QPushButton#SpotifyCtrlBtn:hover {{
+    {p['pill_hover_qss']}
+}}
+QPushButton#SpotifyCtrlBtn:pressed {{
+    {p['pill_pressed_qss']}
+    padding: 0px;
+    padding-top: 2px;
+}}
+QPushButton#SettingsGearBtn {{
+    background-color: {p['pill_bg']};
+    {p['pill_border_qss']}
+    border-radius: {p['pill_radius']};
+    color: {p['subtitle']};
+    font-size: 14px;
+    padding: 0px;
+    min-height: 28px;
+    max-height: 28px;
+    min-width: 30px;
+    max-width: 30px;
+}}
+QPushButton#SettingsGearBtn:hover {{
+    {p['pill_hover_qss']}
+}}
+QPushButton#SettingsGearBtn:pressed {{
+    padding: 0px;
+    padding-top: 2px;
+}}
+
+/* ---------------- FLOWTIME CALENDARIO & COLLEGAMENTI ---------------- */
+QCalendarWidget {{
+    background-color: {p['card_bg']};
+    {p['card_border_qss']}
+    border-radius: {p['nk_radius']};
+}}
+QCalendarWidget QWidget#qt_calendar_navigationbar {{
+    background-color: {p['surface_soft']};
+    border-bottom: 1px solid {p['divider']};
+    border-top-left-radius: {p['nk_radius']};
+    border-top-right-radius: {p['nk_radius']};
+    padding: 4px;
+}}
+QCalendarWidget QToolButton {{
+    color: {p['title']};
+    background-color: transparent;
+    border: none;
+    border-radius: {p['small_radius']};
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: 600;
+}}
+QCalendarWidget QToolButton:hover {{
+    background-color: {p['nav_hover']};
+}}
+QCalendarWidget QMenu {{
+    background-color: {p['combo_popup_bg']};
+    color: {p['text']};
+    {p['input_border_qss']}
+}}
+QCalendarWidget QSpinBox {{
+    background-color: {p['input_bg']};
+    color: {p['input_text']};
+    {p['input_border_qss']}
+    border-radius: {p['small_radius']};
+    padding: 2px 4px;
+}}
+QCalendarWidget QAbstractItemView:enabled {{
+    background-color: {p['editor_bg']};
+    color: {p['text']};
+    selection-background-color: {p['selection_bg']};
+    selection-color: #FFFFFF;
+    outline: none;
+    border-bottom-left-radius: {p['nk_radius']};
+    border-bottom-right-radius: {p['nk_radius']};
+}}
+QCalendarWidget QAbstractItemView:disabled {{
+    color: {p['muted']};
+}}
+QFrame#FTEventCard {{
+    background-color: {p['card_bg']};
+    {p['card_border_qss']}
+    border-radius: {p['nk_radius']};
+}}
+QFrame#FTEventCard:hover {{
+    background-color: {p['card_hover_bg']};
+    {p['card_hover_border_qss']}
+}}
+QLabel#FTTimePill {{
+    background-color: {p['badge_bg']};
+    border: 1px solid {p['badge_border']};
+    border-radius: {p['small_radius']};
+    padding: 2px 8px;
+    color: {p['badge_text']};
+    font-size: 11px;
+    font-weight: 700;
+}}
+QPushButton#FTNotePillBtn {{
+    background-color: {p['engine_bg']};
+    border: 1px solid {p['engine_border']};
+    border-radius: {p['small_radius']};
+    padding: 2px 9px;
+    color: {p['engine_text']};
+    font-size: 11px;
+    font-weight: 600;
+    min-height: 24px;
+    max-height: 24px;
+}}
+QPushButton#FTNotePillBtn:hover {{
+    border: 1px solid {p['accent']};
+    color: {p['title']};
+}}
+QFrame#FTTimelineCard {{
+    background-color: {p['card_bg']};
+    {p['card_border_qss']}
+    border-radius: {p['nk_radius']};
+}}
+QFrame#FTWeekDayCol {{
+    background-color: {p['card_bg']};
+    {p['card_border_qss']}
+    border-radius: {p['nk_radius']};
+}}
+QFrame#FTWeekDayColToday {{
+    background-color: {p['card_bg']};
+    border: 1px solid rgba(239, 68, 68, 0.55);
+    border-radius: {p['nk_radius']};
+}}
+QFrame#FTWeekDayColSelected {{
+    background-color: {p['card_hover_bg']};
+    border: 1.5px solid {p['accent']};
+    border-radius: {p['nk_radius']};
+}}
+QFrame#FTWeekEventCard {{
+    background-color: {p['surface_soft']};
+    {p['card_border_qss']}
+    border-radius: {p['small_radius']};
+}}
+QFrame#FTWeekEventCard:hover {{
+    background-color: {p['card_hover_bg']};
+    border: 1px solid {p['accent']};
+}}
+QPushButton#FTWeekDayHeaderBtn {{
+    background-color: transparent;
+    border: none;
+    border-radius: {p['small_radius']};
+    padding: 4px 6px;
+    color: {p['title']};
+    font-size: 12px;
+    font-weight: 700;
+    text-align: left;
+}}
+QPushButton#FTWeekDayHeaderBtn:hover {{
+    background-color: {p['nav_hover']};
+}}
+QFrame#FTTodoStrip {{
+    background-color: {p['surface_soft']};
+    {p['card_border_qss']}
+    border-radius: {p['input_radius']};
+}}
+QFrame#FTTodoPill {{
+    background-color: {p['card_bg']};
+    {p['card_border_qss']}
+    border-radius: {p['small_radius']};
+}}
+QFrame#FTTodoPill:hover {{
+    border: 1px solid {p['accent']};
+    background-color: {p['card_hover_bg']};
+}}
+QFrame#FTWeekHeaderBar {{
+    background-color: transparent;
+    border-bottom: 1px solid {p['divider']};
+}}
+QFrame#FTWeekHeaderCell {{
+    background-color: transparent;
+    border-left: 1px solid {p['divider']};
+}}
+QFrame#FTDayGroupHeader {{
+    background-color: {p['surface_soft']};
+    {p['card_border_qss']}
+    border-radius: {p['small_radius']};
+}}
+QFrame#FTDayGroupHeaderSelected {{
+    background-color: {p['nav_checked_bg']};
+    border: 1px solid {p['nav_checked_border']};
+    border-radius: {p['small_radius']};
+}}
+QFrame#FTSearchResultCard {{
+    background-color: {p['card_bg']};
+    {p['card_border_qss']}
+    border-radius: {p['input_radius']};
+}}
+QFrame#FTSearchResultCard:hover {{
+    background-color: {p['card_hover_bg']};
+    {p['card_hover_border_qss']}
+}}
+QLabel#FTWeekAxisHeader {{
+    color: {p['muted']};
+    font-size: 10.5px;
+    font-weight: 700;
+    background: transparent;
+}}
+QPushButton#FTColorDot {{
+    border-radius: 10px;
+    min-width: 20px;
+    max-width: 20px;
+    min-height: 20px;
+    max-height: 20px;
+    padding: 0px;
+}}
+QPushButton#FTColorDot:pressed {{
+    padding: 0px;
+}}
+QPushButton#FTSegmentBtn {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: {p['small_radius']};
+    padding: 4px 10px;
+    color: {p['subtitle']};
+    font-size: 11.5px;
+    font-weight: 600;
+    min-height: 26px;
+}}
+QPushButton#FTSegmentBtn:hover {{
+    background-color: {p['nav_hover']};
+    color: {p['title']};
+}}
+QPushButton#FTSegmentBtn:pressed {{
+    {p['pill_pressed_qss']}
+}}
+QPushButton#FTSegmentBtn:checked {{
+    background-color: {p['nav_checked_bg']};
+    border: 1px solid {p['nav_checked_border']};
+    color: {p['nav_checked_text']};
+    font-weight: 700;
+}}
+QCheckBox {{
+    color: {p['text']};
+    font-size: 12px;
+    spacing: 6px;
+}}
 """
+    scale_pct = max(80, min(140, int(font_scale or 100)))
+    if scale_pct != 100:
+        factor = scale_pct / 100.0
+
+        def _scale_font_match(m):
+            val = float(m.group(1))
+            scaled = round(val * factor, 1)
+            if scaled.is_integer():
+                return f"font-size: {int(scaled)}px;"
+            return f"font-size: {scaled}px;"
+
+        qss = re.sub(r"font-size:\s*(\d+(?:\.\d+)?)px;", _scale_font_match, qss)
+    return qss
 
 
 HUB_QSS = get_hub_qss("obsidian")
@@ -972,8 +3186,610 @@ def _format_timestamp(raw: Optional[str]) -> str:
         return str(raw)
 
 
+_MORPHOLOGICAL_THEMES = {
+    "pixel_chill",
+    "ghibli_spring",
+    "katana",
+    "tactical_hud",
+    "industrial_mecha",
+}
+
+
+def _build_pixel_notched_path(rect: QRectF, step: float = 3.0) -> QPainterPath:
+    """Costruisce una sagoma Pixel Art 8-bit con angoli scavati a gradini (2 step per angolo)."""
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    s = max(2.0, min(step, min(w, h) * 0.14))
+    s2 = s * 2.0
+    path = QPainterPath()
+    # Partenza in alto a sinistra dopo i 2 gradini
+    path.moveTo(x + s2, y)
+    path.lineTo(x + w - s2, y)
+    # Angolo alto-destra a gradini
+    path.lineTo(x + w - s2, y + s)
+    path.lineTo(x + w - s, y + s)
+    path.lineTo(x + w - s, y + s2)
+    path.lineTo(x + w, y + s2)
+    # Lato destro -> angolo basso-destra a gradini
+    path.lineTo(x + w, y + h - s2)
+    path.lineTo(x + w - s, y + h - s2)
+    path.lineTo(x + w - s, y + h - s)
+    path.lineTo(x + w - s2, y + h - s)
+    path.lineTo(x + w - s2, y + h)
+    # Lato inferiore -> angolo basso-sinistra a gradini
+    path.lineTo(x + s2, y + h)
+    path.lineTo(x + s2, y + h - s)
+    path.lineTo(x + s, y + h - s)
+    path.lineTo(x + s, y + h - s2)
+    path.lineTo(x, y + h - s2)
+    # Lato sinistro -> angolo alto-sinistra a gradini
+    path.lineTo(x, y + s2)
+    path.lineTo(x + s, y + s2)
+    path.lineTo(x + s, y + s)
+    path.lineTo(x + s2, y + s)
+    path.closeSubpath()
+    return path
+
+
+def _build_chamfered_45_path(rect: QRectF, cut: float = 7.5) -> QPainterPath:
+    """Costruisce una sagoma poligonale con angoli opposti (alto-destra e basso-sinistra) tagliati a 45°."""
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    c = max(4.0, min(cut, min(w, h) * 0.34))
+    r_small = 2.0
+    path = QPainterPath()
+    # Angolo alto-sinistra leggermente solido -> taglio 45° alto-destra
+    path.moveTo(x + r_small, y)
+    path.lineTo(x + w - c, y)
+    path.lineTo(x + w, y + c)
+    # Angolo basso-destra -> taglio 45° basso-sinistra
+    path.lineTo(x + w, y + h - r_small)
+    path.lineTo(x + w - r_small, y + h)
+    path.lineTo(x + c, y + h)
+    path.lineTo(x, y + h - c)
+    path.lineTo(x, y + r_small)
+    path.closeSubpath()
+    return path
+
+
+def _draw_sakura_flower(painter: QPainter, cx: float, cy: float, radius: float, petal_color: QColor, center_color: QColor):
+    """Disegna un delicato fiorellino di sakura a 5 petali vettoriali con intaglio apicale."""
+    painter.save()
+    painter.translate(cx, cy)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(petal_color)
+    for i in range(5):
+        painter.save()
+        painter.rotate(i * 72.0 - 18.0)
+        petal = QPainterPath()
+        petal.moveTo(0.0, 0.0)
+        petal.cubicTo(-radius * 0.55, -radius * 0.45, -radius * 0.48, -radius * 0.95, -radius * 0.14, -radius * 1.0)
+        petal.lineTo(0.0, -radius * 0.80)  # piccolo intaglio tipico del petalo di ciliegio
+        petal.lineTo(radius * 0.14, -radius * 1.0)
+        petal.cubicTo(radius * 0.48, -radius * 0.95, radius * 0.55, -radius * 0.45, 0.0, 0.0)
+        painter.drawPath(petal)
+        painter.restore()
+    painter.setBrush(center_color)
+    painter.drawEllipse(QPointF(0.0, 0.0), max(1.2, radius * 0.24), max(1.2, radius * 0.24))
+    painter.restore()
+
+
+def _draw_sakura_petal(painter: QPainter, cx: float, cy: float, size: float, angle_deg: float, color: QColor):
+    """Disegna un singolo petalo di sakura fluttuante."""
+    painter.save()
+    painter.translate(cx, cy)
+    painter.rotate(angle_deg)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    p = QPainterPath()
+    p.moveTo(0.0, size * 0.6)
+    p.cubicTo(-size * 0.55, size * 0.1, -size * 0.45, -size * 0.55, -size * 0.12, -size * 0.65)
+    p.lineTo(0.0, -size * 0.45)
+    p.lineTo(size * 0.12, -size * 0.65)
+    p.cubicTo(size * 0.45, -size * 0.55, size * 0.55, size * 0.1, 0.0, size * 0.6)
+    painter.drawPath(p)
+    painter.restore()
+
+
+def _paint_morphological_surface(
+    painter: QPainter,
+    rect: QRectF,
+    theme_key: str,
+    *,
+    is_primary: bool = False,
+    is_danger: bool = False,
+    is_success: bool = False,
+    is_checked: bool = False,
+    is_hovered: bool = False,
+    is_down: bool = False,
+    is_pill: bool = False,
+    reading_mode: bool = False,
+) -> QColor:
+    """
+    Disegna la sagoma morfologica reale del bottone/pillola per i temi speciali
+    e restituisce il QColor consigliato per il testo/icona in primo piano.
+    """
+    w, h = rect.width(), rect.height()
+    if w <= 4 or h <= 4:
+        return QColor("#FFFFFF")
+
+    active_like = is_primary or is_checked or is_pill
+
+    # =========================================================================
+    # 1. PIXEL CHILL: Sagoma Pixel Art 8-bit a gradini + bordo interno + ombra
+    # =========================================================================
+    if theme_key == "pixel_chill":
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+
+        step = 2.5 if h < 30 else 3.0
+        # Ombra a scalini in basso a destra (solo se non premuto)
+        if not is_down:
+            shadow_rect = QRectF(rect.x() + 2.0, rect.y() + 2.0, w - 2.0, h - 2.0)
+            shadow_path = _build_pixel_notched_path(shadow_rect, step)
+            painter.fillPath(shadow_path, QColor("#181D1F"))
+
+        body_rect = QRectF(
+            rect.x() + (1.0 if is_down else 0.0),
+            rect.y() + (1.0 if is_down else 0.0),
+            w - 2.0,
+            h - 2.0,
+        )
+        outer_path = _build_pixel_notched_path(body_rect, step)
+
+        if is_danger:
+            bg_col = QColor("#8F2D2D") if not is_hovered else QColor("#A83838")
+            inner_bdr = QColor("#F07B65")
+            txt_col = QColor("#FFFDF9")
+        elif is_success:
+            bg_col = QColor("#3E6B48") if not is_hovered else QColor("#4B7F57")
+            inner_bdr = QColor("#A3D9A5")
+            txt_col = QColor("#FFFDF9")
+        elif active_like:
+            bg_col = QColor("#E06D53") if not is_hovered else QColor("#F07B65")
+            inner_bdr = QColor("#FFE3D8")
+            txt_col = QColor("#1E2426") if is_pill else QColor("#FFFDF9")
+            if is_pill:
+                bg_col = QColor("#F07B65")
+                inner_bdr = QColor("#1E2426")
+        elif is_hovered:
+            bg_col = QColor("#4A565B")
+            inner_bdr = QColor("#F07B65")
+            txt_col = QColor("#FFFDF9")
+        else:
+            bg_col = QColor("#394246") if not reading_mode else QColor("#333B3E")
+            inner_bdr = QColor("#627075") if not reading_mode else QColor("#505C60")
+            txt_col = QColor("#EAE4DC")
+
+        # Bordo esterno nero-ardesia 8-bit
+        painter.fillPath(outer_path, QColor("#1E2426"))
+
+        # Corpo interno scavato di 2px
+        inner_rect = body_rect.adjusted(2.0, 2.0, -2.0, -2.0)
+        inner_path = _build_pixel_notched_path(inner_rect, max(2.0, step - 0.5))
+        painter.fillPath(inner_path, inner_bdr)
+
+        # Area centrale riempimento pixel
+        core_rect = body_rect.adjusted(4.0, 4.0, -4.0, -4.0)
+        if core_rect.width() > 4 and core_rect.height() > 4:
+            core_path = _build_pixel_notched_path(core_rect, max(1.5, step - 1.0))
+            painter.fillPath(core_path, bg_col)
+
+        # Rivetti/pixel d'angolo 8-bit a contrasto
+        stud_col = QColor("#FFFDF9") if active_like else QColor("#8CA87C")
+        stud_col.setAlpha(180 if active_like or is_hovered else 110)
+        painter.fillRect(QRectF(body_rect.left() + step * 2 + 2, body_rect.top() + 3, 2, 2), stud_col)
+        painter.fillRect(QRectF(body_rect.right() - step * 2 - 4, body_rect.top() + 3, 2, 2), stud_col)
+        painter.fillRect(QRectF(body_rect.left() + step * 2 + 2, body_rect.bottom() - 5, 2, 2), stud_col)
+        painter.fillRect(QRectF(body_rect.right() - step * 2 - 4, body_rect.bottom() - 5, 2, 2), stud_col)
+
+        painter.restore()
+        return txt_col
+
+    # =========================================================================
+    # 2. GHIBLI SPRING: Cartellino illustrato a doppia linea + Sakura Floreali
+    # =========================================================================
+    if theme_key == "ghibli_spring":
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        body_rect = rect.adjusted(1.0, 1.0, -1.0, -1.0)
+        if is_down:
+            body_rect.translate(0.0, 1.0)
+        radius = min(11.0, body_rect.height() * 0.38)
+
+        grad = QLinearGradient(body_rect.topLeft(), body_rect.bottomRight())
+        if is_danger:
+            grad.setColorAt(0.0, QColor("#FDE8E8"))
+            grad.setColorAt(1.0, QColor("#F9D2D2"))
+            outer_bdr = QColor("#E07A7A")
+            inner_bdr = QColor(255, 255, 255, 190)
+            sakura_col = QColor(224, 122, 122, 110)
+            txt_col = QColor("#9E2A2B")
+        elif active_like:
+            grad.setColorAt(0.0, QColor("#F69DB2"))
+            grad.setColorAt(1.0, QColor("#EE7895"))
+            outer_bdr = QColor("#D96582")
+            inner_bdr = QColor(255, 250, 245, 185)
+            sakura_col = QColor(255, 245, 248, 155)
+            txt_col = QColor("#FFFFFF")
+        elif is_hovered:
+            grad.setColorAt(0.0, QColor("#FCE4EC"))
+            grad.setColorAt(1.0, QColor("#F8BBD0"))
+            outer_bdr = QColor("#F2849E")
+            inner_bdr = QColor(255, 255, 255, 200)
+            sakura_col = QColor(242, 132, 158, 135)
+            txt_col = QColor("#2C3A2F")
+        else:
+            if reading_mode:
+                grad.setColorAt(0.0, QColor("#F7F1E3"))
+                grad.setColorAt(1.0, QColor("#EFE6D4"))
+                outer_bdr = QColor("#C5D6C0")
+            else:
+                grad.setColorAt(0.0, QColor("#F2F7F9"))
+                grad.setColorAt(1.0, QColor("#E4EFF5"))
+                outer_bdr = QColor("#A8C8E0")
+            inner_bdr = QColor(255, 255, 255, 175)
+            sakura_col = QColor(242, 132, 158, 95)
+            txt_col = QColor("#2C3A2F")
+
+        outer_path = QPainterPath()
+        outer_path.addRoundedRect(body_rect, radius, radius)
+        painter.fillPath(outer_path, grad)
+
+        # Clip ai confini del bottone per disegnare i fiori di ciliegio negli angoli
+        painter.save()
+        painter.setClipPath(outer_path)
+        stamen_col = QColor("#F4C44E") if not active_like else QColor("#FFE89E")
+        if w >= 54:
+            _draw_sakura_flower(
+                painter,
+                body_rect.left() + 8.5,
+                body_rect.top() + 7.5,
+                5.2 if h >= 28 else 4.2,
+                sakura_col,
+                stamen_col,
+            )
+            _draw_sakura_petal(
+                painter,
+                body_rect.left() + 17.5,
+                body_rect.top() + 5.5,
+                3.0,
+                38.0,
+                sakura_col,
+            )
+            _draw_sakura_flower(
+                painter,
+                body_rect.right() - 8.5,
+                body_rect.bottom() - 7.0,
+                4.6 if h >= 28 else 3.8,
+                sakura_col,
+                stamen_col,
+            )
+            _draw_sakura_petal(
+                painter,
+                body_rect.right() - 17.0,
+                body_rect.top() + 7.5,
+                3.2,
+                -32.0,
+                sakura_col,
+            )
+        else:
+            # Bottone icona compatto: singolo petalo delicato nell'angolo
+            _draw_sakura_petal(
+                painter,
+                body_rect.right() - 5.5,
+                body_rect.top() + 5.5,
+                3.0,
+                -28.0,
+                sakura_col,
+            )
+        painter.restore()
+
+        # Cornice esterna morbida
+        painter.setPen(QPen(outer_bdr, 1.3))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(outer_path)
+
+        # Cornice interna a doppia linea stile cartellino illustrato Ghibli
+        if w >= 36 and h >= 22:
+            inset = 3.0
+            inner_rect = body_rect.adjusted(inset, inset, -inset, -inset)
+            inner_radius = max(4.0, radius - inset)
+            painter.setPen(QPen(inner_bdr, 1.0))
+            painter.drawRoundedRect(inner_rect, inner_radius, inner_radius)
+
+        painter.restore()
+        return txt_col
+
+    # =========================================================================
+    # 3. KATANA / TACTICAL HUD / INDUSTRIAL MECHA: Taglio Poligonale a 45°
+    # =========================================================================
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+    body_rect = rect.adjusted(1.0, 1.0, -1.0, -1.0)
+    if is_down:
+        body_rect.translate(0.5, 1.0)
+    cut = min(8.5, max(5.0, body_rect.height() * 0.30))
+    poly_path = _build_chamfered_45_path(body_rect, cut)
+
+    if theme_key == "katana":
+        grad = QLinearGradient(body_rect.topLeft(), body_rect.bottomRight())
+        if active_like or is_danger:
+            grad.setColorAt(0.0, QColor("#591515"))
+            grad.setColorAt(0.52, QColor("#B82323"))
+            grad.setColorAt(1.0, QColor("#2A1212"))
+            bdr_col = QColor("#FF4D4D") if is_hovered else QColor("#C59B5F")
+            slash_col = QColor(255, 220, 180, 95)
+            txt_col = QColor("#FFFDF9")
+        elif is_hovered:
+            grad.setColorAt(0.0, QColor("#3D1A1A"))
+            grad.setColorAt(1.0, QColor("#221212"))
+            bdr_col = QColor("#E03131")
+            slash_col = QColor(224, 49, 49, 90)
+            txt_col = QColor("#FFFDF9")
+        else:
+            grad.setColorAt(0.0, QColor("#2A2222") if not reading_mode else QColor("#241D1D"))
+            grad.setColorAt(1.0, QColor("#1A1414") if not reading_mode else QColor("#161111"))
+            bdr_col = QColor("#523428") if not reading_mode else QColor("#3D2820")
+            slash_col = QColor(197, 155, 95, 55)
+            txt_col = QColor("#F4EFEA")
+
+        painter.fillPath(poly_path, grad)
+
+        # Riflesso diagonale lama (Hamon) + filetto oro/cremisi sugli smussi a 45°
+        painter.save()
+        painter.setClipPath(poly_path)
+        slash = QPainterPath()
+        slash.moveTo(body_rect.left() + 4.0, body_rect.bottom())
+        slash.lineTo(body_rect.left() + 14.0, body_rect.top())
+        slash.lineTo(body_rect.left() + 18.5, body_rect.top())
+        slash.lineTo(body_rect.left() + 8.5, body_rect.bottom())
+        slash.closeSubpath()
+        painter.fillPath(slash, slash_col)
+        painter.restore()
+
+        painter.setPen(QPen(bdr_col, 1.35 if active_like else 1.1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(poly_path)
+
+        # Accento dorato/cremisi vivo lungo i due tagli obliqui a 45°
+        chamfer_pen = QPen(QColor("#C59B5F") if active_like else QColor("#A63A3A"), 1.8)
+        painter.setPen(chamfer_pen)
+        painter.drawLine(
+            QPointF(body_rect.right() - cut, body_rect.top()),
+            QPointF(body_rect.right(), body_rect.top() + cut),
+        )
+        painter.drawLine(
+            QPointF(body_rect.left() + cut, body_rect.bottom()),
+            QPointF(body_rect.left(), body_rect.bottom() - cut),
+        )
+        painter.restore()
+        return txt_col
+
+    if theme_key == "tactical_hud":
+        grad = QLinearGradient(body_rect.topLeft(), body_rect.bottomLeft())
+        if is_danger:
+            grad.setColorAt(0.0, QColor("#3A1216"))
+            grad.setColorAt(1.0, QColor("#240B0E"))
+            bdr_col = QColor("#FF334B")
+            bracket_col = QColor("#FF6678")
+            txt_col = QColor("#FFE5E8")
+        elif active_like:
+            grad.setColorAt(0.0, QColor("#183826"))
+            grad.setColorAt(1.0, QColor("#0F2418"))
+            bdr_col = QColor("#00FF66")
+            bracket_col = QColor("#73FFAA")
+            txt_col = QColor("#E6FFF0")
+        elif is_hovered:
+            grad.setColorAt(0.0, QColor("#152E20"))
+            grad.setColorAt(1.0, QColor("#0E1F16"))
+            bdr_col = QColor("#00E65C")
+            bracket_col = QColor("#00FF66")
+            txt_col = QColor("#E6FFF0")
+        else:
+            grad.setColorAt(0.0, QColor("#111C16") if not reading_mode else QColor("#0E1712"))
+            grad.setColorAt(1.0, QColor("#0B130F") if not reading_mode else QColor("#09100C"))
+            bdr_col = QColor("#234233") if not reading_mode else QColor("#1A3025")
+            bracket_col = QColor("#00CC52")
+            txt_col = QColor("#B8E6C8")
+
+        painter.fillPath(poly_path, grad)
+        painter.setPen(QPen(bdr_col, 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(poly_path)
+
+        # Tacche telemetriche HUD sugli angoli smussati e staffa luminosa
+        painter.setPen(QPen(bracket_col, 1.8 if active_like else 1.4))
+        # Angolo alto-sinistra: staffa a L
+        painter.drawLine(QPointF(body_rect.left(), body_rect.top() + 7.0), QPointF(body_rect.left(), body_rect.top() + 1.0))
+        painter.drawLine(QPointF(body_rect.left() + 1.0, body_rect.top()), QPointF(body_rect.left() + 8.0, body_rect.top()))
+        # Angolo alto-destra: rinforzo diagonale 45°
+        painter.drawLine(
+            QPointF(body_rect.right() - cut, body_rect.top()),
+            QPointF(body_rect.right(), body_rect.top() + cut),
+        )
+        # Angolo basso-sinistra: rinforzo diagonale 45°
+        painter.drawLine(
+            QPointF(body_rect.left() + cut, body_rect.bottom()),
+            QPointF(body_rect.left(), body_rect.bottom() - cut),
+        )
+        painter.restore()
+        return txt_col
+
+    # industrial_mecha
+    grad = QLinearGradient(body_rect.topLeft(), body_rect.bottomLeft())
+    if is_danger:
+        grad.setColorAt(0.0, QColor("#9E2424"))
+        grad.setColorAt(1.0, QColor("#6E1717"))
+        bdr_col = QColor("#FF4D4D")
+        stripe_col = QColor("#F5B700")
+        txt_col = QColor("#FFFFFF")
+    elif active_like:
+        grad.setColorAt(0.0, QColor("#FF5500"))
+        grad.setColorAt(1.0, QColor("#CC4400"))
+        bdr_col = QColor("#F5B700")
+        stripe_col = QColor("#1A1C1E")
+        txt_col = QColor("#111315") if is_pill else QColor("#FFFFFF")
+    elif is_hovered:
+        grad.setColorAt(0.0, QColor("#3D4248"))
+        grad.setColorAt(1.0, QColor("#2D3136"))
+        bdr_col = QColor("#FF5500")
+        stripe_col = QColor("#FF5500")
+        txt_col = QColor("#F3F4F6")
+    else:
+        grad.setColorAt(0.0, QColor("#32363B") if not reading_mode else QColor("#2B2F33"))
+        grad.setColorAt(1.0, QColor("#26292D") if not reading_mode else QColor("#212428"))
+        bdr_col = QColor("#494E54") if not reading_mode else QColor("#383C42")
+        stripe_col = QColor("#F5B700")
+        txt_col = QColor("#E5E7EB")
+
+    painter.fillPath(poly_path, grad)
+
+    # Banda corazzata laterale sinistra + rivetti meccanici
+    painter.save()
+    painter.setClipPath(poly_path)
+    painter.fillRect(QRectF(body_rect.left(), body_rect.top(), 4.0, body_rect.height()), stripe_col)
+    rivet_col = QColor("#111315") if active_like else QColor("#8C939E")
+    painter.fillRect(QRectF(body_rect.right() - 5.5, body_rect.bottom() - 5.5, 2.2, 2.2), rivet_col)
+    painter.fillRect(QRectF(body_rect.left() + 6.5, body_rect.top() + 3.5, 2.2, 2.2), rivet_col)
+    painter.restore()
+
+    painter.setPen(QPen(bdr_col, 1.3))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawPath(poly_path)
+
+    painter.restore()
+    return txt_col
+
+
+class MorphologicalSlidingPill(QFrame):
+    """Pillola attiva scorrevole che assume la sagoma morfologica reale del tema corrente."""
+
+    def __init__(self, pill_object_name: str, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setObjectName(pill_object_name)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def paintEvent(self, event):
+        theme_key = ThemedPushButton.current_theme
+        if theme_key not in _MORPHOLOGICAL_THEMES:
+            super().paintEvent(event)
+            return
+        painter = QPainter(self)
+        _paint_morphological_surface(
+            painter,
+            QRectF(0.0, 0.0, float(self.width()), float(self.height())),
+            theme_key,
+            is_primary=True,
+            is_checked=True,
+            is_pill=True,
+            reading_mode=ThemedPushButton.reading_mode,
+        )
+        painter.end()
+
+
+class ThemedPushButton(QPushButton):
+    """
+    Bottone con sagoma morfologica reale (8-bit pixel steps, Ghibli sakura + doppia cornice,
+    o lama/corazza tagliata a 45°) per i temi speciali, con fallback nativo QSS per i temi classici.
+    """
+
+    current_theme: str = "obsidian"
+    reading_mode: bool = False
+
+    def __init__(self, text: str = "", parent: Optional[QWidget] = None):
+        super().__init__(text, parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+    def paintEvent(self, event):
+        theme_key = self.current_theme
+        if theme_key not in _MORPHOLOGICAL_THEMES:
+            super().paintEvent(event)
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        rect = QRectF(0.0, 0.0, float(self.width()), float(self.height()))
+
+        variant = str(self.property("variant") or "")
+        obj_name = self.objectName()
+        has_sliding_pill = bool(self.property("has_sliding_pill"))
+        is_checked = self.isChecked()
+        is_hovered = self.underMouse() and self.isEnabled()
+        is_down = self.isDown() and self.isEnabled()
+
+        is_primary = variant in ("primary", "accent") or obj_name in ("PrimaryBtn",)
+        is_danger = variant == "danger"
+        is_success = variant == "success"
+
+        p = _resolve_palette(theme_key, self.reading_mode)
+
+        if has_sliding_pill:
+            # I bottoni dentro AnimatedSegmentedBox hanno già MorphologicalSlidingPill sotto quando checked
+            if is_checked:
+                txt_col = QColor(p.get("nav_checked_text", p.get("title", "#FFFFFF")))
+                if theme_key == "pixel_chill":
+                    txt_col = QColor("#1E2426")
+                elif theme_key == "industrial_mecha":
+                    txt_col = QColor("#111315")
+            elif is_hovered:
+                txt_col = _paint_morphological_surface(
+                    painter,
+                    rect,
+                    theme_key,
+                    is_hovered=True,
+                    is_down=is_down,
+                    reading_mode=self.reading_mode,
+                )
+            else:
+                txt_col = QColor(p.get("subtitle", "#94A3B8"))
+        else:
+            txt_col = _paint_morphological_surface(
+                painter,
+                rect,
+                theme_key,
+                is_primary=is_primary,
+                is_danger=is_danger,
+                is_success=is_success,
+                is_checked=is_checked,
+                is_hovered=is_hovered,
+                is_down=is_down,
+                reading_mode=self.reading_mode,
+            )
+
+        if not self.isEnabled():
+            txt_col.setAlpha(115)
+
+        painter.setFont(self.font())
+        painter.setPen(txt_col)
+        text_rect = rect.adjusted(6.0, 0.0, -6.0, 0.0)
+        if is_down and not has_sliding_pill:
+            text_rect.translate(0.5, 1.0)
+
+        icon = self.icon()
+        text = self.text()
+        if not icon.isNull():
+            ic_sz = self.iconSize()
+            iw, ih = ic_sz.width() or 16, ic_sz.height() or 16
+            fm = painter.fontMetrics()
+            tw = fm.horizontalAdvance(text) if text else 0
+            gap = 6 if text else 0
+            total_w = iw + gap + tw
+            start_x = rect.center().x() - total_w / 2.0
+            ic_y = rect.center().y() - ih / 2.0 + (1.0 if is_down else 0.0)
+            pm = icon.pixmap(iw, ih)
+            painter.drawPixmap(int(round(start_x)), int(round(ic_y)), pm)
+            if text:
+                t_rect = QRectF(start_x + iw + gap, text_rect.y(), tw + 8.0, text_rect.height())
+                painter.drawText(t_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
+        else:
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, text)
+
+        painter.end()
+
+
 def _make_button(text: str, variant: Optional[str] = None) -> QPushButton:
-    btn = QPushButton(text)
+    btn = ThemedPushButton(text)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     if variant:
         btn.setProperty("variant", variant)
@@ -1022,6 +3838,7 @@ class ScrollList(QScrollArea):
 
     def add_card(self, widget: QWidget):
         self.vbox.insertWidget(self.vbox.count() - 1, widget)
+        widget.show()
 
     def show_empty(self, text: Optional[str] = None):
         lbl = _make_label(text or self.empty_text, "EmptyState", wrap=True)
@@ -1282,92 +4099,6 @@ class CloudQueueProcessThread(QThread):
             self.cancelled.emit()
         except Exception as e:
             self.error.emit(str(e))
-
-
-class QuickNoteDialog(QDialog):
-    """Dialogo compatto per creare al volo un Appunto Rapido dall'Hub."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("⚡ Nuovo Appunto Rapido")
-        self.setMinimumWidth(480)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #161920;
-            }
-            QLabel {
-                color: #E2E8F0;
-                font-family: 'Segoe UI';
-            }
-        """)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
-
-        header = QLabel("⚡ Nuovo Appunto Rapido")
-        header.setStyleSheet("font-size: 16px; font-weight: bold; color: #F8FAFC;")
-        layout.addWidget(header)
-
-        sub = QLabel("Annota al volo un pensiero o promemoria. Verrà archiviato nella categoria Appunti Rapidi.")
-        sub.setStyleSheet("font-size: 12px; color: #94A3B8;")
-        sub.setWordWrap(True)
-        layout.addWidget(sub)
-
-        title_lbl = QLabel("Titolo (opzionale):")
-        title_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #CBD5E1;")
-        layout.addWidget(title_lbl)
-
-        self.title_edit = QLineEdit()
-        self.title_edit.setPlaceholderText("Es. Idea progetto, Promemoria esame...")
-        self.title_edit.setMinimumHeight(36)
-        layout.addWidget(self.title_edit)
-
-        content_lbl = QLabel("Contenuto dell'appunto:")
-        content_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #CBD5E1;")
-        layout.addWidget(content_lbl)
-
-        self.content_edit = QTextEdit()
-        self.content_edit.setPlaceholderText("Scrivi o incolla qui il tuo appunto rapido...")
-        self.content_edit.setMinimumHeight(120)
-        layout.addWidget(self.content_edit)
-
-        btn_box = QHBoxLayout()
-        btn_box.setSpacing(10)
-        btn_box.addStretch(1)
-
-        cancel_btn = _make_button("Annulla")
-        cancel_btn.clicked.connect(self.reject)
-        btn_box.addWidget(cancel_btn)
-
-        save_btn = _make_button("⚡ Salva Appunto", "primary")
-        save_btn.clicked.connect(self._save_note)
-        btn_box.addWidget(save_btn)
-
-        layout.addLayout(btn_box)
-        self.content_edit.setFocus()
-
-    def _save_note(self):
-        text = self.content_edit.toPlainText().strip()
-        if not text:
-            QMessageBox.warning(self, "Testo vuoto", "Inserisci il contenuto dell'appunto prima di salvare.")
-            return
-
-        title = self.title_edit.text().strip()
-        if not title:
-            title = text.split("\n")[0][:45].strip() or "Appunto Rapido"
-            if len(title) > 42:
-                title = title[:42] + "..."
-
-        new_id = db.add_study_note(
-            title=title,
-            content_markdown=text,
-            note_type="Appunto Rapido",
-            tags="Hub, Rapido"
-        )
-        self.created_note_id = new_id
-        self.created_note_title = title
-        self.created_note_text = text
-        self.accept()
 
 
 class NewSubjectTopicDialog(QDialog):
@@ -2384,8 +5115,2571 @@ class QuickRuleDialog(QDialog):
         self.accept()
 
 
+class SpotifyMiniBar(QFrame):
+    """Mini-player Spotify compatto per la barra superiore di FlowLocal (icone vettoriali nitide)."""
+
+    VK_MEDIA_NEXT_TRACK = 0xB0
+    VK_MEDIA_PREV_TRACK = 0xB1
+    VK_MEDIA_PLAY_PAUSE = 0xB3
+    APPCOMMAND_MEDIA_NEXTTRACK = 11
+    APPCOMMAND_MEDIA_PREVIOUSTRACK = 12
+    APPCOMMAND_MEDIA_PLAY_PAUSE = 14
+    WM_APPCOMMAND = 0x0319
+    KEYEVENTF_EXTENDEDKEY = 0x0001
+    KEYEVENTF_KEYUP = 0x0002
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("SpotifyMiniBar")
+        self.setFixedHeight(30)
+        self.setFixedWidth(242)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._spotify_hwnd: Optional[int] = None
+        self._spotify_running = False
+        self._is_playing = False
+        self._is_dark_theme = True
+        self._last_raw_title = ""
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 2, 6, 2)
+        layout.setSpacing(2)
+
+        self.track_btn = QPushButton("🎵 Spotify")
+        self.track_btn.setObjectName("SpotifyTrackBtn")
+        self.track_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.track_btn.setFixedWidth(152)
+        self.track_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.track_btn.setToolTip("Clicca per aprire o portare in primo piano Spotify")
+        self.track_btn.clicked.connect(self._on_track_clicked)
+        layout.addWidget(self.track_btn)
+
+        self.prev_btn = QPushButton("")
+        self.prev_btn.setObjectName("SpotifyCtrlBtn")
+        self.prev_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.prev_btn.setIconSize(QSize(13, 13))
+        self.prev_btn.setToolTip("Brano precedente")
+        self.prev_btn.clicked.connect(
+            lambda: self._send_media_key(self.VK_MEDIA_PREV_TRACK, self.APPCOMMAND_MEDIA_PREVIOUSTRACK)
+        )
+        layout.addWidget(self.prev_btn)
+
+        self.play_btn = QPushButton("")
+        self.play_btn.setObjectName("SpotifyCtrlBtn")
+        self.play_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.play_btn.setIconSize(QSize(13, 13))
+        self.play_btn.setToolTip("Play / Pausa")
+        self.play_btn.clicked.connect(
+            lambda: self._send_media_key(self.VK_MEDIA_PLAY_PAUSE, self.APPCOMMAND_MEDIA_PLAY_PAUSE)
+        )
+        layout.addWidget(self.play_btn)
+
+        self.next_btn = QPushButton("")
+        self.next_btn.setObjectName("SpotifyCtrlBtn")
+        self.next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.next_btn.setIconSize(QSize(13, 13))
+        self.next_btn.setToolTip("Brano successivo")
+        self.next_btn.clicked.connect(
+            lambda: self._send_media_key(self.VK_MEDIA_NEXT_TRACK, self.APPCOMMAND_MEDIA_NEXTTRACK)
+        )
+        layout.addWidget(self.next_btn)
+
+        self._update_control_icons()
+
+        self._poll_timer = QTimer(self)
+        self._poll_timer.timeout.connect(self._poll_spotify)
+        self._poll_timer.start(1800)
+        QTimer.singleShot(300, self._poll_spotify)
+
+    @staticmethod
+    def _make_media_icon(kind: str, color: str, size: int = 13) -> QIcon:
+        pm = QPixmap(QSize(size, size))
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        col = QColor(color)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(col))
+
+        s = float(size)
+        if kind == "pause":
+            bw = max(2.2, s * 0.22)
+            gap = max(2.2, s * 0.20)
+            total_w = bw * 2.0 + gap
+            x0 = (s - total_w) / 2.0
+            top = s * 0.16
+            bh = s * 0.68
+            p.drawRoundedRect(QRectF(x0, top, bw, bh), 1.0, 1.0)
+            p.drawRoundedRect(QRectF(x0 + bw + gap, top, bw, bh), 1.0, 1.0)
+        elif kind == "play":
+            poly = QPolygonF([
+                QPointF(s * 0.25, s * 0.14),
+                QPointF(s * 0.86, s * 0.50),
+                QPointF(s * 0.25, s * 0.86),
+            ])
+            p.drawPolygon(poly)
+        elif kind == "prev":
+            p.drawRoundedRect(QRectF(s * 0.15, s * 0.18, s * 0.14, s * 0.64), 0.8, 0.8)
+            poly = QPolygonF([
+                QPointF(s * 0.84, s * 0.17),
+                QPointF(s * 0.34, s * 0.50),
+                QPointF(s * 0.84, s * 0.83),
+            ])
+            p.drawPolygon(poly)
+        elif kind == "next":
+            poly = QPolygonF([
+                QPointF(s * 0.16, s * 0.17),
+                QPointF(s * 0.66, s * 0.50),
+                QPointF(s * 0.16, s * 0.83),
+            ])
+            p.drawPolygon(poly)
+            p.drawRoundedRect(QRectF(s * 0.71, s * 0.18, s * 0.14, s * 0.64), 0.8, 0.8)
+
+        p.end()
+        return QIcon(pm)
+
+    def set_theme_mode(self, is_dark: bool):
+        self._is_dark_theme = bool(is_dark)
+        self._update_control_icons()
+
+    def _update_control_icons(self):
+        fg = "#E2E8F0" if self._is_dark_theme else "#334155"
+        play_col = ("#10B981" if self._is_dark_theme else "#059669") if self._is_playing else fg
+        win = self.window()
+        if win is not None and hasattr(win, "_active_palette"):
+            try:
+                pal = win._active_palette()
+                fg = pal.get("text", fg)
+                if self._is_playing:
+                    play_col = pal.get("accent", play_col)
+                else:
+                    play_col = fg
+            except Exception:
+                pass
+        self.prev_btn.setIcon(self._make_media_icon("prev", fg))
+        self.next_btn.setIcon(self._make_media_icon("next", fg))
+        if self._is_playing:
+            self.play_btn.setIcon(self._make_media_icon("pause", play_col))
+            self.play_btn.setToolTip("Metti in pausa Spotify")
+        else:
+            self.play_btn.setIcon(self._make_media_icon("play", play_col))
+            self.play_btn.setToolTip("Avvia o riprendi Spotify")
+
+    @staticmethod
+    def _find_spotify_window() -> tuple:
+        """Restituisce (is_running, hwnd, title) per Spotify Desktop su Windows."""
+        spotify_pids = set()
+        if psutil is not None:
+            try:
+                for proc in psutil.process_iter(["pid", "name"]):
+                    pname = (proc.info.get("name") or "").lower()
+                    if pname == "spotify.exe":
+                        spotify_pids.add(proc.info["pid"])
+            except Exception:
+                pass
+
+        if not spotify_pids:
+            return False, None, ""
+
+        found_windows = []
+        try:
+            user32 = ctypes.windll.user32
+            enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+
+            def _cb(hwnd, _lparam):
+                if not user32.IsWindowVisible(hwnd):
+                    return True
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value not in spotify_pids:
+                    return True
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length <= 0:
+                    return True
+                buf = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(hwnd, buf, length + 1)
+                title = (buf.value or "").strip()
+                if title and title not in ("Default IME", "MSCTFIME UI", "AngleHiddenWindow"):
+                    found_windows.append((hwnd, title))
+                return True
+
+            user32.EnumWindows(enum_proc(_cb), 0)
+        except Exception:
+            pass
+
+        if not found_windows:
+            return True, None, "Spotify"
+
+        # Preferisci la finestra che mostra "Artista - Brano"
+        for hwnd, title in found_windows:
+            if " - " in title or " – " in title:
+                return True, hwnd, title
+        return True, found_windows[0][0], found_windows[0][1]
+
+    def _poll_spotify(self):
+        win = self.window()
+        if win is not None and not win.isVisible():
+            return
+        running, hwnd, raw_title = self._find_spotify_window()
+        self._spotify_running = running
+        self._spotify_hwnd = hwnd
+        self._last_raw_title = raw_title
+
+        is_playing_now = False
+        if not running:
+            raw_display = "🎵 Apri Spotify"
+            tooltip = "Spotify non è aperto — clicca per avviarlo"
+        elif raw_title.lower() in ("spotify", "spotify free", "spotify premium", ""):
+            raw_display = "🎵 Spotify · Pausa"
+            tooltip = "Spotify in pausa — premi Play per riprendere"
+        else:
+            is_playing_now = True
+            clean = raw_title.replace(" - ", " — ")
+            tooltip = f"In riproduzione su Spotify:\n{clean}"
+            raw_display = f"🎵 {clean}"
+
+        display = self.track_btn.fontMetrics().elidedText(
+            raw_display, Qt.TextElideMode.ElideRight, 134
+        )
+
+        if is_playing_now != self._is_playing:
+            self._is_playing = is_playing_now
+            self._update_control_icons()
+
+        if display != self.track_btn.text() or tooltip != self.track_btn.toolTip():
+            self.track_btn.setText(display)
+            self.track_btn.setToolTip(tooltip)
+
+    def _verify_or_fallback_appcommand(self, prev_title: str, app_command: int):
+        running, hwnd, raw_title = self._find_spotify_window()
+        if running and hwnd and raw_title == prev_title:
+            try:
+                ctypes.windll.user32.PostMessageW(hwnd, self.WM_APPCOMMAND, hwnd, app_command << 16)
+            except Exception as e:
+                print(f"[SpotifyMiniBar] Fallback WM_APPCOMMAND fallito: {e}")
+        QTimer.singleShot(260, self._poll_spotify)
+
+    def _send_media_key(self, vk_code: int, app_command: int):
+        prev_title = self._last_raw_title
+        if vk_code == self.VK_MEDIA_PLAY_PAUSE and self._spotify_running:
+            self._is_playing = not self._is_playing
+            self._update_control_icons()
+        try:
+            user32 = ctypes.windll.user32
+            scan_code = user32.MapVirtualKeyW(vk_code, 0)
+            user32.keybd_event(vk_code, scan_code, self.KEYEVENTF_EXTENDEDKEY, 0)
+            user32.keybd_event(vk_code, scan_code, self.KEYEVENTF_EXTENDEDKEY | self.KEYEVENTF_KEYUP, 0)
+        except Exception as e:
+            print(f"[SpotifyMiniBar] Errore comando media: {e}")
+        QTimer.singleShot(320, lambda pt=prev_title, cmd=app_command: self._verify_or_fallback_appcommand(pt, cmd))
+
+    def _on_track_clicked(self):
+        if self._spotify_running and self._spotify_hwnd:
+            try:
+                user32 = ctypes.windll.user32
+                if user32.IsIconic(self._spotify_hwnd):
+                    user32.ShowWindow(self._spotify_hwnd, 9)  # SW_RESTORE
+                user32.SetForegroundWindow(self._spotify_hwnd)
+                return
+            except Exception:
+                pass
+        try:
+            os.startfile("spotify:")
+            QTimer.singleShot(1500, self._poll_spotify)
+        except Exception as e:
+            print(f"[SpotifyMiniBar] Impossibile avviare Spotify: {e}")
+
+
+class SlidingStackedWidget(QStackedWidget):
+    """
+    QStackedWidget con transizioni spaziali direzionali fluide (Stile iOS / One UI):
+    - Parallasse asimmetrica (pagina entrante 100% sopra con raise_(), pagina uscente 35% in direzione opposta).
+    - Durata 280ms con curva QEasingCurve.Type.OutCubic.
+    - Gestione Interrupt istantanea sui click rapidi (zero blocco input, zero glitch).
+    - Supporta mappa di ranghi spaziali (`spatial_ranks`) per rispettare l'ordine visivo dei bottoni nella Top Bar.
+    """
+
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        duration_ms: int = 280,
+        spatial_ranks: Optional[Dict[int, int]] = None,
+    ):
+        super().__init__(parent)
+        self._duration_ms: int = duration_ms
+        self._spatial_ranks: Dict[int, int] = dict(spatial_ranks or {})
+        self._is_animating: bool = False
+        self._anim_group: Optional[QParallelAnimationGroup] = None
+        self._prev_index: Optional[int] = None
+        self._target_index: Optional[int] = None
+
+    def set_spatial_ranks(self, ranks: Dict[int, int]):
+        self._spatial_ranks = dict(ranks or {})
+
+    def _rank_of(self, index: int) -> int:
+        return self._spatial_ranks.get(index, index)
+
+    def currentIndex(self) -> int:
+        if self._is_animating and self._target_index is not None:
+            return self._target_index
+        return super().currentIndex()
+
+    def currentWidget(self) -> Optional[QWidget]:
+        idx = self.currentIndex()
+        return self.widget(idx) if 0 <= idx < self.count() else super().currentWidget()
+
+    def _abort_active_animation(self):
+        """Interrompe istantaneamente l'animazione in corso e consolida il vecchio target_index come corrente."""
+        if not self._is_animating:
+            return
+        if self._anim_group is not None:
+            try:
+                self._anim_group.finished.disconnect(self._on_animation_finished)
+            except Exception:
+                pass
+            self._anim_group.stop()
+            self._anim_group.deleteLater()
+            self._anim_group = None
+
+        prev_w = self.widget(self._prev_index) if self._prev_index is not None else None
+        targ_w = self.widget(self._target_index) if self._target_index is not None else None
+
+        if self._target_index is not None and 0 <= self._target_index < self.count():
+            super().setCurrentIndex(self._target_index)
+
+        if prev_w is not None and prev_w is not targ_w:
+            prev_w.hide()
+            prev_w.move(0, 0)
+        if targ_w is not None:
+            targ_w.move(0, 0)
+            targ_w.resize(self.size())
+            targ_w.show()
+
+        self._is_animating = False
+        self._prev_index = None
+        self._target_index = None
+
+    def setCurrentIndex(self, new_index: int):
+        if new_index < 0 or new_index >= self.count():
+            return
+
+        # Interrupt Handling: se l'utente clicca un'altra tab durante l'animazione,
+        # ferma subito il gruppo corrente, consolida il target precedente e avvia la nuova transizione.
+        if self._is_animating:
+            if new_index == self._target_index:
+                return
+            self._abort_active_animation()
+
+        cur_index = super().currentIndex()
+        if new_index == cur_index:
+            return
+
+        # Se il widget non è visibile o ha larghezza nulla (es. avvio iniziale), switch istantaneo
+        w = self.width()
+        h = self.height()
+        if not self.isVisible() or w <= 20 or h <= 20:
+            super().setCurrentIndex(new_index)
+            return
+
+        cur_widget = self.widget(cur_index)
+        next_widget = self.widget(new_index)
+        if cur_widget is None or next_widget is None:
+            super().setCurrentIndex(new_index)
+            return
+
+        cur_rank = self._rank_of(cur_index)
+        new_rank = self._rank_of(new_index)
+        moving_right = new_rank > cur_rank
+
+        # Fissa le dimensioni di entrambi i widget a self.size() e porta in primo piano la pagina entrante
+        cur_widget.resize(self.size())
+        next_widget.resize(self.size())
+
+        # Parallasse asimmetrica (100% entrante sopra, 35% uscente nella direzione opposta sotto)
+        parallax_offset = max(1, int(w * 0.35))
+        if moving_right:
+            in_start = QPoint(w, 0)
+            out_end = QPoint(-parallax_offset, 0)
+        else:
+            in_start = QPoint(-w, 0)
+            out_end = QPoint(parallax_offset, 0)
+
+        cur_widget.move(0, 0)
+        next_widget.move(in_start)
+        next_widget.show()
+        next_widget.raise_()
+
+        self._is_animating = True
+        self._prev_index = cur_index
+        self._target_index = new_index
+
+        anim_in = QPropertyAnimation(next_widget, b"pos", self)
+        anim_in.setDuration(self._duration_ms)
+        anim_in.setStartValue(in_start)
+        anim_in.setEndValue(QPoint(0, 0))
+        anim_in.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        anim_out = QPropertyAnimation(cur_widget, b"pos", self)
+        anim_out.setDuration(self._duration_ms)
+        anim_out.setStartValue(QPoint(0, 0))
+        anim_out.setEndValue(out_end)
+        anim_out.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        group = QParallelAnimationGroup(self)
+        group.addAnimation(anim_in)
+        group.addAnimation(anim_out)
+        group.finished.connect(self._on_animation_finished)
+        self._anim_group = group
+
+        # Emette subito currentChanged verso i listener (Top Bar / Sub Bar) per sincronizzare la pillola
+        self.currentChanged.emit(new_index)
+        group.start()
+
+    def _on_animation_finished(self):
+        prev_idx = self._prev_index
+        targ_idx = self._target_index
+        self._is_animating = False
+        self._prev_index = None
+        self._target_index = None
+
+        if self._anim_group is not None:
+            self._anim_group.deleteLater()
+            self._anim_group = None
+
+        prev_w = self.widget(prev_idx) if prev_idx is not None else None
+        targ_w = self.widget(targ_idx) if targ_idx is not None else None
+
+        if targ_idx is not None and 0 <= targ_idx < self.count():
+            self.blockSignals(True)
+            super().setCurrentIndex(targ_idx)
+            self.blockSignals(False)
+
+        if prev_w is not None and prev_w is not targ_w:
+            prev_w.hide()
+            prev_w.move(0, 0)
+        if targ_w is not None:
+            targ_w.move(0, 0)
+            targ_w.resize(self.size())
+            targ_w.show()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._is_animating:
+            for idx in (self._prev_index, self._target_index):
+                w = self.widget(idx) if idx is not None else None
+                if w is not None:
+                    w.resize(self.size())
+
+
+class AnimatedSegmentedBox(QFrame):
+    """
+    Contenitore Segmented Control con pillola attiva scorrevole animata (280ms OutCubic).
+    Sincronizzato con lo scorrimento spaziale di SlidingStackedWidget nella Top Bar e nelle Sub Bar.
+    """
+
+    def __init__(
+        self,
+        box_object_name: str = "TopSegmentBox",
+        pill_object_name: str = "TopSlidingPill",
+        duration_ms: int = 280,
+        parent: Optional[QWidget] = None,
+    ):
+        super().__init__(parent)
+        self.setObjectName(box_object_name)
+        self._duration_ms = duration_ms
+        self._buttons: List[QPushButton] = []
+        self._active_btn: Optional[QPushButton] = None
+
+        self.pill = MorphologicalSlidingPill(pill_object_name, self)
+        self.pill.lower()
+        self.pill.hide()
+
+        self._anim = QPropertyAnimation(self.pill, b"geometry", self)
+        self._anim.setDuration(self._duration_ms)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def register_button(self, btn: QPushButton):
+        btn.setProperty("has_sliding_pill", True)
+        self._buttons.append(btn)
+        btn.raise_()
+        btn.toggled.connect(lambda checked, b=btn: self._on_btn_toggled(b, checked))
+
+    def _on_btn_toggled(self, btn: QPushButton, checked: bool):
+        if checked:
+            self.slide_to_button(btn, animate=self.isVisible())
+
+    def slide_to_button(self, btn: QPushButton, animate: bool = True):
+        if btn is None:
+            return
+        prev_btn = self._active_btn
+        self._active_btn = btn
+        target_rect = btn.geometry()
+        if target_rect.width() <= 4 or target_rect.height() <= 4:
+            QTimer.singleShot(0, self.sync_pill_geometry)
+            return
+
+        self.pill.show()
+        self.pill.lower()
+        for b in self._buttons:
+            b.raise_()
+
+        if not animate or not self.isVisible() or prev_btn is None or self.pill.width() <= 4:
+            if self._anim.state() == QPropertyAnimation.State.Running:
+                self._anim.stop()
+            self.pill.setGeometry(target_rect)
+            return
+
+        current_rect = self.pill.geometry()
+        if current_rect == target_rect:
+            return
+
+        if self._anim.state() == QPropertyAnimation.State.Running:
+            current_rect = self.pill.geometry()
+            self._anim.stop()
+
+        self._anim.setStartValue(current_rect)
+        self._anim.setEndValue(target_rect)
+        self._anim.start()
+
+    def sync_pill_geometry(self):
+        if self._active_btn is None:
+            for b in self._buttons:
+                if b.isChecked():
+                    self._active_btn = b
+                    break
+        if self._active_btn is not None:
+            rect = self._active_btn.geometry()
+            if rect.width() > 4 and rect.height() > 4:
+                if self._anim.state() != QPropertyAnimation.State.Running:
+                    self.pill.setGeometry(rect)
+                self.pill.show()
+                self.pill.lower()
+                for b in self._buttons:
+                    b.raise_()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self.sync_pill_geometry)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.sync_pill_geometry()
+
+
+class HubSettingsDialog(QDialog):
+    """Finestra Impostazioni di FlowLocal Hub (Temi, Tipografia & Zoom, Sync Google Calendar, Sistema)."""
+
+    def __init__(self, hub: "FlowLocalHub"):
+        super().__init__(hub)
+        self.hub = hub
+        self.setWindowTitle("⚙️ Impostazioni FlowLocal")
+        self.setMinimumWidth(560)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(12)
+
+        title_lbl = _make_label("Impostazioni FlowLocal", "PageTitle")
+        layout.addWidget(title_lbl)
+
+        # 1. Sezione Aspetto & Temi
+        theme_card = QFrame()
+        theme_card.setObjectName("Card")
+        tc_layout = QVBoxLayout(theme_card)
+        tc_layout.setContentsMargins(14, 10, 14, 10)
+        tc_layout.setSpacing(8)
+        tc_layout.addWidget(_make_label("🎨 Tema Interfaccia", "CardTitle"))
+        tc_layout.addWidget(_make_label("Scegli lo stile visivo della dashboard (Modalità Lettura resta accessibile in alto).", "PageSubtitle", wrap=True))
+
+        self._theme_grp = QButtonGroup(self)
+        self._theme_grp.setExclusive(True)
+
+        theme_row1 = QHBoxLayout()
+        theme_row1.setSpacing(6)
+        for idx, (t_label, t_key) in enumerate([
+            ("Obsidian", "obsidian"),
+            ("Chiaro", "light"),
+            ("Orb", "orb"),
+            ("Dark Orb", "dark_orb"),
+        ]):
+            btn = QPushButton(t_label)
+            btn.setObjectName("FilterPill")
+            btn.setCheckable(True)
+            btn.setChecked(self.hub._current_theme == t_key)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _c=False, k=t_key: self._on_theme_pill_clicked(k))
+            self._theme_grp.addButton(btn, idx)
+            theme_row1.addWidget(btn)
+        tc_layout.addLayout(theme_row1)
+
+        theme_row2 = QHBoxLayout()
+        theme_row2.setSpacing(6)
+        for idx, (t_label, t_key) in enumerate([
+            ("🌸 Ghibli Spring", "ghibli_spring"),
+            ("👾 Pixel Chill", "pixel_chill"),
+            ("⚔️ Crimson Katana", "katana"),
+            ("🎯 Tactical HUD", "tactical_hud"),
+        ], start=4):
+            btn = QPushButton(t_label)
+            btn.setObjectName("FilterPill")
+            btn.setCheckable(True)
+            btn.setChecked(self.hub._current_theme == t_key)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _c=False, k=t_key: self._on_theme_pill_clicked(k))
+            self._theme_grp.addButton(btn, idx)
+            theme_row2.addWidget(btn)
+        tc_layout.addLayout(theme_row2)
+
+        theme_row3 = QHBoxLayout()
+        theme_row3.setSpacing(6)
+        for idx, (t_label, t_key) in enumerate([
+            ("🤖 Industrial Mecha", "industrial_mecha"),
+            ("🖥️ Amber CRT", "amber_crt"),
+            ("🚀 Starfield Alabaster", "starfield_alabaster"),
+            ("🌆 Cyber Synthwave", "cyber_synthwave"),
+        ], start=8):
+            btn = QPushButton(t_label)
+            btn.setObjectName("FilterPill")
+            btn.setCheckable(True)
+            btn.setChecked(self.hub._current_theme == t_key)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _c=False, k=t_key: self._on_theme_pill_clicked(k))
+            self._theme_grp.addButton(btn, idx)
+            theme_row3.addWidget(btn)
+        tc_layout.addLayout(theme_row3)
+        layout.addWidget(theme_card)
+
+        # 1b. Sezione Tipografia & Scala Dimensione Font
+        font_card = QFrame()
+        font_card.setObjectName("Card")
+        fc_layout = QVBoxLayout(font_card)
+        fc_layout.setContentsMargins(14, 10, 14, 10)
+        fc_layout.setSpacing(8)
+        fc_layout.addWidget(_make_label("🔤 Tipografia & Dimensione Testo", "CardTitle"))
+        self.font_subtitle_lbl = _make_label(
+            "Personalizza il font della UI e dell'Editor (i blocchi codice mantengono sempre il font monospace).",
+            "PageSubtitle",
+            wrap=True,
+        )
+        fc_layout.addWidget(self.font_subtitle_lbl)
+
+        self._font_preset_grp = QButtonGroup(self)
+        self._font_preset_grp.setExclusive(True)
+        self._font_preset_btns: Dict[str, QPushButton] = {}
+
+        preset_row1 = QHBoxLayout()
+        preset_row1.setSpacing(6)
+        for idx, (p_key, p_lbl, p_tip) in enumerate([
+            ("auto", "✨ Auto (Predefinito Tema)", FONT_PRESETS["auto"]["subtitle"]),
+            ("modern_sans", "Modern Sans", FONT_PRESETS["modern_sans"]["subtitle"]),
+            ("geometric", "Geometric & Clean", FONT_PRESETS["geometric"]["subtitle"]),
+        ]):
+            btn = QPushButton(p_lbl)
+            btn.setObjectName("FilterPill")
+            btn.setCheckable(True)
+            btn.setToolTip(p_tip)
+            btn.setChecked(self.hub._font_preset == p_key)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _c=False, k=p_key: self._on_font_preset_selected(k))
+            self._font_preset_grp.addButton(btn, idx)
+            self._font_preset_btns[p_key] = btn
+            preset_row1.addWidget(btn)
+        fc_layout.addLayout(preset_row1)
+
+        preset_row2 = QHBoxLayout()
+        preset_row2.setSpacing(6)
+        for idx, (p_key, p_lbl, p_tip) in enumerate([
+            ("academic_serif", "📖 Academic / Serif", FONT_PRESETS["academic_serif"]["subtitle"]),
+            ("dev_mono", "💻 Developer / Monospace", FONT_PRESETS["dev_mono"]["subtitle"]),
+            ("custom", "🪟 Font di Sistema", FONT_PRESETS["custom"]["subtitle"]),
+        ], start=3):
+            btn = QPushButton(p_lbl)
+            btn.setObjectName("FilterPill")
+            btn.setCheckable(True)
+            btn.setToolTip(p_tip)
+            btn.setChecked(self.hub._font_preset == p_key)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _c=False, k=p_key: self._on_font_preset_selected(k))
+            self._font_preset_grp.addButton(btn, idx)
+            self._font_preset_btns[p_key] = btn
+            preset_row2.addWidget(btn)
+        fc_layout.addLayout(preset_row2)
+
+        # Riga QFontComboBox filtrato per qualsiasi font scalabile installato su Windows + Scala Dimensione Font
+        sys_font_row = QHBoxLayout()
+        sys_font_row.setSpacing(8)
+        sys_lbl = QLabel("Font Windows:")
+        sys_lbl.setObjectName("CardBody")
+        sys_font_row.addWidget(sys_lbl)
+
+        self.system_font_combo = QFontComboBox()
+        self.system_font_combo.setMinimumHeight(34)
+        self.system_font_combo.setFontFilters(QFontComboBox.FontFilter.ScalableFonts)
+        if self.hub._custom_font_family:
+            self.system_font_combo.blockSignals(True)
+            self.system_font_combo.setCurrentFont(QFont(self.hub._custom_font_family))
+            self.system_font_combo.blockSignals(False)
+        self.system_font_combo.currentFontChanged.connect(self._on_system_font_changed)
+        sys_font_row.addWidget(self.system_font_combo, 1)
+        fc_layout.addLayout(sys_font_row)
+
+        # Riga Zoom / Scala Dimensione Font (90%, 100%, 110%, 120% + Slider/SpinBox)
+        scale_row = QHBoxLayout()
+        scale_row.setSpacing(6)
+        scale_lbl = QLabel("Scala Dimensione:")
+        scale_lbl.setObjectName("CardBody")
+        scale_row.addWidget(scale_lbl)
+
+        self._scale_grp = QButtonGroup(self)
+        self._scale_grp.setExclusive(True)
+        self._scale_btns: Dict[int, QPushButton] = {}
+        for idx, pct in enumerate([90, 100, 110, 120]):
+            s_btn = QPushButton(f"{pct}%")
+            s_btn.setObjectName("FilterPill")
+            s_btn.setCheckable(True)
+            s_btn.setChecked(self.hub._font_scale == pct)
+            s_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            s_btn.clicked.connect(lambda _c=False, p=pct: self._on_font_scale_changed(p))
+            self._scale_grp.addButton(s_btn, idx)
+            self._scale_btns[pct] = s_btn
+            scale_row.addWidget(s_btn)
+
+        self.font_scale_slider = QSlider(Qt.Orientation.Horizontal)
+        self.font_scale_slider.setRange(90, 120)
+        self.font_scale_slider.setSingleStep(5)
+        self.font_scale_slider.setPageStep(10)
+        self.font_scale_slider.setValue(self.hub._font_scale)
+        self.font_scale_slider.setFixedWidth(90)
+        self.font_scale_slider.valueChanged.connect(self._on_font_scale_changed)
+        scale_row.addWidget(self.font_scale_slider)
+
+        self.font_scale_spin = QSpinBox()
+        self.font_scale_spin.setRange(90, 120)
+        self.font_scale_spin.setSingleStep(5)
+        self.font_scale_spin.setSuffix("%")
+        self.font_scale_spin.setMinimumHeight(32)
+        self.font_scale_spin.setValue(self.hub._font_scale)
+        self.font_scale_spin.valueChanged.connect(self._on_font_scale_changed)
+        scale_row.addWidget(self.font_scale_spin)
+        fc_layout.addLayout(scale_row)
+        layout.addWidget(font_card)
+
+        # 2. Sezione Google Calendar Sync
+        gcal_card = QFrame()
+        gcal_card.setObjectName("Card")
+        gc_layout = QVBoxLayout(gcal_card)
+        gc_layout.setContentsMargins(14, 10, 14, 10)
+        gc_layout.setSpacing(8)
+        gc_layout.addWidget(_make_label("🗓️ FlowTime & Google Calendar", "CardTitle"))
+
+        self.gcal_status_lbl = QLabel("")
+        self.gcal_status_lbl.setWordWrap(True)
+        self.gcal_status_lbl.setObjectName("CardBody")
+        gc_layout.addWidget(self.gcal_status_lbl)
+
+        gc_btns = QHBoxLayout()
+        gc_btns.setSpacing(8)
+        self.gcal_connect_btn = _make_button("📅 Connetti Google Calendar", "primary")
+        self.gcal_connect_btn.clicked.connect(self._on_connect_gcal)
+        gc_btns.addWidget(self.gcal_connect_btn)
+
+        self.gcal_sync_btn = _make_button("🔄 Sincronizza Ora")
+        self.gcal_sync_btn.clicked.connect(self._on_sync_gcal)
+        gc_btns.addWidget(self.gcal_sync_btn)
+        gc_btns.addStretch(1)
+        gc_layout.addLayout(gc_btns)
+        layout.addWidget(gcal_card)
+        self._refresh_gcal_status()
+
+        # 3. Sezione Motore & Scorciatoie
+        sys_card = QFrame()
+        sys_card.setObjectName("Card")
+        sc_layout = QVBoxLayout(sys_card)
+        sc_layout.setContentsMargins(14, 10, 14, 10)
+        sc_layout.setSpacing(6)
+        sc_layout.addWidget(_make_label("⚡ Motore AI & Scorciatoie", "CardTitle"))
+        hw_str = "● GPU CUDA attiva (Whisper float16 + Ollama)" if GPU_AVAILABLE else "● CPU Fast (Whisper int8)"
+        hw_lbl = QLabel(hw_str)
+        hw_lbl.setStyleSheet(f"color: {'#10B981' if GPU_AVAILABLE else '#F59E0B'}; font-size: 12px; font-weight: 600; background: transparent;")
+        sc_layout.addWidget(hw_lbl)
+        hint_lbl = QLabel("• Push-to-Talk: Shift Destro (doppio tocco = Mani Libere)\n• Scorciatoia secondaria: F8\n• Assistente Whis: pronuncia \"Whis...\" durante la dettatura")
+        hint_lbl.setWordWrap(True)
+        hint_lbl.setObjectName("PageSubtitle")
+        sc_layout.addWidget(hint_lbl)
+        layout.addWidget(sys_card)
+
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        close_btn = _make_button("Chiudi", "primary")
+        close_btn.clicked.connect(self.accept)
+        close_row.addWidget(close_btn)
+        layout.addLayout(close_row)
+
+    def _on_theme_pill_clicked(self, theme_key: str):
+        self.hub._set_theme(theme_key)
+        self.setStyleSheet(self.hub.styleSheet())
+
+    def _on_font_preset_selected(self, preset_key: str):
+        if preset_key == "custom":
+            fam = self.system_font_combo.currentFont().family()
+            self.hub._set_custom_font_family(fam)
+        else:
+            self.hub._set_font_preset(preset_key)
+        self.setStyleSheet(self.hub.styleSheet())
+
+    def _on_system_font_changed(self, qfont: QFont):
+        fam = qfont.family()
+        if "custom" in self._font_preset_btns:
+            self._font_preset_btns["custom"].setChecked(True)
+        self.hub._set_custom_font_family(fam)
+        self.setStyleSheet(self.hub.styleSheet())
+
+    def _on_font_scale_changed(self, val: int):
+        pct = max(90, min(120, int(val)))
+        self.font_scale_slider.blockSignals(True)
+        self.font_scale_slider.setValue(pct)
+        self.font_scale_slider.blockSignals(False)
+
+        self.font_scale_spin.blockSignals(True)
+        self.font_scale_spin.setValue(pct)
+        self.font_scale_spin.blockSignals(False)
+
+        if pct in self._scale_btns:
+            self._scale_btns[pct].setChecked(True)
+        else:
+            checked_btn = self._scale_grp.checkedButton()
+            if checked_btn is not None:
+                self._scale_grp.setExclusive(False)
+                checked_btn.setChecked(False)
+                self._scale_grp.setExclusive(True)
+
+        self.hub._set_font_scale(pct)
+        self.setStyleSheet(self.hub.styleSheet())
+
+    def _refresh_gcal_status(self):
+        from core.calendar_sync import calendar_manager
+        if calendar_manager.has_token_file():
+            self.gcal_status_lbl.setText("🟢 Google Calendar collegato: la sincronizzazione bidirezionale con FlowTime avviene in background, mentre Whis legge istantaneamente da SQLite.")
+            self.gcal_connect_btn.setText("📅 Riconnetti Google")
+            self.gcal_sync_btn.setEnabled(True)
+        elif calendar_manager.has_credentials_file():
+            self.gcal_status_lbl.setText("🟡 File credentials.json rilevato: clicca su 'Connetti Google Calendar' per autorizzare l'accesso.")
+            self.gcal_sync_btn.setEnabled(False)
+        else:
+            self.gcal_status_lbl.setText("⚪ Modalità 100% Locale attiva: FlowTime e Whis funzionano istantaneamente offline. Aggiungi credentials.json per abilitare anche Google Calendar.")
+            self.gcal_sync_btn.setEnabled(False)
+
+    def _on_connect_gcal(self):
+        self.hub._on_connect_calendar_clicked()
+        QTimer.singleShot(800, self._refresh_gcal_status)
+
+    def _on_sync_gcal(self):
+        self.hub._on_ft_sync_google_clicked()
+        self.gcal_status_lbl.setText("⏳ Sincronizzazione con Google Calendar avviata in background...")
+
+
+FLOWTIME_COLOR_PALETTE = [
+    ("#6366F1", "Indigo"),
+    ("#38BDF8", "Ciano"),
+    ("#10B981", "Smeraldo"),
+    ("#F59E0B", "Ambra"),
+    ("#EC4899", "Rosa"),
+    ("#EF4444", "Rosso"),
+]
+
+
+class LinkEventNoteDialog(QDialog):
+    """HUD di ricerca e collegamento rapido tra note di FlowNotes e impegni di FlowTime."""
+
+    open_note_requested = pyqtSignal(int)
+
+    def __init__(
+        self,
+        event_id: Optional[int],
+        event_title: str,
+        preselected_ids: Optional[List[int]] = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.event_id = event_id
+        self._selected_ids: List[int] = []
+        if event_id is not None:
+            self._selected_ids = [int(n["id"]) for n in db.get_notes_for_event(event_id)]
+        elif preselected_ids:
+            self._selected_ids = [int(x) for x in preselected_ids]
+        self._selected_set = set(self._selected_ids)
+
+        self.setWindowTitle("🔗 Collega Note a FlowTime")
+        self.setMinimumSize(560, 460)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(10)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+        top_row.addWidget(_make_label(f"🔗 {event_title or 'Impegno FlowTime'}", "CardTitle", wrap=True), 1)
+        self.count_badge = _make_label("", "BadgeAccent")
+        top_row.addWidget(self.count_badge)
+        layout.addLayout(top_row)
+
+        layout.addWidget(
+            _make_label(
+                "Cerca qualsiasi nota, sbobina o slide di FlowNotes e collegala all'impegno selezionato:",
+                "PageSubtitle",
+                wrap=True,
+            )
+        )
+
+        # Barra di ricerca fuori dalla QScrollArea (regola Qt6 UI)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("🔍 Cerca per titolo, materia o contenuto...")
+        self.search_edit.setMinimumHeight(38)
+        self.search_edit.textChanged.connect(self._populate_list)
+        layout.addWidget(self.search_edit)
+
+        self.notes_list = ScrollList("Nessuna nota corrispondente trovata in FlowNotes.")
+        self.notes_list.setMinimumHeight(290)
+        layout.addWidget(self.notes_list, 1)
+
+        self._all_notes = [
+            n for n in db.get_all_study_notes()
+            if (n.get("note_type") or "").lower() != "flashcard"
+        ]
+        self._populate_list("")
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        self.done_btn = _make_button("✓ Fatto", "primary")
+        self.done_btn.clicked.connect(self.accept)
+        btns.addWidget(self.done_btn)
+        layout.addLayout(btns)
+
+    @property
+    def selected_note_ids(self) -> List[int]:
+        return sorted(self._selected_set)
+
+    def _update_count_badge(self):
+        cnt = len(self._selected_set)
+        self.count_badge.setText(f"{cnt} collegat{'a' if cnt == 1 else 'e'}")
+
+    def _populate_list(self, query: str):
+        self.notes_list.clear()
+        self._update_count_badge()
+        q = (query or "").strip().lower()
+        matches = []
+        for n in self._all_notes:
+            title = (n.get("title") or "Senza titolo").strip()
+            subj = (n.get("subject") or "Generale").strip()
+            content = (n.get("content") or "")[:300].lower()
+            if q and q not in title.lower() and q not in subj.lower() and q not in content:
+                continue
+            matches.append(n)
+
+        if not matches:
+            self.notes_list.show_empty("Nessuna nota trovata con questi criteri.")
+            return
+
+        # Mostra prima le note già collegate
+        matches.sort(key=lambda item: (0 if int(item["id"]) in self._selected_set else 1))
+        for note in matches:
+            nid = int(note["id"])
+            card, c_lay = _make_card()
+            row = QHBoxLayout()
+            row.setSpacing(10)
+
+            info_col = QVBoxLayout()
+            info_col.setSpacing(3)
+            meta = QHBoxLayout()
+            meta.setSpacing(6)
+            meta.addWidget(_make_label(note.get("subject") or "Generale", "Badge"))
+            type_lbl = (note.get("note_type") or "Appunto").capitalize()
+            meta.addWidget(_make_label(f"{type_lbl} · {_format_timestamp(note.get('created_at'))}", "NoteMeta"))
+            meta.addStretch(1)
+            info_col.addLayout(meta)
+
+            title_lbl = _make_label(note.get("title") or "Senza titolo", "CardTitle", wrap=True)
+            info_col.addWidget(title_lbl)
+            row.addLayout(info_col, 1)
+
+            btn_col = QHBoxLayout()
+            btn_col.setSpacing(6)
+            is_linked = nid in self._selected_set
+            toggle_btn = _make_button("✅ Collegata" if is_linked else "🔗 Collega", "primary" if is_linked else None)
+            toggle_btn.clicked.connect(lambda _c=False, xid=nid: self._toggle_link(xid))
+            btn_col.addWidget(toggle_btn)
+
+            open_btn = _make_button("📖 Apri")
+            open_btn.clicked.connect(lambda _c=False, xid=nid: self._on_open_note(xid))
+            btn_col.addWidget(open_btn)
+            row.addLayout(btn_col)
+
+            c_lay.addLayout(row)
+            self.notes_list.add_card(card)
+
+    def _toggle_link(self, note_id: int):
+        if note_id in self._selected_set:
+            self._selected_set.remove(note_id)
+            if self.event_id is not None:
+                db.unlink_note_from_event(self.event_id, note_id)
+        else:
+            self._selected_set.add(note_id)
+            if self.event_id is not None:
+                db.link_note_to_event(self.event_id, note_id, link_type="manual")
+        self._populate_list(self.search_edit.text())
+
+    def _on_open_note(self, note_id: int):
+        self.open_note_requested.emit(int(note_id))
+        self.accept()
+
+
+class TimelineQuickAddDialog(QDialog):
+    """HUD rapido aperto cliccando uno spazio vuoto sulla timeline per aggiungere Evento o To-Do."""
+
+    def __init__(self, date_str: str, start_time_str: str = "09:00", parent=None):
+        super().__init__(parent)
+        self.date_str = date_str
+        self._item_type = "event"
+        self._selected_color = FLOWTIME_COLOR_PALETTE[0][0]
+        self._linked_note_ids: List[int] = []
+        self.created_event: Optional[Dict[str, Any]] = None
+
+        self.setWindowTitle("➕ Nuovo Impegno o Evento")
+        self.setMinimumWidth(460)
+        self.setModal(True)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(11)
+
+        try:
+            d_obj = dt_date.fromisoformat(date_str)
+            day_pretty = d_obj.strftime("%d/%m/%Y")
+        except Exception:
+            day_pretty = date_str
+
+        layout.addWidget(_make_label(f"📅 {day_pretty} · Aggiungi a FlowTime", "CardTitle"))
+
+        # Switch Evento / To-Do
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(6)
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.setExclusive(True)
+
+        self.event_mode_btn = QPushButton(f"📅 Evento ({start_time_str})")
+        self.event_mode_btn.setObjectName("FTSegmentBtn")
+        self.event_mode_btn.setCheckable(True)
+        self.event_mode_btn.setChecked(True)
+        self.event_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.todo_mode_btn = QPushButton("☑️ Impegno / To-Do (Senza orario)")
+        self.todo_mode_btn.setObjectName("FTSegmentBtn")
+        self.todo_mode_btn.setCheckable(True)
+        self.todo_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self._mode_group.addButton(self.event_mode_btn, 0)
+        self._mode_group.addButton(self.todo_mode_btn, 1)
+        self.event_mode_btn.toggled.connect(lambda checked: self._set_item_type("event" if checked else "todo"))
+        mode_row.addWidget(self.event_mode_btn, 1)
+        mode_row.addWidget(self.todo_mode_btn, 1)
+        layout.addLayout(mode_row)
+
+        self.title_edit = QLineEdit()
+        self.title_edit.setPlaceholderText("Titolo evento (es. Lezione Robotica)...")
+        self.title_edit.setMinimumHeight(36)
+        layout.addWidget(self.title_edit)
+
+        self.time_row_widget = QWidget()
+        self.time_row_widget.setStyleSheet("background: transparent;")
+        tr = QHBoxLayout(self.time_row_widget)
+        tr.setContentsMargins(0, 0, 0, 0)
+        tr.setSpacing(8)
+        self.start_edit = QLineEdit(start_time_str or "09:00")
+        self.start_edit.setFixedWidth(74)
+        self.start_edit.setMinimumHeight(36)
+        self.start_edit.setPlaceholderText("HH:MM")
+        tr.addWidget(self.start_edit)
+
+        self.duration_combo = QComboBox()
+        self.duration_combo.setMinimumHeight(36)
+        for label, mins in [("30 min", 30), ("45 min", 45), ("1 ora", 60), ("1h 30m", 90), ("2 ore", 120), ("3 ore", 180)]:
+            self.duration_combo.addItem(label, mins)
+        self.duration_combo.setCurrentIndex(2)
+        tr.addWidget(self.duration_combo)
+
+        self.location_edit = QLineEdit()
+        self.location_edit.setPlaceholderText("Luogo / Aula (opz.)")
+        self.location_edit.setMinimumHeight(36)
+        tr.addWidget(self.location_edit, 1)
+        layout.addWidget(self.time_row_widget)
+
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(8)
+        self.category_combo = QComboBox()
+        self.category_combo.setMinimumHeight(36)
+        for cat in ["Personale", "Università", "Lavoro", "Esame", "Studio"]:
+            self.category_combo.addItem(cat)
+        meta_row.addWidget(self.category_combo)
+
+        self.subject_edit = QLineEdit()
+        self.subject_edit.setPlaceholderText("Materia / Tag (opz.)")
+        self.subject_edit.setMinimumHeight(36)
+        meta_row.addWidget(self.subject_edit, 1)
+        layout.addLayout(meta_row)
+
+        # Colori + Ripetizione
+        style_row = QHBoxLayout()
+        style_row.setSpacing(8)
+        style_row.addWidget(_make_label("Colore:", "PageSubtitle"))
+        self._color_buttons: Dict[str, QPushButton] = {}
+        for hex_col, name in FLOWTIME_COLOR_PALETTE:
+            btn = QPushButton("")
+            btn.setObjectName("FTColorDot")
+            btn.setToolTip(name)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(lambda _c=False, hc=hex_col: self._set_color(hc))
+            self._color_buttons[hex_col] = btn
+            style_row.addWidget(btn)
+        style_row.addSpacing(8)
+
+        self.recurrence_combo = QComboBox()
+        self.recurrence_combo.setMinimumHeight(36)
+        for label, val in [("Non si ripete", "none"), ("Ogni giorno", "daily"), ("Ogni settimana", "weekly"), ("Ogni mese", "monthly")]:
+            self.recurrence_combo.addItem(label, val)
+        style_row.addWidget(self.recurrence_combo, 1)
+        layout.addLayout(style_row)
+        self._refresh_color_buttons()
+
+        # Collega nota
+        note_row = QHBoxLayout()
+        note_row.setSpacing(8)
+        self.linked_badge = _make_label("Nessuna nota collegata", "Badge")
+        note_row.addWidget(self.linked_badge, 1)
+        self.link_notes_btn = _make_button("🔗 Collega Nota")
+        self.link_notes_btn.clicked.connect(self._on_open_note_hud)
+        note_row.addWidget(self.link_notes_btn)
+        layout.addLayout(note_row)
+
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        cancel_btn = _make_button("Annulla")
+        cancel_btn.clicked.connect(self.reject)
+        btns.addWidget(cancel_btn)
+
+        save_btn = _make_button("💾 Salva in FlowTime", "primary")
+        save_btn.clicked.connect(self._on_save)
+        btns.addWidget(save_btn)
+        layout.addLayout(btns)
+        self.title_edit.setFocus()
+
+    def _set_item_type(self, mode: str):
+        self._item_type = mode
+        is_todo = mode == "todo"
+        self.time_row_widget.setVisible(not is_todo)
+        self.title_edit.setPlaceholderText(
+            "Impegno senza orario (es. Innaffiare le piante)..."
+            if is_todo
+            else "Titolo evento (es. Lezione Robotica)..."
+        )
+
+    def _set_color(self, hex_col: str):
+        self._selected_color = hex_col
+        self._refresh_color_buttons()
+
+    def _refresh_color_buttons(self):
+        for hc, btn in self._color_buttons.items():
+            border = "2px solid #FFFFFF" if hc == self._selected_color else "1px solid rgba(148,163,184,0.35)"
+            btn.setStyleSheet(f"background-color: {hc}; border: {border}; border-radius: 10px;")
+
+    def _on_open_note_hud(self):
+        title = self.title_edit.text().strip() or "Nuovo impegno FlowTime"
+        dlg = LinkEventNoteDialog(None, title, preselected_ids=self._linked_note_ids, parent=self)
+        dlg.exec()
+        self._linked_note_ids = list(dlg.selected_note_ids)
+        cnt = len(self._linked_note_ids)
+        self.linked_badge.setText("Nessuna nota collegata" if cnt == 0 else f"🔗 {cnt} not{'a' if cnt == 1 else 'e'} collegat{'a' if cnt == 1 else 'e'}")
+
+    def _on_save(self):
+        title = self.title_edit.text().strip()
+        if not title:
+            QMessageBox.warning(self, "Titolo mancante", "Inserisci un titolo per salvare in FlowTime.")
+            self.title_edit.setFocus()
+            return
+        from core.calendar_sync import calendar_manager
+        is_todo = self._item_type == "todo"
+        created = calendar_manager.create_event(
+            summary=title,
+            date_str=self.date_str,
+            start_time_str="00:00" if is_todo else (self.start_edit.text().strip() or "09:00"),
+            duration_minutes=0 if is_todo else int(self.duration_combo.currentData() or 60),
+            location="" if is_todo else self.location_edit.text().strip(),
+            category=self.category_combo.currentText(),
+            subject=self.subject_edit.text().strip(),
+            color=self._selected_color,
+            push_to_google=not is_todo,
+            item_type=self._item_type,
+            recurrence=str(self.recurrence_combo.currentData() or "none"),
+        )
+        for nid in self._linked_note_ids:
+            db.link_note_to_event(created["id"], int(nid), link_type="manual")
+        self.created_event = created
+        self.accept()
+
+
+class FlowTimeCalendarWidget(QCalendarWidget):
+    """Calendario mensile con celle a sfondo neutro, giorno selezionato evidenziato e oggi cerchiato di rosso."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._activity_map: Dict[str, Dict[str, int]] = {}
+        self._is_dark: bool = True
+        self._reading_mode: bool = False
+        self.setGridVisible(False)
+        self.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
+        self.setLocale(QLocale(QLocale.Language.Italian, QLocale.Country.Italy))
+
+    def set_activity_data(
+        self,
+        activity_map: Dict[str, Dict[str, int]],
+        is_dark: bool,
+        reading_mode: bool = False,
+    ):
+        self._activity_map = dict(activity_map or {})
+        self._is_dark = bool(is_dark)
+        self._reading_mode = bool(reading_mode)
+        self.updateCells()
+
+    def paintCell(self, painter: QPainter, rect: QRect, date: QDate):
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        if self._is_dark:
+            bg_neutral = QColor("#18130F") if self._reading_mode else QColor("#0D1322")
+            text_main = QColor("#E6D7C3") if self._reading_mode else QColor("#E2E8F0")
+            text_weekend = QColor("#A8957E") if self._reading_mode else QColor("#94A3B8")
+            text_other_month = QColor("#574536") if self._reading_mode else QColor("#475569")
+            sel_fill = QColor("#D97706") if self._reading_mode else QColor("#6366F1")
+            sel_border = QColor("#FBBF24") if self._reading_mode else QColor("#818CF8")
+        else:
+            bg_neutral = QColor("#FBF5E6") if self._reading_mode else QColor("#FFFFFF")
+            text_main = QColor("#2A1F14") if self._reading_mode else QColor("#1E293B")
+            text_weekend = QColor("#6E5B47") if self._reading_mode else QColor("#64748B")
+            text_other_month = QColor("#C4B5A0") if self._reading_mode else QColor("#CBD5E1")
+            sel_fill = QColor("#B45309") if self._reading_mode else QColor("#4F46E5")
+            sel_border = QColor("#D97706") if self._reading_mode else QColor("#6366F1")
+
+        # 1. Sfondo neutro uniforme per ogni giorno
+        painter.fillRect(rect, bg_neutral)
+
+        is_selected = date == self.selectedDate()
+        is_today = date == QDate.currentDate()
+        in_month = date.year() == self.yearShown() and date.month() == self.monthShown()
+
+        # 2. Giorno selezionato evidenziato chiaramente
+        if is_selected:
+            pill_rect = QRectF(rect).adjusted(4.0, 3.0, -4.0, -3.0)
+            painter.setPen(QPen(sel_border, 1.4))
+            painter.setBrush(QBrush(sel_fill))
+            painter.drawRoundedRect(pill_rect, 8.0, 8.0)
+
+        # 3. Numero del giorno (oggi in rosso quando non selezionato, senza cerchio)
+        font = QFont(painter.font())
+        font.setWeight(QFont.Weight.Bold if (is_selected or is_today) else QFont.Weight.Medium)
+        painter.setFont(font)
+
+        if is_selected:
+            txt_col = QColor("#FFFFFF")
+        elif not in_month:
+            txt_col = text_other_month
+        elif is_today:
+            txt_col = QColor("#EF4444")
+        elif date.dayOfWeek() in (6, 7):
+            txt_col = text_weekend
+        else:
+            txt_col = text_main
+
+        painter.setPen(txt_col)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(date.day()))
+
+        # 5. Puntini discreti di attività in basso (senza colorare lo sfondo della cella)
+        counts = self._activity_map.get(date.toString("yyyy-MM-dd")) or {}
+        ev_cnt = counts.get("events", 0)
+        note_cnt = counts.get("notes", 0)
+        if ev_cnt > 0 or note_cnt > 0:
+            dots = []
+            if ev_cnt > 0:
+                dots.append(QColor("#FFFFFF") if is_selected else QColor("#38BDF8"))
+            if note_cnt > 0:
+                dots.append(QColor("#A7F3D0") if is_selected else QColor("#10B981"))
+            dot_y = float(rect.bottom()) - 3.5
+            cx = float(rect.center().x())
+            spacing = 5.5
+            start_x = cx - ((len(dots) - 1) * spacing) / 2.0
+            painter.setPen(Qt.PenStyle.NoPen)
+            for i, dc in enumerate(dots):
+                painter.setBrush(QBrush(dc))
+                painter.drawEllipse(QPointF(start_x + i * spacing, dot_y), 1.7, 1.7)
+
+        painter.restore()
+
+
+class _DayTimelineCanvas(QWidget):
+    """Canvas 00:00–23:59 a piena larghezza per la timeline giornaliera interattiva."""
+
+    event_clicked = pyqtSignal(dict)
+    note_clicked = pyqtSignal(int)
+    empty_slot_clicked = pyqtSignal(str, str)
+
+    HOUR_HEIGHT = 54
+    TOP_PAD = 12
+    BOTTOM_PAD = 16
+    AXIS_X = 52
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._date_str: str = dt_date.today().isoformat()
+        self._events: List[Dict[str, Any]] = []
+        self._notes_by_event: Dict[int, List[Dict[str, Any]]] = {}
+        self._selected_event_id: Optional[int] = None
+        self._placed_blocks: List[Dict[str, Any]] = []
+        self._hit_rects: List[tuple] = []
+        self._note_hit_rects: List[tuple] = []
+        self._hover_time_min: Optional[int] = None
+        self._is_dark: bool = True
+        self._reading_mode: bool = False
+        self.setMouseTracking(True)
+        self.setFixedHeight(24 * self.HOUR_HEIGHT + self.TOP_PAD + self.BOTTOM_PAD)
+
+    @staticmethod
+    def _parse_hhmm(time_str: str) -> Optional[int]:
+        raw = (time_str or "").strip()
+        if ":" not in raw:
+            return None
+        try:
+            hh, mm = raw[:5].split(":")
+            h_i = int(hh)
+            m_i = int(mm)
+            if h_i == 24 and m_i == 0:
+                return 1440
+            if 0 <= h_i <= 23 and 0 <= m_i <= 59:
+                return h_i * 60 + m_i
+        except Exception:
+            return None
+        return None
+
+    def _y_to_snapped_hhmm(self, y: float) -> tuple:
+        raw_mins = ((y - float(self.TOP_PAD)) / float(self.HOUR_HEIGHT)) * 60.0
+        snapped = int(round(raw_mins / 30.0) * 30)
+        snapped = max(0, min(1410, snapped))
+        return snapped, f"{snapped // 60:02d}:{snapped % 60:02d}"
+
+    def set_data(
+        self,
+        date_str: str,
+        timed_events: List[Dict[str, Any]],
+        is_dark: bool,
+        reading_mode: bool = False,
+        notes_by_event: Optional[Dict[int, List[Dict[str, Any]]]] = None,
+        selected_event_id: Optional[int] = None,
+    ):
+        self._date_str = date_str or dt_date.today().isoformat()
+        self._is_dark = bool(is_dark)
+        self._reading_mode = bool(reading_mode)
+        self._notes_by_event = notes_by_event or {}
+        self._selected_event_id = selected_event_id
+
+        items = []
+        for ev in timed_events:
+            s_min = self._parse_hhmm(ev.get("start_time") or "")
+            if s_min is None:
+                s_min = 9 * 60
+            e_min = self._parse_hhmm(ev.get("end_time") or "")
+            if e_min is None or e_min <= s_min:
+                e_min = min(1440, s_min + 60)
+            vis_end = max(s_min + 34, e_min)
+            items.append({"ev": ev, "start": s_min, "end": e_min, "vis_end": vis_end})
+
+        items.sort(key=lambda x: (x["start"], x["vis_end"]))
+
+        self._placed_blocks = []
+        clusters: List[List[Dict[str, Any]]] = []
+        cur_cluster: List[Dict[str, Any]] = []
+        cluster_end = -1
+        for it in items:
+            if not cur_cluster or it["start"] < cluster_end:
+                cur_cluster.append(it)
+                cluster_end = max(cluster_end, it["vis_end"])
+            else:
+                clusters.append(cur_cluster)
+                cur_cluster = [it]
+                cluster_end = it["vis_end"]
+        if cur_cluster:
+            clusters.append(cur_cluster)
+
+        for cl in clusters:
+            lane_ends: List[int] = []
+            for it in cl:
+                placed_lane = None
+                for li, lend in enumerate(lane_ends):
+                    if it["start"] >= lend:
+                        placed_lane = li
+                        lane_ends[li] = it["vis_end"]
+                        break
+                if placed_lane is None:
+                    placed_lane = len(lane_ends)
+                    lane_ends.append(it["vis_end"])
+                it["lane"] = placed_lane
+            total_lanes = max(1, len(lane_ends))
+            for it in cl:
+                it["lanes"] = total_lanes
+                self._placed_blocks.append(it)
+
+        self._events = timed_events
+        self.update()
+
+    def current_time_y(self) -> float:
+        now = datetime.now()
+        now_min = now.hour * 60.0 + now.minute + now.second / 60.0
+        return float(self.TOP_PAD) + (now_min / 60.0) * float(self.HOUR_HEIGHT)
+
+    def first_focus_y(self) -> float:
+        if self._date_str == dt_date.today().isoformat():
+            return self.current_time_y()
+        if self._placed_blocks:
+            return float(self.TOP_PAD) + (self._placed_blocks[0]["start"] / 60.0) * float(self.HOUR_HEIGHT)
+        return float(self.TOP_PAD) + 8.0 * float(self.HOUR_HEIGHT)
+
+    def leaveEvent(self, event):
+        if self._hover_time_min is not None:
+            self._hover_time_min = None
+            self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        w = float(self.width())
+        h = float(self.height())
+
+        if self._is_dark:
+            bg_col = QColor("#18130F") if self._reading_mode else QColor("#0B0F1A")
+            line_col = QColor(245, 158, 11, 30) if self._reading_mode else QColor(255, 255, 255, 22)
+            half_col = QColor(245, 158, 11, 14) if self._reading_mode else QColor(255, 255, 255, 10)
+            axis_txt = QColor("#A8957E") if self._reading_mode else QColor("#64748B")
+            title_col = QColor("#F5EBE0") if self._reading_mode else QColor("#F1F5F9")
+            sub_col = QColor("#D6C5B0") if self._reading_mode else QColor("#94A3B8")
+            pill_bg = QColor(99, 102, 241, 55)
+            pill_txt = QColor("#C7D2FE")
+        else:
+            bg_col = QColor("#FBF5E6") if self._reading_mode else QColor("#FFFFFF")
+            line_col = QColor(180, 83, 9, 32) if self._reading_mode else QColor("#E2E8F0")
+            half_col = QColor(180, 83, 9, 16) if self._reading_mode else QColor("#F1F5F9")
+            axis_txt = QColor("#6E5B47") if self._reading_mode else QColor("#64748B")
+            title_col = QColor("#1E293B")
+            sub_col = QColor("#475569")
+            pill_bg = QColor(99, 102, 241, 28)
+            pill_txt = QColor("#4338CA")
+
+        p.fillRect(self.rect(), bg_col)
+
+        axis_font = QFont(p.font())
+        axis_font.setPointSize(8)
+        axis_font.setWeight(QFont.Weight.Medium)
+        p.setFont(axis_font)
+
+        left_x = float(self.AXIS_X)
+        right_x = w - 8.0
+
+        for hr in range(25):
+            y = float(self.TOP_PAD) + hr * float(self.HOUR_HEIGHT)
+            p.setPen(QPen(line_col, 1.0))
+            p.drawLine(QPointF(left_x, y), QPointF(right_x, y))
+            if hr < 24:
+                p.setPen(axis_txt)
+                lbl_rect = QRectF(2.0, y - 8.0, left_x - 10.0, 16.0)
+                p.drawText(lbl_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{hr:02d}:00")
+                hy = y + float(self.HOUR_HEIGHT) / 2.0
+                p.setPen(QPen(half_col, 1.0, Qt.PenStyle.DashLine))
+                p.drawLine(QPointF(left_x, hy), QPointF(right_x, hy))
+
+        p.setPen(QPen(line_col, 1.0))
+        p.drawLine(QPointF(left_x, float(self.TOP_PAD)), QPointF(left_x, h - float(self.BOTTOM_PAD)))
+
+        # Indicatore slot vuoto al passaggio del mouse
+        if self._hover_time_min is not None:
+            yh = float(self.TOP_PAD) + (self._hover_time_min / 60.0) * float(self.HOUR_HEIGHT)
+            slot_h = float(self.HOUR_HEIGHT) / 2.0
+            slot_rect = QRectF(left_x + 4.0, yh, max(40.0, right_x - left_x - 8.0), slot_h)
+            p.setPen(QPen(QColor(99, 102, 241, 120), 1.0, Qt.PenStyle.DashLine))
+            p.setBrush(QBrush(QColor(99, 102, 241, 18)))
+            p.drawRoundedRect(slot_rect, 6.0, 6.0)
+            p.setFont(axis_font)
+            p.setPen(QColor("#818CF8"))
+            p.drawText(
+                slot_rect.adjusted(10.0, 0.0, -8.0, 0.0),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                f"+ Aggiungi alle {self._hover_time_min // 60:02d}:{self._hover_time_min % 60:02d} (Evento o To-Do)",
+            )
+
+        # Blocchi evento
+        self._hit_rects = []
+        self._note_hit_rects = []
+        avail_w = max(60.0, right_x - (left_x + 6.0))
+        block_font_t = QFont(p.font())
+        block_font_t.setPointSize(9)
+        block_font_t.setWeight(QFont.Weight.DemiBold)
+        block_font_m = QFont(p.font())
+        block_font_m.setPointSize(8)
+        note_font = QFont(p.font())
+        note_font.setPointSize(8)
+        note_font.setWeight(QFont.Weight.DemiBold)
+
+        for item in self._placed_blocks:
+            ev = item["ev"]
+            ev_id = ev.get("id")
+            y_top = float(self.TOP_PAD) + (item["start"] / 60.0) * float(self.HOUR_HEIGHT) + 1.0
+            y_bot = float(self.TOP_PAD) + (item["vis_end"] / 60.0) * float(self.HOUR_HEIGHT) - 1.0
+            bh = max(24.0, y_bot - y_top)
+
+            lanes = item["lanes"]
+            lane = item["lane"]
+            gap = 5.0
+            cw = (avail_w - gap * (lanes - 1)) / lanes
+            bx = left_x + 6.0 + lane * (cw + gap)
+            b_rect = QRectF(bx, y_top, cw, bh)
+            self._hit_rects.append((b_rect, ev))
+
+            accent = QColor(ev.get("color") or "#6366F1")
+            if not accent.isValid():
+                accent = QColor("#6366F1")
+            is_selected = self._selected_event_id is not None and ev_id == self._selected_event_id
+
+            fill_c = QColor(accent)
+            fill_c.setAlpha(68 if is_selected else (48 if self._is_dark else 34))
+            border_c = QColor(accent)
+            border_c.setAlpha(240 if is_selected else (160 if self._is_dark else 140))
+
+            p.setPen(QPen(border_c, 2.0 if is_selected else 1.0))
+            p.setBrush(QBrush(fill_c))
+            p.drawRoundedRect(b_rect, 8.0, 8.0)
+
+            bar_rect = QRectF(bx, y_top + 1.5, 4.0, max(8.0, bh - 3.0))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(accent))
+            p.drawRoundedRect(bar_rect, 2.0, 2.0)
+
+            pad_in = 10.0
+            inner_w = max(20.0, cw - pad_in - 8.0)
+            summary = ev.get("summary") or "(Senza titolo)"
+            time_txt = ev.get("start_time") or ""
+            end_txt = ev.get("end_time") or ""
+            time_span = f"{time_txt} - {end_txt}".strip(" -") if time_txt else ""
+
+            meta_bits = [b for b in [time_span, ev.get("category") or "", ev.get("subject") or ""] if b]
+            if ev.get("location"):
+                meta_bits.append(f"📍 {ev['location']}")
+            if (ev.get("recurrence") or "none") != "none":
+                rec_map = {"daily": "🔁 Giorno", "weekly": "🔁 Sett.", "monthly": "🔁 Mese"}
+                meta_bits.append(rec_map.get(ev.get("recurrence"), "🔁"))
+            if ev.get("sync_status") == "synced":
+                meta_bits.append("☁️ Google")
+
+            linked_notes = self._notes_by_event.get(ev_id) or []
+
+            if bh >= 42.0:
+                p.setFont(block_font_m)
+                p.setPen(sub_col)
+                p.drawText(
+                    QRectF(bx + pad_in, y_top + 4.0, inner_w, 15.0),
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                    QFontMetrics(block_font_m).elidedText(" · ".join(meta_bits), Qt.TextElideMode.ElideRight, int(inner_w)),
+                )
+
+                notes_row_h = 22.0 if (linked_notes and bh >= 66.0) else 0.0
+                p.setFont(block_font_t)
+                p.setPen(title_col)
+                title_h = max(16.0, bh - 24.0 - notes_row_h)
+                p.drawText(
+                    QRectF(bx + pad_in, y_top + 20.0, inner_w, title_h),
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
+                    summary,
+                )
+
+                if linked_notes and bh >= 66.0:
+                    px = bx + pad_in
+                    py = y_bot - 22.0
+                    fm_n = QFontMetrics(note_font)
+                    p.setFont(note_font)
+                    for note in linked_notes[:3]:
+                        n_title = (note.get("title") or "Nota").strip()
+                        pill_label = f"📓 {fm_n.elidedText(n_title, Qt.TextElideMode.ElideRight, 130)}"
+                        pw = min(inner_w - (px - (bx + pad_in)), float(fm_n.horizontalAdvance(pill_label) + 14))
+                        if pw < 52.0:
+                            break
+                        n_rect = QRectF(px, py, pw, 18.0)
+                        p.setPen(QPen(QColor(99, 102, 241, 130), 1.0))
+                        p.setBrush(QBrush(pill_bg))
+                        p.drawRoundedRect(n_rect, 6.0, 6.0)
+                        p.setPen(pill_txt)
+                        p.drawText(n_rect, Qt.AlignmentFlag.AlignCenter, pill_label)
+                        self._note_hit_rects.append((n_rect, int(note["id"]), n_title))
+                        px += pw + 6.0
+            else:
+                p.setFont(block_font_t)
+                p.setPen(title_col)
+                fm_t = QFontMetrics(block_font_t)
+                suffix = f" (🔗{len(linked_notes)})" if linked_notes else ""
+                elided = fm_t.elidedText(
+                    f"{time_txt} · {summary}{suffix}".strip(" ·"), Qt.TextElideMode.ElideRight, int(inner_w)
+                )
+                p.drawText(
+                    QRectF(bx + pad_in, y_top + 2.0, inner_w, bh - 4.0),
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                    elided,
+                )
+
+        # Linea rossa ora corrente
+        is_today = self._date_str == dt_date.today().isoformat()
+        y_now = self.current_time_y()
+        red_col = QColor("#EF4444") if is_today else QColor(239, 68, 68, 125)
+        pen_style = Qt.PenStyle.SolidLine if is_today else Qt.PenStyle.DashLine
+        p.setPen(QPen(red_col, 2.0 if is_today else 1.4, pen_style))
+        p.drawLine(QPointF(left_x, y_now), QPointF(right_x, y_now))
+
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(red_col))
+        p.drawEllipse(QPointF(left_x, y_now), 4.0 if is_today else 3.0, 4.0 if is_today else 3.0)
+
+        now_txt = datetime.now().strftime("%H:%M")
+        pill_r = QRectF(3.0, y_now - 8.5, left_x - 8.0, 17.0)
+        p.setBrush(QBrush(QColor("#EF4444") if is_today else QColor(239, 68, 68, 180)))
+        p.drawRoundedRect(pill_r, 4.0, 4.0)
+        pill_font = QFont(p.font())
+        pill_font.setPointSize(7)
+        pill_font.setWeight(QFont.Weight.Bold)
+        p.setFont(pill_font)
+        p.setPen(QColor("#FFFFFF"))
+        p.drawText(pill_r, Qt.AlignmentFlag.AlignCenter, now_txt)
+
+    def mouseMoveEvent(self, event):
+        pos = QPointF(event.position())
+        for nr, _nid, ntitle in reversed(self._note_hit_rects):
+            if nr.contains(pos):
+                if self._hover_time_min is not None:
+                    self._hover_time_min = None
+                    self.update()
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+                self.setToolTip(f"Apri nota '{ntitle}' in FlowNotes")
+                return
+        for r, ev in reversed(self._hit_rects):
+            if r.contains(pos):
+                if self._hover_time_min is not None:
+                    self._hover_time_min = None
+                    self.update()
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+                loc = f"\n📍 {ev['location']}" if ev.get("location") else ""
+                self.setToolTip(f"{ev.get('time', '')} · {ev.get('summary', '')}{loc}\n(Clicca per modificare o collegare note)")
+                return
+        if float(self.TOP_PAD) <= pos.y() <= float(self.height() - self.BOTTOM_PAD) and pos.x() >= float(self.AXIS_X):
+            snapped, hhmm = self._y_to_snapped_hhmm(pos.y())
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.setToolTip(f"Clicca per aggiungere un Evento o To-Do alle {hhmm}")
+            if self._hover_time_min != snapped:
+                self._hover_time_min = snapped
+                self.update()
+            return
+        if self._hover_time_min is not None:
+            self._hover_time_min = None
+            self.update()
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.setToolTip("")
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = QPointF(event.position())
+            for nr, nid, _ntitle in reversed(self._note_hit_rects):
+                if nr.contains(pos):
+                    self.note_clicked.emit(nid)
+                    return
+            for r, ev in reversed(self._hit_rects):
+                if r.contains(pos):
+                    self.event_clicked.emit(ev)
+                    return
+            _snapped, hhmm = self._y_to_snapped_hhmm(pos.y())
+            self.empty_slot_clicked.emit(self._date_str, hhmm)
+            return
+        super().mousePressEvent(event)
+
+
+class _ClickableLabel(QLabel):
+    """QLabel word-wrappable cliccabile per mostrare titoli To-Do lunghi su più righe senza tagli."""
+
+    clicked = pyqtSignal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            return
+        super().mousePressEvent(event)
+
+
+class FlowTimeTodoSidebar(QFrame):
+    """Colonna laterale destra (~208px) dedicata a To-Do senza orario e Note, raggruppati per giornata."""
+
+    date_selected = pyqtSignal(str)
+    event_clicked = pyqtSignal(dict)
+    note_clicked = pyqtSignal(int)
+    todo_toggled = pyqtSignal(int)
+    add_todo_requested = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Card")
+        self.setFixedWidth(208)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+        self._selected_date_str: str = dt_date.today().isoformat()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(9, 10, 9, 8)
+        layout.setSpacing(6)
+
+        hdr = QHBoxLayout()
+        hdr.setSpacing(4)
+        title_lbl = _make_label("☑️ Impegni & Note", "CardTitle")
+        title_lbl.setStyleSheet("font-size: 13px; font-weight: 700; background: transparent;")
+        hdr.addWidget(title_lbl, 1)
+
+        add_btn = _make_button("+ To-Do", "primary")
+        add_btn.setStyleSheet("min-height: 24px; max-height: 24px; padding: 0 8px; font-size: 11px;")
+        add_btn.setToolTip("Aggiungi un impegno senza orario nella data selezionata")
+        add_btn.clicked.connect(lambda: self.add_todo_requested.emit(self._selected_date_str))
+        hdr.addWidget(add_btn)
+        layout.addLayout(hdr)
+
+        self.summary_badge = _make_label("", "CardMeta")
+        layout.addWidget(self.summary_badge)
+
+        self.scroll_list = ScrollList("Nessun impegno o nota nella settimana.")
+        layout.addWidget(self.scroll_list, 1)
+
+    def set_sidebar_data(
+        self,
+        selected_date_str: str,
+        events_by_date: Dict[str, List[Dict[str, Any]]],
+        notes_by_date: Dict[str, List[Dict[str, Any]]],
+        notes_by_event: Optional[Dict[int, List[Dict[str, Any]]]] = None,
+    ):
+        self._selected_date_str = selected_date_str or dt_date.today().isoformat()
+        self.scroll_list.clear()
+
+        notes_by_ev_map = notes_by_event or {}
+        all_dates = sorted(set(events_by_date.keys()) | set(notes_by_date.keys()))
+        ordered_dates = [self._selected_date_str]
+        for ds in all_dates:
+            if ds == self._selected_date_str:
+                continue
+            evs = events_by_date.get(ds) or []
+            nts = notes_by_date.get(ds) or []
+            has_items = any(e.get("item_type") == "todo" or e.get("is_all_day") for e in evs) or bool(nts)
+            if has_items:
+                ordered_dates.append(ds)
+
+        weekdays_up = ["LUN", "MAR", "MER", "GIO", "VEN", "SAB", "DOM"]
+        months_up = ["GEN", "FEB", "MAR", "APR", "MAG", "GIU", "LUG", "AGO", "SET", "OTT", "NOV", "DIC"]
+        today_str = dt_date.today().isoformat()
+
+        pending_todos = 0
+        total_notes = 0
+
+        for ds in ordered_dates:
+            evs = events_by_date.get(ds) or []
+            todos = [e for e in evs if e.get("item_type") == "todo"]
+            all_day = [e for e in evs if e.get("item_type") != "todo" and e.get("is_all_day")]
+            d_notes = notes_by_date.get(ds) or []
+
+            pending_todos += sum(1 for t in todos if not t.get("is_completed"))
+            total_notes += len(d_notes)
+
+            day_sec = QWidget()
+            day_sec.setStyleSheet("background: transparent;")
+            day_sec.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            dl = QVBoxLayout(day_sec)
+            dl.setContentsMargins(0, 0, 0, 4)
+            dl.setSpacing(4)
+
+            try:
+                d_obj = dt_date.fromisoformat(ds)
+                label_txt = f"{weekdays_up[d_obj.weekday()]} {d_obj.day} {months_up[d_obj.month - 1]}"
+            except Exception:
+                label_txt = ds
+            if ds == today_str:
+                label_txt = f"OGGI · {label_txt}"
+
+            hdr_frame = QFrame()
+            hdr_frame.setObjectName("FTDayGroupHeaderSelected" if ds == self._selected_date_str else "FTDayGroupHeader")
+            hdr_frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            hl = QHBoxLayout(hdr_frame)
+            hl.setContentsMargins(6, 3, 6, 3)
+            hl.setSpacing(4)
+
+            day_btn = QPushButton(label_txt)
+            day_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            day_btn.setStyleSheet(
+                "border: none; background: transparent; text-align: left; "
+                "font-size: 10.5px; font-weight: 700; padding: 1px 2px;"
+            )
+            day_btn.clicked.connect(lambda _c=False, target_ds=ds: self.date_selected.emit(target_ds))
+            hl.addWidget(day_btn, 1)
+
+            cnt_items = len(todos) + len(all_day) + len(d_notes)
+            if cnt_items > 0:
+                hl.addWidget(_make_label(str(cnt_items), "BadgeMuted"))
+            dl.addWidget(hdr_frame)
+
+            for ev in todos:
+                ev_id = int(ev.get("local_id") or ev.get("id"))
+                is_done = bool(ev.get("is_completed"))
+                pill = QFrame()
+                pill.setObjectName("FTTodoPill")
+                pill.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+                pl = QVBoxLayout(pill)
+                pl.setContentsMargins(7, 5, 7, 5)
+                pl.setSpacing(3)
+
+                row = QHBoxLayout()
+                row.setSpacing(5)
+                cb = QCheckBox("")
+                cb.setChecked(is_done)
+                cb.setToolTip("Segna impegno come completato / da fare")
+                cb.clicked.connect(lambda _c=False, eid=ev_id: self.todo_toggled.emit(eid))
+                row.addWidget(cb, 0, Qt.AlignmentFlag.AlignTop)
+
+                accent = ev.get("color") or "#6366F1"
+                dot = QLabel("●")
+                dot.setStyleSheet(f"color: {accent}; font-size: 10px; background: transparent; padding-top: 2px;")
+                row.addWidget(dot, 0, Qt.AlignmentFlag.AlignTop)
+
+                t_lbl = _ClickableLabel(ev.get("summary") or "Impegno")
+                t_lbl.setWordWrap(True)
+                t_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+                t_lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+                fnt = t_lbl.font()
+                fnt.setStrikeOut(is_done)
+                t_lbl.setFont(fnt)
+                t_lbl.setStyleSheet(
+                    "font-size: 11.5px; font-weight: 600; background: transparent;"
+                    + (" color: #64748B;" if is_done else "")
+                )
+                t_lbl.setToolTip("Clicca per modificare o collegare note")
+                t_lbl.clicked.connect(lambda e=ev: self.event_clicked.emit(e))
+                row.addWidget(t_lbl, 1)
+                pl.addLayout(row)
+
+                linked = notes_by_ev_map.get(ev_id) or ev.get("linked_notes") or []
+                for note in linked[:2]:
+                    nid = int(note["id"])
+                    nb = QPushButton(f"📓 {(note.get('title') or 'Nota')[:19]}")
+                    nb.setObjectName("FTNotePillBtn")
+                    nb.setCursor(Qt.CursorShape.PointingHandCursor)
+                    nb.setToolTip(f"Apri '{note.get('title') or 'Nota'}' in FlowNotes")
+                    nb.clicked.connect(lambda _c=False, target_id=nid: self.note_clicked.emit(target_id))
+                    pl.addWidget(nb)
+
+                dl.addWidget(pill)
+
+            for ev in all_day:
+                btn = QPushButton(f"📌 {(ev.get('summary') or 'Evento')[:22]}")
+                btn.setObjectName("FTNotePillBtn")
+                btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                btn.setToolTip(ev.get("summary") or "Evento")
+                btn.clicked.connect(lambda _c=False, e=ev: self.event_clicked.emit(e))
+                dl.addWidget(btn)
+
+            for note in d_notes[:5]:
+                nid = int(note["id"])
+                nb = QPushButton(f"📓 {(note.get('title') or 'Nota')[:20]}")
+                nb.setObjectName("FTNotePillBtn")
+                nb.setCursor(Qt.CursorShape.PointingHandCursor)
+                nb.setToolTip(f"Apri '{note.get('title') or 'Nota'}' in FlowNotes")
+                nb.clicked.connect(lambda _c=False, target_id=nid: self.note_clicked.emit(target_id))
+                dl.addWidget(nb)
+
+            if not todos and not all_day and not d_notes:
+                empty_day = _make_label("Nessun To-Do o nota.", "NoteMeta", wrap=True)
+                empty_day.setStyleSheet("padding: 2px 4px; background: transparent;")
+                dl.addWidget(empty_day)
+
+            self.scroll_list.add_card(day_sec)
+
+        self.summary_badge.setText(f"{pending_todos} da fare · {total_notes} note nella settimana")
+
+
+class FlowTimeDayTimeline(QFrame):
+    """Timeline giornaliera verticale con intestazione giorno in stile Google Calendar."""
+
+    event_clicked = pyqtSignal(dict)
+    note_clicked = pyqtSignal(int)
+    empty_slot_clicked = pyqtSignal(str, str)
+    todo_toggled = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Card")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._date_str: str = dt_date.today().isoformat()
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(6)
+
+        hdr = QHBoxLayout()
+        hdr.setSpacing(10)
+
+        self.day_num_badge = QLabel(str(dt_date.today().day))
+        self.day_num_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.day_num_badge.setFixedSize(34, 34)
+        hdr.addWidget(self.day_num_badge)
+
+        title_col = QVBoxLayout()
+        title_col.setSpacing(0)
+        self.day_weekday_lbl = _make_label("", "CardMeta")
+        self.day_weekday_lbl.setStyleSheet("font-size: 10px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+        title_col.addWidget(self.day_weekday_lbl)
+
+        self.day_title_lbl = _make_label("Agenda & Timeline", "CardTitle")
+        self.day_title_lbl.setStyleSheet("font-size: 15px; font-weight: 700; background: transparent;")
+        title_col.addWidget(self.day_title_lbl)
+        hdr.addLayout(title_col)
+
+        self.day_stats_lbl = _make_label("", "BadgeAccent")
+        hdr.addWidget(self.day_stats_lbl)
+        hdr.addStretch(1)
+
+        self.now_badge = QLabel(f"🔴 {datetime.now().strftime('%H:%M')}")
+        self.now_badge.setStyleSheet(
+            "background-color: rgba(239, 68, 68, 0.14); color: #EF4444; "
+            "border: 1px solid rgba(239, 68, 68, 0.40); border-radius: 7px; "
+            "padding: 2px 8px; font-size: 11px; font-weight: 700;"
+        )
+        hdr.addWidget(self.now_badge)
+        layout.addLayout(hdr)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        self.canvas = _DayTimelineCanvas(self)
+        self.canvas.event_clicked.connect(self.event_clicked.emit)
+        self.canvas.note_clicked.connect(self.note_clicked.emit)
+        self.canvas.empty_slot_clicked.connect(self.empty_slot_clicked.emit)
+        self.scroll_area.setWidget(self.canvas)
+        layout.addWidget(self.scroll_area, 1)
+
+        self._now_timer = QTimer(self)
+        self._now_timer.timeout.connect(self._on_tick)
+        self._now_timer.start(30000)
+
+    def _on_tick(self):
+        self.now_badge.setText(f"🔴 {datetime.now().strftime('%H:%M')}")
+        if self.isVisible():
+            self.canvas.update()
+
+    def set_day_data(
+        self,
+        date_str: str,
+        events: List[Dict[str, Any]],
+        day_notes: List[Dict[str, Any]],
+        notes_by_event: Dict[int, List[Dict[str, Any]]],
+        is_dark: bool,
+        reading_mode: bool = False,
+        selected_event_id: Optional[int] = None,
+    ):
+        self._date_str = date_str or dt_date.today().isoformat()
+        try:
+            d_obj = dt_date.fromisoformat(self._date_str)
+        except Exception:
+            d_obj = dt_date.today()
+
+        weekdays_up = ["LUNEDÌ", "MARTEDÌ", "MERCOLEDÌ", "GIOVEDÌ", "VENERDÌ", "SABATO", "DOMENICA"]
+        is_today = d_obj == dt_date.today()
+        self.day_weekday_lbl.setText(weekdays_up[d_obj.weekday()])
+        self.day_num_badge.setText(str(d_obj.day))
+        if is_today:
+            self.day_num_badge.setStyleSheet(
+                "background-color: #6366F1; color: #FFFFFF; border: 2px solid #EF4444; "
+                "border-radius: 17px; font-size: 15px; font-weight: 700;"
+            )
+        else:
+            self.day_num_badge.setStyleSheet(
+                "background-color: #6366F1; color: #FFFFFF; border: none; "
+                "border-radius: 17px; font-size: 15px; font-weight: 700;"
+            )
+
+        timed = [e for e in events if e.get("item_type") != "todo" and not e.get("is_all_day")]
+        self.canvas.set_data(
+            date_str=self._date_str,
+            timed_events=timed,
+            is_dark=is_dark,
+            reading_mode=reading_mode,
+            notes_by_event=notes_by_event,
+            selected_event_id=selected_event_id,
+        )
+        self.now_badge.setText(f"🔴 {datetime.now().strftime('%H:%M')}")
+
+    def scroll_to_focus(self):
+        y = int(self.canvas.first_focus_y())
+        vp_h = max(160, self.scroll_area.viewport().height())
+        sb = self.scroll_area.verticalScrollBar()
+        target = max(sb.minimum(), min(sb.maximum(), y - vp_h // 3))
+        sb.setValue(target)
+
+
+class _WeekTimelineCanvas(QWidget):
+    """Canvas a 7 colonne orarie (Lunedì–Domenica, 00:00–23:59) con linea ora live e click su slot vuoti."""
+
+    event_clicked = pyqtSignal(dict)
+    empty_slot_clicked = pyqtSignal(str, str)
+
+    HOUR_HEIGHT = 48
+    TOP_PAD = 8
+    BOTTOM_PAD = 12
+    AXIS_X = 48
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._monday: dt_date = dt_date.today() - timedelta(days=dt_date.today().weekday())
+        self._selected_date_str: str = dt_date.today().isoformat()
+        self._selected_event_id: Optional[int] = None
+        self._placed_by_col: Dict[int, List[Dict[str, Any]]] = {}
+        self._hit_rects: List[tuple] = []
+        self._hover_slot: Optional[tuple] = None  # (col_idx, date_str, snapped_min)
+        self._is_dark: bool = True
+        self._reading_mode: bool = False
+        self.setMouseTracking(True)
+        self.setFixedHeight(24 * self.HOUR_HEIGHT + self.TOP_PAD + self.BOTTOM_PAD)
+
+    def _y_to_snapped_hhmm(self, y: float) -> tuple:
+        raw_mins = ((y - float(self.TOP_PAD)) / float(self.HOUR_HEIGHT)) * 60.0
+        snapped = int(round(raw_mins / 30.0) * 30)
+        snapped = max(0, min(1410, snapped))
+        return snapped, f"{snapped // 60:02d}:{snapped % 60:02d}"
+
+    def set_data(
+        self,
+        monday_date: dt_date,
+        selected_date_str: str,
+        timed_by_date: Dict[str, List[Dict[str, Any]]],
+        is_dark: bool,
+        reading_mode: bool = False,
+        selected_event_id: Optional[int] = None,
+    ):
+        self._monday = monday_date
+        self._selected_date_str = selected_date_str
+        self._is_dark = bool(is_dark)
+        self._reading_mode = bool(reading_mode)
+        self._selected_event_id = selected_event_id
+        self._placed_by_col = {}
+
+        for col_idx in range(7):
+            d_str = (monday_date + timedelta(days=col_idx)).isoformat()
+            evs = timed_by_date.get(d_str) or []
+            items = []
+            for ev in evs:
+                s_min = _DayTimelineCanvas._parse_hhmm(ev.get("start_time") or "")
+                if s_min is None:
+                    s_min = 9 * 60
+                e_min = _DayTimelineCanvas._parse_hhmm(ev.get("end_time") or "")
+                if e_min is None or e_min <= s_min:
+                    e_min = min(1440, s_min + 60)
+                vis_end = max(s_min + 30, e_min)
+                items.append({"ev": ev, "start": s_min, "end": e_min, "vis_end": vis_end})
+            items.sort(key=lambda x: (x["start"], x["vis_end"]))
+
+            placed: List[Dict[str, Any]] = []
+            clusters: List[List[Dict[str, Any]]] = []
+            cur: List[Dict[str, Any]] = []
+            c_end = -1
+            for it in items:
+                if not cur or it["start"] < c_end:
+                    cur.append(it)
+                    c_end = max(c_end, it["vis_end"])
+                else:
+                    clusters.append(cur)
+                    cur = [it]
+                    c_end = it["vis_end"]
+            if cur:
+                clusters.append(cur)
+
+            for cl in clusters:
+                lane_ends: List[int] = []
+                for it in cl:
+                    p_lane = None
+                    for li, lend in enumerate(lane_ends):
+                        if it["start"] >= lend:
+                            p_lane = li
+                            lane_ends[li] = it["vis_end"]
+                            break
+                    if p_lane is None:
+                        p_lane = len(lane_ends)
+                        lane_ends.append(it["vis_end"])
+                    it["lane"] = p_lane
+                tot_lanes = max(1, len(lane_ends))
+                for it in cl:
+                    it["lanes"] = tot_lanes
+                    placed.append(it)
+            self._placed_by_col[col_idx] = placed
+
+        self.update()
+
+    def focus_y(self) -> float:
+        today_d = dt_date.today()
+        if self._monday <= today_d <= (self._monday + timedelta(days=6)):
+            now = datetime.now()
+            return float(self.TOP_PAD) + ((now.hour * 60.0 + now.minute) / 60.0) * float(self.HOUR_HEIGHT)
+        return float(self.TOP_PAD) + 8.0 * float(self.HOUR_HEIGHT)
+
+    def leaveEvent(self, event):
+        if self._hover_slot is not None:
+            self._hover_slot = None
+            self.update()
+        super().leaveEvent(event)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        w = float(self.width())
+        h = float(self.height())
+
+        if self._is_dark:
+            bg_col = QColor("#18130F") if self._reading_mode else QColor("#0B0F1A")
+            line_col = QColor(245, 158, 11, 26) if self._reading_mode else QColor(255, 255, 255, 20)
+            half_col = QColor(245, 158, 11, 12) if self._reading_mode else QColor(255, 255, 255, 8)
+            axis_txt = QColor("#A8957E") if self._reading_mode else QColor("#64748B")
+            title_col = QColor("#F5EBE0") if self._reading_mode else QColor("#F1F5F9")
+            sub_col = QColor("#D6C5B0") if self._reading_mode else QColor("#94A3B8")
+        else:
+            bg_col = QColor("#FBF5E6") if self._reading_mode else QColor("#FFFFFF")
+            line_col = QColor(180, 83, 9, 28) if self._reading_mode else QColor("#E2E8F0")
+            half_col = QColor(180, 83, 9, 14) if self._reading_mode else QColor("#F1F5F9")
+            axis_txt = QColor("#6E5B47") if self._reading_mode else QColor("#64748B")
+            title_col = QColor("#1E293B")
+            sub_col = QColor("#475569")
+
+        p.fillRect(self.rect(), bg_col)
+
+        left_x = float(self.AXIS_X)
+        right_x = w - 2.0
+        col_w = max(40.0, (right_x - left_x) / 7.0)
+        today_str = dt_date.today().isoformat()
+        today_col_idx: Optional[int] = None
+
+        # Sfondo colonna Oggi / Selezionato + divisori verticali
+        for col_idx in range(7):
+            d_str = (self._monday + timedelta(days=col_idx)).isoformat()
+            cx = left_x + col_idx * col_w
+            if d_str == today_str:
+                today_col_idx = col_idx
+                p.fillRect(QRectF(cx, float(self.TOP_PAD), col_w, h - float(self.TOP_PAD + self.BOTTOM_PAD)), QColor(239, 68, 68, 14))
+            elif d_str == self._selected_date_str:
+                p.fillRect(QRectF(cx, float(self.TOP_PAD), col_w, h - float(self.TOP_PAD + self.BOTTOM_PAD)), QColor(99, 102, 241, 14))
+
+        axis_font = QFont(p.font())
+        axis_font.setPointSize(8)
+        axis_font.setWeight(QFont.Weight.Medium)
+        p.setFont(axis_font)
+
+        for hr in range(25):
+            y = float(self.TOP_PAD) + hr * float(self.HOUR_HEIGHT)
+            p.setPen(QPen(line_col, 1.0))
+            p.drawLine(QPointF(left_x, y), QPointF(right_x, y))
+            if hr < 24:
+                p.setPen(axis_txt)
+                p.drawText(QRectF(2.0, y - 8.0, left_x - 8.0, 16.0), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, f"{hr:02d}:00")
+                hy = y + float(self.HOUR_HEIGHT) / 2.0
+                p.setPen(QPen(half_col, 1.0, Qt.PenStyle.DashLine))
+                p.drawLine(QPointF(left_x, hy), QPointF(right_x, hy))
+
+        for col_idx in range(8):
+            vx = left_x + col_idx * col_w
+            p.setPen(QPen(line_col, 1.0))
+            p.drawLine(QPointF(vx, float(self.TOP_PAD)), QPointF(vx, h - float(self.BOTTOM_PAD)))
+
+        # Hover slot preview
+        if self._hover_slot is not None:
+            h_col, _h_ds, h_min = self._hover_slot
+            hx = left_x + h_col * col_w + 2.0
+            hy = float(self.TOP_PAD) + (h_min / 60.0) * float(self.HOUR_HEIGHT)
+            hr_rect = QRectF(hx, hy, max(20.0, col_w - 4.0), float(self.HOUR_HEIGHT) / 2.0)
+            p.setPen(QPen(QColor(99, 102, 241, 140), 1.0, Qt.PenStyle.DashLine))
+            p.setBrush(QBrush(QColor(99, 102, 241, 24)))
+            p.drawRoundedRect(hr_rect, 5.0, 5.0)
+            p.setFont(axis_font)
+            p.setPen(QColor("#818CF8"))
+            p.drawText(hr_rect, Qt.AlignmentFlag.AlignCenter, f"+ {h_min // 60:02d}:{h_min % 60:02d}")
+
+        # Blocchi evento per ciascuna colonna giorno
+        self._hit_rects = []
+        block_font_t = QFont(p.font())
+        block_font_t.setPointSize(8)
+        block_font_t.setWeight(QFont.Weight.DemiBold)
+        block_font_m = QFont(p.font())
+        block_font_m.setPointSize(7)
+
+        for col_idx in range(7):
+            cx = left_x + col_idx * col_w
+            avail_w = max(24.0, col_w - 6.0)
+            for item in self._placed_by_col.get(col_idx, []):
+                ev = item["ev"]
+                y_top = float(self.TOP_PAD) + (item["start"] / 60.0) * float(self.HOUR_HEIGHT) + 1.0
+                y_bot = float(self.TOP_PAD) + (item["vis_end"] / 60.0) * float(self.HOUR_HEIGHT) - 1.0
+                bh = max(20.0, y_bot - y_top)
+
+                lanes = item["lanes"]
+                lane = item["lane"]
+                gap = 2.0
+                cw = (avail_w - gap * (lanes - 1)) / lanes
+                bx = cx + 3.0 + lane * (cw + gap)
+                b_rect = QRectF(bx, y_top, cw, bh)
+                self._hit_rects.append((b_rect, ev))
+
+                accent = QColor(ev.get("color") or "#6366F1")
+                if not accent.isValid():
+                    accent = QColor("#6366F1")
+                is_selected = self._selected_event_id is not None and ev.get("id") == self._selected_event_id
+
+                fill_c = QColor(accent)
+                fill_c.setAlpha(72 if is_selected else (50 if self._is_dark else 34))
+                border_c = QColor(accent)
+                border_c.setAlpha(240 if is_selected else (165 if self._is_dark else 140))
+
+                p.setPen(QPen(border_c, 2.0 if is_selected else 1.0))
+                p.setBrush(QBrush(fill_c))
+                p.drawRoundedRect(b_rect, 6.0, 6.0)
+
+                bar_rect = QRectF(bx, y_top + 1.5, 3.0, max(6.0, bh - 3.0))
+                p.setPen(Qt.PenStyle.NoPen)
+                p.setBrush(QBrush(accent))
+                p.drawRoundedRect(bar_rect, 1.5, 1.5)
+
+                inner = QRectF(bx + 6.0, y_top + 2.0, max(10.0, cw - 9.0), bh - 4.0)
+                summary = ev.get("summary") or "(Senza titolo)"
+                time_txt = ev.get("start_time") or ""
+                if bh >= 34.0 and time_txt:
+                    p.setFont(block_font_m)
+                    p.setPen(sub_col)
+                    p.drawText(QRectF(inner.x(), inner.y(), inner.width(), 12.0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, time_txt)
+                    p.setFont(block_font_t)
+                    p.setPen(title_col)
+                    p.drawText(
+                        QRectF(inner.x(), inner.y() + 12.0, inner.width(), max(12.0, inner.height() - 12.0)),
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
+                        summary,
+                    )
+                else:
+                    p.setFont(block_font_t)
+                    p.setPen(title_col)
+                    elided = QFontMetrics(block_font_t).elidedText(summary, Qt.TextElideMode.ElideRight, int(inner.width()))
+                    p.drawText(inner, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided)
+
+        # Linea rossa ora live (evidenziata sulla colonna di Oggi se visibile)
+        now = datetime.now()
+        y_now = float(self.TOP_PAD) + ((now.hour * 60.0 + now.minute + now.second / 60.0) / 60.0) * float(self.HOUR_HEIGHT)
+        p.setPen(QPen(QColor(239, 68, 68, 90 if today_col_idx is not None else 75), 1.0, Qt.PenStyle.DashLine))
+        p.drawLine(QPointF(left_x, y_now), QPointF(right_x, y_now))
+        if today_col_idx is not None:
+            tx = left_x + today_col_idx * col_w
+            p.setPen(QPen(QColor("#EF4444"), 2.2, Qt.PenStyle.SolidLine))
+            p.drawLine(QPointF(tx, y_now), QPointF(tx + col_w, y_now))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(QColor("#EF4444")))
+            p.drawEllipse(QPointF(tx, y_now), 4.0, 4.0)
+
+        pill_r = QRectF(2.0, y_now - 8.5, left_x - 6.0, 17.0)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(QColor("#EF4444")))
+        p.drawRoundedRect(pill_r, 4.0, 4.0)
+        pf = QFont(p.font())
+        pf.setPointSize(7)
+        pf.setWeight(QFont.Weight.Bold)
+        p.setFont(pf)
+        p.setPen(QColor("#FFFFFF"))
+        p.drawText(pill_r, Qt.AlignmentFlag.AlignCenter, now.strftime("%H:%M"))
+
+    def mouseMoveEvent(self, event):
+        pos = QPointF(event.position())
+        for r, ev in reversed(self._hit_rects):
+            if r.contains(pos):
+                if self._hover_slot is not None:
+                    self._hover_slot = None
+                    self.update()
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+                loc = f"\n📍 {ev['location']}" if ev.get("location") else ""
+                self.setToolTip(f"{ev.get('time', '')} · {ev.get('summary', '')}{loc}\n(Clicca per modificare o collegare note)")
+                return
+        if pos.x() >= float(self.AXIS_X) and float(self.TOP_PAD) <= pos.y() <= float(self.height() - self.BOTTOM_PAD):
+            col_w = max(40.0, (float(self.width()) - 2.0 - float(self.AXIS_X)) / 7.0)
+            col_idx = max(0, min(6, int((pos.x() - float(self.AXIS_X)) / col_w)))
+            d_obj = self._monday + timedelta(days=col_idx)
+            snapped, hhmm = self._y_to_snapped_hhmm(pos.y())
+            slot = (col_idx, d_obj.isoformat(), snapped)
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.setToolTip(f"Clicca per aggiungere in {d_obj.strftime('%d/%m')} alle {hhmm}")
+            if self._hover_slot != slot:
+                self._hover_slot = slot
+                self.update()
+            return
+        if self._hover_slot is not None:
+            self._hover_slot = None
+            self.update()
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.setToolTip("")
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = QPointF(event.position())
+            for r, ev in reversed(self._hit_rects):
+                if r.contains(pos):
+                    self.event_clicked.emit(ev)
+                    return
+            col_w = max(40.0, (float(self.width()) - 2.0 - float(self.AXIS_X)) / 7.0)
+            col_idx = max(0, min(6, int((max(float(self.AXIS_X), pos.x()) - float(self.AXIS_X)) / col_w)))
+            d_str = (self._monday + timedelta(days=col_idx)).isoformat()
+            _snapped, hhmm = self._y_to_snapped_hhmm(pos.y())
+            self.empty_slot_clicked.emit(d_str, hhmm)
+            return
+        super().mousePressEvent(event)
+
+
+class FlowTimeWeekView(QFrame):
+    """Vista Settimanale a 7 colonne orarie (00:00–23:59) con striscia To-Do e oggi cerchiato in rosso."""
+
+    date_selected = pyqtSignal(str)
+    open_day_requested = pyqtSignal(str)
+    event_clicked = pyqtSignal(dict)
+    note_clicked = pyqtSignal(int)
+    empty_slot_clicked = pyqtSignal(str, str)
+    todo_toggled = pyqtSignal(int)
+    prev_week_clicked = pyqtSignal()
+    next_week_clicked = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Card")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(4)
+
+        nav = QHBoxLayout()
+        nav.setSpacing(6)
+        prev_btn = _make_button("◀")
+        prev_btn.setStyleSheet("min-height: 24px; max-height: 24px; min-width: 26px; max-width: 26px; padding: 0px; font-size: 11px;")
+        prev_btn.setToolTip("Settimana precedente")
+        prev_btn.clicked.connect(self.prev_week_clicked.emit)
+        nav.addWidget(prev_btn)
+
+        next_btn = _make_button("▶")
+        next_btn.setStyleSheet("min-height: 24px; max-height: 24px; min-width: 26px; max-width: 26px; padding: 0px; font-size: 11px;")
+        next_btn.setToolTip("Settimana successiva")
+        next_btn.clicked.connect(self.next_week_clicked.emit)
+        nav.addWidget(next_btn)
+
+        self.week_range_lbl = _make_label("Settimana", "CardTitle")
+        self.week_range_lbl.setStyleSheet("font-size: 14px; font-weight: 700; background: transparent;")
+        nav.addWidget(self.week_range_lbl)
+
+        nav.addStretch(1)
+        self.week_stats_lbl = _make_label("", "BadgeMuted")
+        nav.addWidget(self.week_stats_lbl)
+
+        self.now_badge = QLabel(f"🔴 {datetime.now().strftime('%H:%M')}")
+        self.now_badge.setStyleSheet(
+            "background-color: rgba(239, 68, 68, 0.14); color: #EF4444; "
+            "border: 1px solid rgba(239, 68, 68, 0.40); border-radius: 7px; "
+            "padding: 2px 8px; font-size: 11px; font-weight: 700;"
+        )
+        nav.addWidget(self.now_badge)
+        layout.addLayout(nav)
+
+        # Barra intestazioni 7 giorni in stile Google Calendar (altezza bloccata 64 px)
+        self.hdr_strip = QFrame()
+        self.hdr_strip.setObjectName("FTWeekHeaderBar")
+        self.hdr_strip.setFixedHeight(64)
+        self.hdr_strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.hdr_cols_layout = QHBoxLayout(self.hdr_strip)
+        self.hdr_cols_layout.setContentsMargins(_WeekTimelineCanvas.AXIS_X, 0, 9, 0)
+        self.hdr_cols_layout.setSpacing(0)
+        layout.addWidget(self.hdr_strip)
+
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        self.week_canvas = _WeekTimelineCanvas(self)
+        self.week_canvas.event_clicked.connect(self.event_clicked.emit)
+        self.week_canvas.empty_slot_clicked.connect(self.empty_slot_clicked.emit)
+        self.scroll_area.setWidget(self.week_canvas)
+        layout.addWidget(self.scroll_area, 1)
+
+        self._tick_timer = QTimer(self)
+        self._tick_timer.timeout.connect(self._on_tick)
+        self._tick_timer.start(30000)
+
+    def _on_tick(self):
+        self.now_badge.setText(f"🔴 {datetime.now().strftime('%H:%M')}")
+        if self.isVisible():
+            self.week_canvas.update()
+
+    def scroll_to_focus(self):
+        y = int(self.week_canvas.focus_y())
+        vp_h = max(160, self.scroll_area.viewport().height())
+        sb = self.scroll_area.verticalScrollBar()
+        sb.setValue(max(sb.minimum(), min(sb.maximum(), y - vp_h // 3)))
+
+    def set_week_data(
+        self,
+        selected_date_str: str,
+        events_by_date: Dict[str, List[Dict[str, Any]]],
+        notes_by_date: Dict[str, List[Dict[str, Any]]],
+        is_dark: bool = True,
+        reading_mode: bool = False,
+        selected_event_id: Optional[int] = None,
+    ):
+        while self.hdr_cols_layout.count():
+            item = self.hdr_cols_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+
+        try:
+            sel_d = dt_date.fromisoformat(selected_date_str)
+        except Exception:
+            sel_d = dt_date.today()
+
+        monday = sel_d - timedelta(days=sel_d.weekday())
+        sunday = monday + timedelta(days=6)
+        months_full = [
+            "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+            "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"
+        ]
+        months_short = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+        weekdays_up = ["LUN", "MAR", "MER", "GIO", "VEN", "SAB", "DOM"]
+
+        if monday.month == sunday.month:
+            range_txt = f"{months_full[monday.month - 1]} {monday.year} · {monday.day}–{sunday.day}"
+        else:
+            range_txt = f"{monday.day} {months_short[monday.month - 1]} – {sunday.day} {months_short[sunday.month - 1]} {sunday.year}"
+        self.week_range_lbl.setText(range_txt)
+
+        today_d = dt_date.today()
+        total_events = 0
+        total_notes = 0
+        timed_by_date: Dict[str, List[Dict[str, Any]]] = {}
+
+        for offset in range(7):
+            d_cur = monday + timedelta(days=offset)
+            d_str = d_cur.isoformat()
+            is_today = d_cur == today_d
+            is_selected = d_cur == sel_d
+
+            day_events = events_by_date.get(d_str) or []
+            day_notes = notes_by_date.get(d_str) or []
+            total_events += len(day_events)
+            total_notes += len(day_notes)
+
+            timed_by_date[d_str] = [e for e in day_events if e.get("item_type") != "todo" and not e.get("is_all_day")]
+            todos = [e for e in day_events if e.get("item_type") == "todo"]
+
+            col_hdr = QFrame()
+            col_hdr.setObjectName("FTWeekHeaderCell")
+            if is_today:
+                col_hdr.setStyleSheet(
+                    "QFrame#FTWeekHeaderCell { background-color: rgba(239, 68, 68, 0.08); "
+                    "border: none; border-top-left-radius: 6px; border-top-right-radius: 6px; }"
+                )
+            col_l = QVBoxLayout(col_hdr)
+            col_l.setContentsMargins(2, 4, 2, 4)
+            col_l.setSpacing(2)
+            col_l.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+            # Riga 1: Sigla giorno in maiuscolo stile Google Calendar
+            wd_lbl = QLabel(weekdays_up[offset])
+            wd_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            wd_color = "#EF4444" if is_today else ("#818CF8" if (is_selected and is_dark) else ("#4F46E5" if is_selected else ("#94A3B8" if is_dark else "#64748B")))
+            wd_lbl.setStyleSheet(
+                f"color: {wd_color}; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; background: transparent;"
+            )
+            col_l.addWidget(wd_lbl)
+
+            # Riga 2: Numero del giorno (nessun cerchio rosso per oggi; solo pill piena quando selezionato)
+            num_btn = QPushButton(str(d_cur.day))
+            num_btn.setFixedSize(34, 34)
+            num_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            num_btn.setToolTip("Clicca per selezionare · Riclicca per aprire la vista Giorno")
+            if is_selected:
+                num_btn.setStyleSheet(
+                    "background-color: #6366F1; color: #FFFFFF; border: none; "
+                    "border-radius: 17px; font-size: 16px; font-weight: 700; padding: 0px;"
+                )
+            elif is_today:
+                num_btn.setStyleSheet(
+                    "background-color: transparent; color: #EF4444; border: none; "
+                    "border-radius: 17px; font-size: 16px; font-weight: 700; padding: 0px;"
+                )
+            else:
+                txt_col = "#F1F5F9" if is_dark else "#1E293B"
+                num_btn.setStyleSheet(
+                    f"background-color: transparent; color: {txt_col}; border: none; "
+                    "border-radius: 17px; font-size: 16px; font-weight: 600; padding: 0px;"
+                )
+            if is_selected:
+                num_btn.clicked.connect(lambda _c=False, ds=d_str: self.open_day_requested.emit(ds))
+            else:
+                num_btn.clicked.connect(lambda _c=False, ds=d_str: self.date_selected.emit(ds))
+            col_l.addWidget(num_btn, 0, Qt.AlignmentFlag.AlignHCenter)
+
+            # Riga 3: Micro-indicatore fisso (12 px) che non espande mai l'intestazione
+            parts = []
+            if todos:
+                parts.append(f"☑️{len(todos)}")
+            if day_notes:
+                parts.append(f"📓{len(day_notes)}")
+            hint_lbl = QLabel(" ".join(parts))
+            hint_lbl.setFixedHeight(12)
+            hint_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            hint_lbl.setStyleSheet(
+                f"color: {'#94A3B8' if is_dark else '#64748B'}; font-size: 9px; font-weight: 600; background: transparent;"
+            )
+            col_l.addWidget(hint_lbl)
+
+            self.hdr_cols_layout.addWidget(col_hdr, 1)
+
+        self.week_canvas.set_data(
+            monday_date=monday,
+            selected_date_str=sel_d.isoformat(),
+            timed_by_date=timed_by_date,
+            is_dark=is_dark,
+            reading_mode=reading_mode,
+            selected_event_id=selected_event_id,
+        )
+        self.now_badge.setText(f"🔴 {datetime.now().strftime('%H:%M')}")
+        self.week_stats_lbl.setText(
+            f"{total_events} {'impegno' if total_events == 1 else 'impegni'} · "
+            f"{total_notes} {'nota' if total_notes == 1 else 'note'} nella settimana"
+        )
+
+
 class FlowLocalHub(QMainWindow):
     note_added = pyqtSignal()
+    flowtime_sync_done = pyqtSignal(bool, str)
 
     def __init__(self, on_device_changed: Optional[Callable] = None, engine=None):
         super().__init__()
@@ -2397,15 +7691,42 @@ class FlowLocalHub(QMainWindow):
         self._import_thread = None
         self._autolink_thread = None
         self._note_cards: Dict[int, QFrame] = {}
+        self._ft_editing_event_id: Optional[int] = None
 
         self.setWindowTitle("FlowLocal Hub")
         self.resize(1120, 680)
         self.setMinimumSize(920, 580)
-        saved_theme = str(QSettings("FlowLocal", "Hub").value("theme", "obsidian") or "obsidian")
+        settings = QSettings("FlowLocal", "Hub")
+        saved_theme = str(settings.value("theme", "obsidian") or "obsidian")
         self._current_theme = saved_theme if saved_theme in _THEME_PALETTES else "obsidian"
-        self.setStyleSheet(get_hub_qss(self._current_theme))
+        raw_rm = settings.value("reading_mode", False)
+        self._reading_mode = str(raw_rm).lower() in ("true", "1", "yes") if not isinstance(raw_rm, bool) else raw_rm
+        saved_fp = str(settings.value("font_preset", "auto") or "auto")
+        self._font_preset = saved_fp if saved_fp in FONT_PRESETS else "auto"
+        self._custom_font_family = str(settings.value("custom_font_family", "") or "")
+        try:
+            self._font_scale = max(90, min(120, int(settings.value("font_scale", 100) or 100)))
+        except Exception:
+            self._font_scale = 100
+        ThemedPushButton.current_theme = self._current_theme
+        ThemedPushButton.reading_mode = self._reading_mode
+        self.setStyleSheet(
+            get_hub_qss(
+                self._current_theme,
+                self._reading_mode,
+                font_preset=self._font_preset,
+                custom_font=self._custom_font_family,
+                font_scale=self._font_scale,
+            )
+        )
 
         self.note_added.connect(self._refresh_notekeeper)
+        self.flowtime_sync_done.connect(self._on_ft_sync_finished)
+        try:
+            from core.calendar_sync import calendar_manager
+            calendar_manager.add_sync_listener(lambda ok, msg: self.flowtime_sync_done.emit(ok, msg))
+        except Exception:
+            pass
 
         self._current_mode_name = MODE_TABS[0][1]
         self._last_transcription_marker = None
@@ -2426,7 +7747,14 @@ class FlowLocalHub(QMainWindow):
         self._cloud_queue_thread = None
 
         self._build_ui()
+        self._sync_editor_typography()
         self._refresh_current_page()
+
+        # Sync iniziale e periodico Google Calendar in background (se connesso)
+        QTimer.singleShot(1500, self._startup_google_calendar_sync)
+        self.gcal_sync_timer = QTimer(self)
+        self.gcal_sync_timer.timeout.connect(self._periodic_google_calendar_sync)
+        self.gcal_sync_timer.start(120000)
 
         # Aggiornamento leggero della Cronologia: ricostruisce solo se arrivano nuovi dettati
         self.poll_timer = QTimer(self)
@@ -2455,35 +7783,64 @@ class FlowLocalHub(QMainWindow):
         self._apply_windows_titlebar_theme(self._current_theme)
         self._refresh_current_page()
 
-    def _apply_windows_titlebar_theme(self, theme_key: str):
+    def _active_is_dark(self) -> bool:
+        return _is_dark_theme(getattr(self, "_current_theme", "obsidian"))
+
+    def _active_palette(self) -> dict:
+        return _resolve_palette(
+            getattr(self, "_current_theme", "obsidian"),
+            getattr(self, "_reading_mode", False),
+            font_preset=getattr(self, "_font_preset", "auto"),
+            custom_font=getattr(self, "_custom_font_family", ""),
+        )
+
+    def _apply_windows_titlebar_theme(self, theme_key: str, reading_mode: Optional[bool] = None):
         """Sincronizza la barra del titolo nativa di Windows 10/11 con il tema attivo."""
+        if reading_mode is None:
+            reading_mode = getattr(self, "_reading_mode", False)
         try:
             import ctypes
             hwnd = int(self.winId())
             if not hwnd:
                 return
             dwmapi = ctypes.windll.dwmapi
-            is_dark = 1 if theme_key == "obsidian" else 0
+            is_dark = 1 if _is_dark_theme(theme_key) else 0
             dark_val = ctypes.c_int(is_dark)
             dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(dark_val), ctypes.sizeof(dark_val))
-            caption_colors = {
-                "obsidian": 0x000B0705,  # #05070B
-                "light": 0x00FFFFFF,     # #FFFFFF
-                "orb": 0x00FFFDF0,       # #F0FDFF
-            }
-            cap_val = ctypes.c_int(caption_colors.get(theme_key, 0x000B0705))
+            if reading_mode:
+                cap_hex = 0x000D1115 if is_dark else 0x00D0E5EF  # #15110D / #EFE5D0 (BGR)
+                text_hex = 0x00E0EBF5 if is_dark else 0x00141F2A
+            else:
+                caption_colors = {
+                    "obsidian": 0x000B0705,             # #05070B (BGR)
+                    "light": 0x00FFFFFF,                # #FFFFFF (BGR)
+                    "orb": 0x00FFFDF0,                  # #F0FDFF (BGR)
+                    "dark_orb": 0x0050320E,             # #0E3250 (BGR)
+                    "ghibli_spring": 0x00E8F3ED,        # #EDF3E8 (BGR)
+                    "pixel_chill": 0x00444037,          # #374044 (BGR)
+                    "katana": 0x001A1A1F,               # #1F1A1A (BGR)
+                    "tactical_hud": 0x001D1813,         # #13181D (BGR)
+                    "industrial_mecha": 0x001E1C1A,     # #1A1C1E (BGR)
+                    "amber_crt": 0x0009121A,            # #1A1209 (BGR)
+                    "starfield_alabaster": 0x00DDE4E6,  # #E6E4DD (BGR)
+                    "cyber_synthwave": 0x00240E16,      # #160E24 (BGR)
+                }
+                cap_hex = caption_colors.get(theme_key, 0x000B0705)
+                text_hex = 0x00FCFAF8 if is_dark else 0x002A170F
+            cap_val = ctypes.c_int(cap_hex)
             dwmapi.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cap_val), ctypes.sizeof(cap_val))
-            text_val = ctypes.c_int(0x00FCFAF8 if is_dark else 0x002A170F)
+            text_val = ctypes.c_int(text_hex)
             dwmapi.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text_val), ctypes.sizeof(text_val))
         except Exception:
             pass
 
     # -----------------------------------------------------------------
-    # Struttura principale (TOP BAR 3 MONDI: FlowType | FlowNotes | Whis)
+    # Struttura principale (TOP BAR 4 MONDI: FlowType | FlowNotes | FlowTime | Whis)
     # -----------------------------------------------------------------
     def _build_ui(self):
         root = QWidget()
         root.setObjectName("HubRoot")
+        root.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setCentralWidget(root)
 
         main_layout = QVBoxLayout(root)
@@ -2494,7 +7851,21 @@ class FlowLocalHub(QMainWindow):
         main_layout.addWidget(self._build_top_bar())
         main_layout.addWidget(self._build_flowtype_subbar())
 
-        self.pages = QStackedWidget()
+        # Ordine spaziale direzionale (Top Bar: [0] FlowType -> [1] FlowNotes -> [2] FlowTime -> [3] Whis,
+        # più sub-viste interne Dettatura/Dizionario/Stili e Quaderno/Flashcard/Grafo)
+        self.pages = SlidingStackedWidget(
+            duration_ms=280,
+            spatial_ranks={
+                0: 0,   # FlowType: Dettatura
+                5: 1,   # FlowType: Dizionario & Snippet
+                6: 2,   # FlowType: Stili & Prompt
+                1: 10,  # FlowNotes: Quaderno
+                2: 11,  # FlowNotes: Flashcard
+                3: 12,  # FlowNotes: Grafo
+                7: 20,  # FlowTime
+                4: 30,  # Whis
+            },
+        )
         self.pages.setObjectName("Pages")
         self.pages.addWidget(self._build_flowtype_page())             # Index 0: 🎙️ FlowType
         self.pages.addWidget(self._build_flowstudy_notekeeper_page()) # Index 1: 📓 FlowNotes - Quaderno
@@ -2503,6 +7874,7 @@ class FlowLocalHub(QMainWindow):
         self.pages.addWidget(self._build_whis_page())                 # Index 4: ✨ Whis
         self.pages.addWidget(self._build_dictionary_page())           # Index 5: 📖 Dizionario & Snippet
         self.pages.addWidget(self._build_styles_page())               # Index 6: ⚙️ Stili & Prompt
+        self.pages.addWidget(self._build_flowtime_page())             # Index 7: 🗓️ FlowTime
         self.pages.currentChanged.connect(self._sync_top_nav_state)
         main_layout.addWidget(self.pages, 1)
 
@@ -2515,38 +7887,31 @@ class FlowLocalHub(QMainWindow):
 
         layout = QHBoxLayout(top_bar)
         layout.setContentsMargins(18, 6, 18, 6)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
-        # A sinistra: Logo + FlowLocal + badge hardware + scorciatoia
-        left_box = QHBoxLayout()
+        # A sinistra: solo Logo + FlowLocal (contenitore rigido per stabilità del menù centrale)
+        left_host = QWidget()
+        left_host.setStyleSheet("background: transparent;")
+        left_box = QHBoxLayout(left_host)
+        left_box.setContentsMargins(0, 0, 0, 0)
         left_box.setSpacing(8)
         left_box.addWidget(OrbBrandBadge(24))
         title = QLabel("FlowLocal")
         title.setObjectName("AppTitle")
         title.setStyleSheet("font-size: 15px; font-weight: 700;")
         left_box.addWidget(title)
-
-        if GPU_AVAILABLE:
-            status = QLabel("● GPU CUDA")
-            status.setStyleSheet("color: #10B981; font-size: 11px; padding: 2px 8px;")
-        else:
-            status = QLabel("● CPU Fast")
-            status.setStyleSheet("color: #F59E0B; background-color: #2A2210; border: 1px solid #4A3A12; font-size: 11px; padding: 2px 8px;")
-        status.setObjectName("EngineStatus")
-        left_box.addWidget(status)
-
-        key_pill = QLabel("Shift Destro")
-        key_pill.setObjectName("ShortcutKey")
-        key_pill.setToolTip("Push-to-Talk: Shift Destro (doppio tocco = mani libere, F8 = secondario)")
-        key_pill.setStyleSheet("font-size: 11px; padding: 2px 8px;")
-        left_box.addWidget(key_pill)
-        layout.addLayout(left_box)
+        layout.addWidget(left_host)
 
         layout.addStretch(1)
 
-        # Al centro: Segmented Control a 3 pillole (FlowType | FlowNotes | Whis)
-        seg_box = QFrame()
-        seg_box.setObjectName("TopSegmentBox")
+        # Al centro: Segmented Control a 4 pillole con pillola attiva scorrevole (FlowType | FlowNotes | FlowTime | Whis)
+        seg_box = AnimatedSegmentedBox(
+            box_object_name="TopSegmentBox",
+            pill_object_name="TopSlidingPill",
+            duration_ms=280,
+        )
+        self.top_segment_box = seg_box
+        seg_box.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         seg_layout = QHBoxLayout(seg_box)
         seg_layout.setContentsMargins(4, 3, 4, 3)
         seg_layout.setSpacing(4)
@@ -2554,13 +7919,15 @@ class FlowLocalHub(QMainWindow):
         self.top_world_group = QButtonGroup(self)
         self.top_world_group.setExclusive(True)
 
-        self.top_flowtype_btn = QPushButton("🎙️ FlowType")
-        self.top_flownotes_btn = QPushButton("📓 FlowNotes")
-        self.top_whis_btn = QPushButton("✨ Whis")
+        self.top_flowtype_btn = ThemedPushButton("🎙️ FlowType")
+        self.top_flownotes_btn = ThemedPushButton("📓 FlowNotes")
+        self.top_flowtime_btn = ThemedPushButton("🗓️ FlowTime")
+        self.top_whis_btn = ThemedPushButton("✨ Whis")
 
         for idx, (btn, target_page) in enumerate([
             (self.top_flowtype_btn, 0),
             (self.top_flownotes_btn, 1),
+            (self.top_flowtime_btn, 7),
             (self.top_whis_btn, 4),
         ]):
             btn.setObjectName("TopSegmentBtn")
@@ -2569,36 +7936,52 @@ class FlowLocalHub(QMainWindow):
             btn.clicked.connect(lambda _c=False, p=target_page: self._on_nav_clicked(p))
             self.top_world_group.addButton(btn, idx)
             seg_layout.addWidget(btn)
+            seg_box.register_button(btn)
 
         layout.addWidget(seg_box)
         layout.addStretch(1)
 
-        # A destra: Selettore compatto Tema (Obsidian / Chiaro / Orb)
-        theme_row = QHBoxLayout()
-        theme_row.setSpacing(4)
-        self._theme_group = QButtonGroup(self)
-        self._theme_group.setExclusive(True)
-        for t_idx, (t_label, t_key) in enumerate([
-            ("Obsidian", "obsidian"),
-            ("Chiaro", "light"),
-            ("Orb", "orb"),
-        ]):
-            t_btn = QPushButton(t_label)
-            t_btn.setObjectName("FilterPill")
-            t_btn.setCheckable(True)
-            t_btn.setChecked(self._current_theme == t_key)
-            t_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            t_btn.setStyleSheet("padding: 0 9px; font-size: 11px; min-height: 26px;")
-            t_btn.clicked.connect(lambda _c=False, k=t_key: self._set_theme(k))
-            self._theme_group.addButton(t_btn, t_idx)
-            theme_row.addWidget(t_btn)
-        layout.addLayout(theme_row)
+        # A destra: Barra Spotify + Modalità Lettura + Rotellina Impostazioni (larghezza fissa anti-shift)
+        right_host = QWidget()
+        right_host.setFixedWidth(368)
+        right_host.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        right_host.setStyleSheet("background: transparent;")
+        right_row = QHBoxLayout(right_host)
+        right_row.setContentsMargins(0, 0, 0, 0)
+        right_row.setSpacing(6)
+
+        self.spotify_bar = SpotifyMiniBar(self)
+        self.spotify_bar.set_theme_mode(self._active_is_dark())
+        right_row.addWidget(self.spotify_bar)
+
+        self.reading_mode_btn = ThemedPushButton("📖 Lettura")
+        self.reading_mode_btn.setObjectName("FilterPill")
+        self.reading_mode_btn.setCheckable(True)
+        self.reading_mode_btn.setChecked(self._reading_mode)
+        self.reading_mode_btn.setFixedWidth(84)
+        self.reading_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reading_mode_btn.setToolTip("Modalità Lettura: toni caldi riposanti per la vista")
+        self.reading_mode_btn.setStyleSheet("padding: 0 8px; font-size: 11px; min-height: 26px;")
+        self.reading_mode_btn.toggled.connect(self._toggle_reading_mode)
+        right_row.addWidget(self.reading_mode_btn)
+
+        self.settings_btn = ThemedPushButton("⚙️")
+        self.settings_btn.setObjectName("SettingsGearBtn")
+        self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_btn.setToolTip("Impostazioni FlowLocal (Temi, Google Calendar, Sistema)")
+        self.settings_btn.clicked.connect(self._on_open_settings_clicked)
+        right_row.addWidget(self.settings_btn)
+
+        layout.addWidget(right_host)
 
         return top_bar
 
     def _build_flowtype_subbar(self) -> QFrame:
-        subbar = QFrame()
-        subbar.setObjectName("SubNavBar")
+        subbar = AnimatedSegmentedBox(
+            box_object_name="SubNavBar",
+            pill_object_name="SubSlidingPill",
+            duration_ms=260,
+        )
         subbar.setFixedHeight(38)
         self.flowtype_subbar = subbar
 
@@ -2613,7 +7996,7 @@ class FlowLocalHub(QMainWindow):
             ("Dizionario · Snippet", 5),
             ("Stili · Impostazioni", 6),
         ]):
-            btn = QPushButton(lbl)
+            btn = ThemedPushButton(lbl)
             btn.setObjectName("SubNavBtn")
             btn.setCheckable(True)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -2621,6 +8004,7 @@ class FlowLocalHub(QMainWindow):
             self.flowtype_sub_group.addButton(btn, idx)
             self.nav_buttons_by_page[page_idx] = btn
             layout.addWidget(btn)
+            subbar.register_button(btn)
 
         layout.addStretch(1)
         return subbar
@@ -2633,6 +8017,8 @@ class FlowLocalHub(QMainWindow):
             self.top_flowtype_btn.setChecked(True)
         elif page_idx in (1, 2, 3) and hasattr(self, "top_flownotes_btn"):
             self.top_flownotes_btn.setChecked(True)
+        elif page_idx == 7 and hasattr(self, "top_flowtime_btn"):
+            self.top_flowtime_btn.setChecked(True)
         elif page_idx == 4 and hasattr(self, "top_whis_btn"):
             self.top_whis_btn.setChecked(True)
 
@@ -2649,18 +8035,106 @@ class FlowLocalHub(QMainWindow):
     def _set_theme(self, theme_key: str):
         if theme_key not in _THEME_PALETTES or theme_key == self._current_theme:
             return
-        old_pixmap = self.grab() if self.isVisible() else None
         self._current_theme = theme_key
-        if hasattr(self, "nk_editor_body") and hasattr(self.nk_editor_body, "set_dark_mode"):
-            self.nk_editor_body.set_dark_mode(theme_key == "obsidian")
         QSettings("FlowLocal", "Hub").setValue("theme", theme_key)
+        self._apply_theme_change()
+
+    def _toggle_reading_mode(self, checked: bool):
+        if bool(checked) == self._reading_mode:
+            return
+        self._reading_mode = bool(checked)
+        QSettings("FlowLocal", "Hub").setValue("reading_mode", self._reading_mode)
+        self._apply_theme_change()
+
+    def _set_font_preset(self, preset_key: str):
+        if preset_key not in FONT_PRESETS or preset_key == self._font_preset:
+            return
+        self._font_preset = preset_key
+        QSettings("FlowLocal", "Hub").setValue("font_preset", preset_key)
+        self._apply_typography_change()
+
+    def _set_custom_font_family(self, family: str):
+        clean_fam = (family or "").strip()
+        if not clean_fam:
+            return
+        if self._font_preset == "custom" and self._custom_font_family == clean_fam:
+            return
+        self._font_preset = "custom"
+        self._custom_font_family = clean_fam
+        settings = QSettings("FlowLocal", "Hub")
+        settings.setValue("font_preset", "custom")
+        settings.setValue("custom_font_family", clean_fam)
+        self._apply_typography_change()
+
+    def _set_font_scale(self, scale_pct: int):
+        clamped = max(90, min(120, int(scale_pct or 100)))
+        if clamped == self._font_scale:
+            return
+        self._font_scale = clamped
+        QSettings("FlowLocal", "Hub").setValue("font_scale", clamped)
+        self._apply_typography_change()
+
+    def _sync_editor_typography(self):
+        if hasattr(self, "nk_editor_body") and hasattr(self.nk_editor_body, "set_typography"):
+            resolved_font = _resolve_font_family(
+                self._current_theme,
+                self._font_preset,
+                self._custom_font_family,
+            )
+            self.nk_editor_body.set_typography(resolved_font, self._font_scale)
+
+    def _apply_typography_change(self):
+        self.setUpdatesEnabled(False)
+        self.setStyleSheet(
+            get_hub_qss(
+                self._current_theme,
+                self._reading_mode,
+                font_preset=self._font_preset,
+                custom_font=self._custom_font_family,
+                font_scale=self._font_scale,
+            )
+        )
+        self._sync_editor_typography()
+        if hasattr(self, "top_segment_box"):
+            QTimer.singleShot(0, self.top_segment_box.sync_pill_geometry)
+        if hasattr(self, "flowtype_subbar") and hasattr(self.flowtype_subbar, "sync_pill_geometry"):
+            QTimer.singleShot(0, self.flowtype_subbar.sync_pill_geometry)
+        self.setUpdatesEnabled(True)
+
+    def _apply_theme_change(self):
+        old_pixmap = self.grab() if self.isVisible() else None
+        ThemedPushButton.current_theme = self._current_theme
+        ThemedPushButton.reading_mode = self._reading_mode
+        is_dark = self._active_is_dark()
+        if hasattr(self, "nk_col3_layout"):
+            if self._reading_mode:
+                self.nk_col3_layout.setContentsMargins(84, 22, 84, 20)
+            else:
+                self.nk_col3_layout.setContentsMargins(48, 18, 48, 16)
+        if hasattr(self, "nk_editor_body"):
+            if hasattr(self.nk_editor_body, "set_theme_modes"):
+                self.nk_editor_body.set_theme_modes(is_dark, self._reading_mode)
+            elif hasattr(self.nk_editor_body, "set_dark_mode"):
+                self.nk_editor_body.set_dark_mode(is_dark)
 
         overlay = ThemeRevealOverlay(self, old_pixmap) if old_pixmap is not None else None
         self.setUpdatesEnabled(False)
-        self.setStyleSheet(get_hub_qss(theme_key))
-        self._apply_windows_titlebar_theme(theme_key)
+        self.setStyleSheet(
+            get_hub_qss(
+                self._current_theme,
+                self._reading_mode,
+                font_preset=self._font_preset,
+                custom_font=self._custom_font_family,
+                font_scale=self._font_scale,
+            )
+        )
+        self._sync_editor_typography()
+        self._apply_windows_titlebar_theme(self._current_theme, self._reading_mode)
+        if hasattr(self, "spotify_bar"):
+            self.spotify_bar.set_theme_mode(is_dark)
         if hasattr(self, "flowtype_style_title"):
-            st_col = "#F8FAFC" if theme_key == "obsidian" else "#334155"
+            p = self._active_palette()
+            st_col = p["title"] if is_dark or self._reading_mode else p["card_body"]
             self.flowtype_style_title.setStyleSheet(
                 f"font-size: 12.5px; font-weight: 600; color: {st_col}; background: transparent;"
             )
@@ -2668,7 +8142,14 @@ class FlowLocalHub(QMainWindow):
             self._refresh_whis_page()
         if hasattr(self, "nk_tree"):
             self._refresh_notekeeper()
+        if hasattr(self, "ft_calendar"):
+            self._refresh_flowtime_page()
+        if hasattr(self, "top_segment_box"):
+            QTimer.singleShot(0, self.top_segment_box.sync_pill_geometry)
+        if hasattr(self, "flowtype_subbar") and hasattr(self.flowtype_subbar, "sync_pill_geometry"):
+            QTimer.singleShot(0, self.flowtype_subbar.sync_pill_geometry)
         self.setUpdatesEnabled(True)
+        self.update()
         if overlay is not None:
             overlay.raise_()
 
@@ -2694,11 +8175,15 @@ class FlowLocalHub(QMainWindow):
             self._refresh_dictionary()
         elif idx == 6:
             self._load_mode_prompt(self._current_mode_name)
+        elif idx == 7:
+            self._refresh_flowtime_page()
+            self._periodic_google_calendar_sync()
 
     @staticmethod
     def _make_page(title: str, subtitle: str) -> (QWidget, QVBoxLayout):
         page = QWidget()
         page.setObjectName("Page")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(page)
         layout.setContentsMargins(28, 24, 28, 20)
         layout.setSpacing(14)
@@ -2764,7 +8249,8 @@ class FlowLocalHub(QMainWindow):
 
         s_header = QHBoxLayout()
         s_title = QLabel("Stile di Dettatura")
-        st_col = "#F8FAFC" if getattr(self, "_current_theme", "obsidian") == "obsidian" else "#334155"
+        p_active = self._active_palette()
+        st_col = p_active["title"] if self._active_is_dark() or getattr(self, "_reading_mode", False) else p_active["card_body"]
         s_title.setStyleSheet(f"font-size: 12.5px; font-weight: 600; color: {st_col}; background: transparent;")
         self.flowtype_style_title = s_title
         s_header.addWidget(s_title)
@@ -3172,23 +8658,23 @@ class FlowLocalHub(QMainWindow):
         audio_feedback.preview_voice(key)
 
     def _update_calendar_status_ui(self):
-        """Aggiorna lo stato visivo della connessione a Google Calendar nell'Hub."""
+        """Aggiorna lo stato visivo di FlowTime / Google Calendar nell'Hub (zero chiamate di rete)."""
         if not hasattr(self, "whis_cal_status") or not self.whis_cal_status:
             return
         from core.calendar_sync import calendar_manager
-        if calendar_manager.is_connected():
-            self.whis_cal_status.setText("🟢 Connesso (Pronto a creare e leggere eventi)")
+        if calendar_manager.has_token_file():
+            self.whis_cal_status.setText("🟢 FlowTime + Google Calendar sincronizzati")
             self.whis_cal_status.setStyleSheet("color: #10B981; font-size: 11px; font-weight: 500;")
             if hasattr(self, "whis_cal_btn") and self.whis_cal_btn:
                 self.whis_cal_btn.setText("📅 Google Calendar: Connesso")
         elif calendar_manager.has_credentials_file():
-            self.whis_cal_status.setText("🟡 credentials.json presente — Clicca per autorizzare")
+            self.whis_cal_status.setText("🟡 FlowTime locale attivo · credentials.json pronto")
             self.whis_cal_status.setStyleSheet("color: #F59E0B; font-size: 11px; font-weight: 500;")
             if hasattr(self, "whis_cal_btn") and self.whis_cal_btn:
                 self.whis_cal_btn.setText("📅 Connetti Google Calendar")
         else:
-            self.whis_cal_status.setText("⚪ credentials.json mancante nella cartella principale")
-            self.whis_cal_status.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 400;")
+            self.whis_cal_status.setText("🟢 FlowTime Locale Attivo (Google Sync opzionale)")
+            self.whis_cal_status.setStyleSheet("color: #38BDF8; font-size: 11px; font-weight: 500;")
             if hasattr(self, "whis_cal_btn") and self.whis_cal_btn:
                 self.whis_cal_btn.setText("📅 Connetti Google Calendar")
 
@@ -3219,8 +8705,10 @@ class FlowLocalHub(QMainWindow):
 
     def _on_calendar_auth_finished(self, ok: bool, msg: str):
         self._update_calendar_status_ui()
+        if hasattr(self, "ft_calendar"):
+            self._refresh_flowtime_page()
         if ok:
-            QMessageBox.information(self, "Google Calendar", "✅ Google Calendar connesso con successo!\nOra puoi chiedere a Whis di creare o leggere i tuoi appuntamenti.")
+            QMessageBox.information(self, "Google Calendar", "✅ Google Calendar connesso e sincronizzato con FlowTime!\nWhis continuerà a rispondere istantaneamente dal database locale.")
         else:
             QMessageBox.warning(self, "Google Calendar", f"⚠️ Impossibile completare l'autenticazione:\n{msg}")
 
@@ -3381,14 +8869,15 @@ class FlowLocalHub(QMainWindow):
 
         layout.addLayout(meta_row)
 
-        is_dark = getattr(self, "_current_theme", "obsidian") == "obsidian"
-        q_bg = "rgba(56, 189, 248, 0.08)" if is_dark else "rgba(14, 165, 233, 0.08)"
-        q_color = "#7DD3FC" if is_dark else "#0369A1"
-        resp_color = "#F1F5F9" if is_dark else "#1E293B"
+        p_act = self._active_palette()
+        q_bg = p_act["badge_bg"]
+        q_color = p_act["badge_text"]
+        resp_color = p_act["card_body"]
+        q_radius = p_act["input_radius"]
 
         # Row 2: Domanda Utente
         q_box = QFrame()
-        q_box.setStyleSheet(f"background-color: {q_bg}; border: none; border-radius: 10px; padding: 6px 10px;")
+        q_box.setStyleSheet(f"background-color: {q_bg}; border: none; border-radius: {q_radius}; padding: 6px 10px;")
         q_layout = QVBoxLayout(q_box)
         q_layout.setContentsMargins(6, 4, 6, 4)
         q_lbl = _make_label(f"💬 {user_q}", "CardTitle", wrap=True)
@@ -3451,7 +8940,12 @@ class FlowLocalHub(QMainWindow):
     # -----------------------------------------------------------------
     def _build_flownotes_view_bar(self, store_attr: str) -> QWidget:
         """Barra compatta [ 📄 Quaderno ] [ 🃏 Flashcard ] [ 🕸️ Grafo ] per le viste di FlowNotes."""
-        bar = QWidget()
+        bar = AnimatedSegmentedBox(
+            box_object_name="FlowNotesViewBar",
+            pill_object_name="SubSlidingPill",
+            duration_ms=260,
+        )
+        bar.setStyleSheet("QFrame#FlowNotesViewBar { background: transparent; border: none; }")
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
@@ -3463,7 +8957,7 @@ class FlowLocalHub(QMainWindow):
             ("Flashcard", 2),
             ("Grafo", 3),
         ]):
-            b = QPushButton(lbl)
+            b = ThemedPushButton(lbl)
             b.setObjectName("SubNavBtn")
             b.setCheckable(True)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -3472,12 +8966,14 @@ class FlowLocalHub(QMainWindow):
             grp.addButton(b, idx)
             btn_map[pid] = b
             layout.addWidget(b)
+            bar.register_button(b)
         setattr(self, store_attr, btn_map)
         return bar
 
     def _build_flowstudy_notekeeper_page(self) -> QWidget:
         page = QWidget()
         page.setObjectName("Page")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         main_vbox = QVBoxLayout(page)
         main_vbox.setContentsMargins(10, 8, 10, 10)
         main_vbox.setSpacing(6)
@@ -3528,6 +9024,7 @@ class FlowLocalHub(QMainWindow):
         # ===== COLONNA 1: SIDEBAR UNICA FLOWNOTES (280px, COLLASSABILE) =====
         col1 = QWidget()
         col1.setObjectName("NKCol1")
+        col1.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         col1.setMinimumWidth(280)
         col1.setMaximumWidth(380)
         self.nk_col1 = col1
@@ -3561,12 +9058,6 @@ class FlowLocalHub(QMainWindow):
         self.nk_new_note_btn.setFixedHeight(32)
         self.nk_new_note_btn.clicked.connect(self._on_nk_new_note_clicked)
         actions_row.addWidget(self.nk_new_note_btn, 1)
-
-        self.quick_note_btn = _make_button("⚡ Nota Rapida")
-        self.quick_note_btn.setToolTip("Appunto Rapido")
-        self.quick_note_btn.setFixedHeight(32)
-        self.quick_note_btn.clicked.connect(self._open_quick_note_dialog)
-        actions_row.addWidget(self.quick_note_btn, 1)
         col1_layout.addLayout(actions_row)
 
         # Filtro Profilo compatto + Toggle Vista Card
@@ -3579,6 +9070,7 @@ class FlowLocalHub(QMainWindow):
         profile_row.addWidget(self.nk_profile_combo, 1)
 
         self.nk_card_view_btn = _make_button("☷")
+        self.nk_card_view_btn.setObjectName("NKCollapseBtn")
         self.nk_card_view_btn.setCheckable(True)
         self.nk_card_view_btn.setToolTip("Mostra/Nascondi colonna Vista Card")
         self.nk_card_view_btn.setFixedSize(32, 28)
@@ -3629,6 +9121,7 @@ class FlowLocalHub(QMainWindow):
         # ===== COLONNA 2 OPZIONALE: VISTA CARD (NASCOSTA DI DEFAULT PER DARE 80% ALL'EDITOR) =====
         col2 = QWidget()
         col2.setObjectName("NKCol2")
+        col2.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         col2.setMinimumWidth(240)
         self.nk_col2 = col2
         col2_layout = QVBoxLayout(col2)
@@ -3662,10 +9155,15 @@ class FlowLocalHub(QMainWindow):
         # ===== AREA PRINCIPALE DESTRA: FOGLIO EDITOR NOTION (80% DELLO SCHERMO) =====
         col3 = QWidget()
         col3.setObjectName("NKCol3")
+        col3.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         col3.setMinimumWidth(420)
         self.nk_col3 = col3
         col3_layout = QVBoxLayout(col3)
-        col3_layout.setContentsMargins(48, 18, 48, 16)
+        self.nk_col3_layout = col3_layout
+        if getattr(self, "_reading_mode", False):
+            col3_layout.setContentsMargins(84, 22, 84, 20)
+        else:
+            col3_layout.setContentsMargins(48, 18, 48, 16)
         col3_layout.setSpacing(8)
 
         # Toolbar superiore unica: ripristino sidebar, auto-save, Vista Studio + azioni secondarie
@@ -3821,8 +9319,9 @@ class FlowLocalHub(QMainWindow):
         col3_layout.addWidget(editor_divider)
 
         # Markdown + LaTeX Scientific Editor WYSIWYG stile Notion
-        is_dark = (getattr(self, "_current_theme", "obsidian") == "obsidian")
-        self.nk_editor_body = ScientificNoteEditor(dark_mode=is_dark)
+        is_dark = self._active_is_dark()
+        is_reading = getattr(self, "_reading_mode", False)
+        self.nk_editor_body = ScientificNoteEditor(dark_mode=is_dark, reading_mode=is_reading)
         self.nk_editor_body.setObjectName("NKEditorBody")
         self.nk_editor_body.setPlaceholderText(
             "Scrivi o detta qui in Markdown + LaTeX ($...$), incolla immagini (Ctrl+V) o digita '/' per i comandi..."
@@ -3960,7 +9459,7 @@ class FlowLocalHub(QMainWindow):
         self.nk_tree.blockSignals(True)
         self.nk_tree.clear()
 
-        p = _THEME_PALETTES.get(getattr(self, "_current_theme", "obsidian"), _THEME_PALETTES["obsidian"])
+        p = self._active_palette()
 
         # Sezione rapida in cima: Recenti / Tutte
         recent_item = QTreeWidgetItem([f"🕒 Recenti / Tutte ({len(all_notes)})"])
@@ -4527,15 +10026,6 @@ class FlowLocalHub(QMainWindow):
             self.nav_buttons_by_page[1].setChecked(True)
         self._refresh_notekeeper()
         self._load_note_into_nk_editor(note_id)
-
-    def _open_quick_note_dialog(self):
-        dialog = QuickNoteDialog(self)
-        if dialog.exec():
-            self._refresh_notekeeper()
-            created_id = getattr(dialog, "created_note_id", None)
-            if created_id:
-                self._load_note_into_nk_editor(created_id)
-                self._start_autolinking(created_id, dialog.created_note_title, dialog.created_note_text)
 
     def _filtered_notes(self) -> List[Dict]:
         return db.get_notes()
@@ -5485,7 +10975,7 @@ class FlowLocalHub(QMainWindow):
         pill_row.addStretch(1)
         layout.addLayout(pill_row)
 
-        self.dict_stack = QStackedWidget()
+        self.dict_stack = SlidingStackedWidget(duration_ms=260)
 
         # --- Sub-tab 0: Dizionario ---
         dict_panel = QWidget()
@@ -5735,6 +11225,839 @@ class FlowLocalHub(QMainWindow):
             conn.commit()
 
         self.prompt_status.setText(f"Salvato · {datetime.now().strftime('%H:%M:%S')}")
+
+    # -----------------------------------------------------------------
+    # IMPOSTAZIONI & FLOWTIME (CALENDARIO LOCALE + GOOGLE SYNC + NOTE)
+    # -----------------------------------------------------------------
+    def _startup_google_calendar_sync(self):
+        try:
+            from core.calendar_sync import calendar_manager
+            if calendar_manager.has_token_file():
+                calendar_manager.sync_in_background(force=True)
+        except Exception:
+            pass
+
+    def _periodic_google_calendar_sync(self):
+        try:
+            from core.calendar_sync import calendar_manager
+            if calendar_manager.has_token_file():
+                calendar_manager.sync_in_background(force=False)
+        except Exception:
+            pass
+
+    def _on_open_settings_clicked(self):
+        dlg = HubSettingsDialog(self)
+        dlg.exec()
+
+    def _open_note_from_flowtime(self, note_id: int):
+        """Apre direttamente in FlowNotes la nota cliccata da FlowTime."""
+        if not note_id:
+            return
+        self._nk_current_filter_subject = None
+        self._nk_current_filter_topic = None
+        if hasattr(self, "nk_profile_combo"):
+            self.nk_profile_combo.blockSignals(True)
+            self.nk_profile_combo.setCurrentText("Tutti i profili")
+            self.nk_profile_combo.blockSignals(False)
+        if hasattr(self, "nk_search_input"):
+            self.nk_search_input.blockSignals(True)
+            self.nk_search_input.clear()
+            self.nk_search_input.blockSignals(False)
+        self._nk_selected_note_id = note_id
+        self._on_nav_clicked(1)
+        self._load_note_into_nk_editor(note_id)
+
+    def _build_flowtime_page(self) -> QWidget:
+        self._ft_form_item_type: str = "event"
+        self._ft_form_color: str = FLOWTIME_COLOR_PALETTE[0][0]
+        self._ft_form_linked_note_ids: List[int] = []
+        self._ft_color_buttons: Dict[str, QPushButton] = {}
+
+        page = QWidget()
+        page.setObjectName("Page")
+        page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 14, 24, 14)
+        layout.setSpacing(10)
+
+        # Barra superiore compatta su riga unica: Titolo + Stretch + Ricerca + Pill Giorno/Settimana + Oggi (fuori da QScrollArea)
+        top_ctrl = QHBoxLayout()
+        top_ctrl.setContentsMargins(0, 0, 0, 0)
+        top_ctrl.setSpacing(8)
+
+        self.ft_page_title_lbl = _make_label("🗓️ FlowTime", "PageTitle")
+        top_ctrl.addWidget(self.ft_page_title_lbl)
+        top_ctrl.addStretch(1)
+
+        self.ft_search_input = QLineEdit()
+        self.ft_search_input.setPlaceholderText("🔍 Cerca eventi, To-Do o aule…")
+        self.ft_search_input.setFixedWidth(260)
+        self.ft_search_input.setMinimumHeight(36)
+        self.ft_search_input.textChanged.connect(self._on_ft_search_changed)
+        top_ctrl.addWidget(self.ft_search_input)
+
+        # Selettore Vista Giorno / Vista Settimana
+        self.ft_view_group = QButtonGroup(self)
+        self.ft_view_group.setExclusive(True)
+        self.ft_view_day_btn = QPushButton("📅 Giorno")
+        self.ft_view_day_btn.setObjectName("FilterPill")
+        self.ft_view_day_btn.setCheckable(True)
+        self.ft_view_day_btn.setChecked(True)
+        self.ft_view_day_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.ft_view_week_btn = QPushButton("🗓️ Settimana")
+        self.ft_view_week_btn.setObjectName("FilterPill")
+        self.ft_view_week_btn.setCheckable(True)
+        self.ft_view_week_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.ft_view_group.addButton(self.ft_view_day_btn, 0)
+        self.ft_view_group.addButton(self.ft_view_week_btn, 1)
+        self.ft_view_group.idClicked.connect(self._on_ft_view_mode_changed)
+        top_ctrl.addWidget(self.ft_view_day_btn)
+        top_ctrl.addWidget(self.ft_view_week_btn)
+
+        ft_today_btn = _make_button("📅 Oggi")
+        ft_today_btn.clicked.connect(self._on_ft_today_clicked)
+        top_ctrl.addWidget(ft_today_btn)
+        layout.addLayout(top_ctrl)
+
+        # Corpo principale: Calendario/Card Modifica a sinistra + Stack (Giorno | Settimana | Ricerca) + Sidebar To-Do a destra
+        body = QHBoxLayout()
+        body.setSpacing(12)
+
+        # --- COLONNA SINISTRA: Calendario mensile custom + Card Creazione/Modifica ---
+        left_col = QWidget()
+        left_col.setFixedWidth(308)
+        left_layout = QVBoxLayout(left_col)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
+        self.ft_calendar = FlowTimeCalendarWidget()
+        self.ft_calendar.setMinimumHeight(206)
+        self.ft_calendar.setMaximumHeight(224)
+        self.ft_calendar.selectionChanged.connect(self._on_ft_date_selected)
+        self.ft_calendar.currentPageChanged.connect(self._on_ft_month_changed)
+        left_layout.addWidget(self.ft_calendar)
+
+        # Form rapido creazione/modifica evento o To-Do (sempre fuori QScrollArea)
+        form_card = QFrame()
+        form_card.setObjectName("Card")
+        fc_layout = QVBoxLayout(form_card)
+        fc_layout.setContentsMargins(10, 9, 10, 9)
+        fc_layout.setSpacing(6)
+
+        hdr_form = QHBoxLayout()
+        hdr_form.setSpacing(6)
+        self.ft_form_title_lbl = _make_label("➕ Nuovo Impegno", "CardTitle")
+        hdr_form.addWidget(self.ft_form_title_lbl, 1)
+        self.ft_form_sync_lbl = _make_label("", "CardMeta")
+        hdr_form.addWidget(self.ft_form_sync_lbl)
+        fc_layout.addLayout(hdr_form)
+
+        # Switch Evento / To-Do senza orario
+        type_row = QHBoxLayout()
+        type_row.setSpacing(6)
+        self.ft_type_group = QButtonGroup(self)
+        self.ft_type_group.setExclusive(True)
+        self.ft_type_event_btn = QPushButton("📅 Evento")
+        self.ft_type_event_btn.setObjectName("FTSegmentBtn")
+        self.ft_type_event_btn.setCheckable(True)
+        self.ft_type_event_btn.setChecked(True)
+        self.ft_type_event_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.ft_type_todo_btn = QPushButton("☑️ To-Do")
+        self.ft_type_todo_btn.setObjectName("FTSegmentBtn")
+        self.ft_type_todo_btn.setCheckable(True)
+        self.ft_type_todo_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.ft_type_group.addButton(self.ft_type_event_btn, 0)
+        self.ft_type_group.addButton(self.ft_type_todo_btn, 1)
+        self.ft_type_event_btn.toggled.connect(
+            lambda checked: self._set_ft_form_item_type("event" if checked else "todo")
+        )
+        type_row.addWidget(self.ft_type_event_btn, 1)
+        type_row.addWidget(self.ft_type_todo_btn, 1)
+        fc_layout.addLayout(type_row)
+
+        self.ft_title_input = QLineEdit()
+        self.ft_title_input.setPlaceholderText("Titolo evento / lezione / esame…")
+        self.ft_title_input.setMinimumHeight(36)
+        self.ft_title_input.returnPressed.connect(self._on_ft_save_event)
+        fc_layout.addWidget(self.ft_title_input)
+
+        # Blocco orario + luogo (nascosto in modalità To-Do)
+        self.ft_time_row_widget = QWidget()
+        self.ft_time_row_widget.setStyleSheet("background: transparent;")
+        tw_layout = QVBoxLayout(self.ft_time_row_widget)
+        tw_layout.setContentsMargins(0, 0, 0, 0)
+        tw_layout.setSpacing(6)
+
+        time_row = QHBoxLayout()
+        time_row.setSpacing(6)
+        self.ft_start_input = QLineEdit("09:00")
+        self.ft_start_input.setPlaceholderText("HH:MM")
+        self.ft_start_input.setMinimumHeight(36)
+        self.ft_start_input.setMaximumWidth(68)
+        time_row.addWidget(self.ft_start_input)
+
+        self.ft_duration_combo = QComboBox()
+        self.ft_duration_combo.setMinimumHeight(36)
+        for lbl, mins in [("30 min", 30), ("1 ora", 60), ("1h 30m", 90), ("2 ore", 120), ("3 ore", 180)]:
+            self.ft_duration_combo.addItem(lbl, mins)
+        self.ft_duration_combo.setCurrentIndex(1)
+        time_row.addWidget(self.ft_duration_combo, 1)
+
+        self.ft_allday_chk = QCheckBox("Giorno")
+        self.ft_allday_chk.setToolTip("Evento che dura tutto il giorno")
+        self.ft_allday_chk.toggled.connect(self._on_ft_allday_toggled)
+        time_row.addWidget(self.ft_allday_chk)
+        tw_layout.addLayout(time_row)
+
+        self.ft_location_input = QLineEdit()
+        self.ft_location_input.setPlaceholderText("Luogo / Aula (opzionale)")
+        self.ft_location_input.setMinimumHeight(36)
+        tw_layout.addWidget(self.ft_location_input)
+        fc_layout.addWidget(self.ft_time_row_widget)
+
+        meta_row = QHBoxLayout()
+        meta_row.setSpacing(6)
+        self.ft_category_combo = QComboBox()
+        self.ft_category_combo.setMinimumHeight(36)
+        for cat in ("Personale", "Università", "Esame", "Studio", "Lavoro"):
+            self.ft_category_combo.addItem(cat)
+        meta_row.addWidget(self.ft_category_combo)
+
+        self.ft_subject_input = QLineEdit()
+        self.ft_subject_input.setPlaceholderText("Materia (opz.)")
+        self.ft_subject_input.setMinimumHeight(36)
+        meta_row.addWidget(self.ft_subject_input, 1)
+        fc_layout.addLayout(meta_row)
+
+        # Colori + Ripetizione
+        style_row = QHBoxLayout()
+        style_row.setSpacing(5)
+        for hex_col, cname in FLOWTIME_COLOR_PALETTE:
+            cbtn = QPushButton("")
+            cbtn.setObjectName("FTColorDot")
+            cbtn.setToolTip(f"Colore: {cname}")
+            cbtn.setCursor(Qt.CursorShape.PointingHandCursor)
+            cbtn.clicked.connect(lambda _c=False, hc=hex_col: self._set_ft_form_color(hc))
+            self._ft_color_buttons[hex_col] = cbtn
+            style_row.addWidget(cbtn)
+
+        self.ft_recurrence_combo = QComboBox()
+        self.ft_recurrence_combo.setMinimumHeight(30)
+        for lbl, val in [("Non si ripete", "none"), ("Ogni giorno", "daily"), ("Ogni sett.", "weekly"), ("Ogni mese", "monthly")]:
+            self.ft_recurrence_combo.addItem(lbl, val)
+        style_row.addWidget(self.ft_recurrence_combo, 1)
+        fc_layout.addLayout(style_row)
+        self._refresh_ft_form_color_buttons()
+
+        # Note collegate all'impegno selezionato + bottone HUD ricerca note
+        self.ft_form_notes_box = QWidget()
+        self.ft_form_notes_box.setStyleSheet("background: transparent;")
+        self.ft_form_notes_layout = QVBoxLayout(self.ft_form_notes_box)
+        self.ft_form_notes_layout.setContentsMargins(0, 0, 0, 0)
+        self.ft_form_notes_layout.setSpacing(3)
+        self.ft_form_notes_box.setVisible(False)
+        fc_layout.addWidget(self.ft_form_notes_box)
+
+        self.ft_link_note_btn = _make_button("🔗 Collega Nota...")
+        self.ft_link_note_btn.setStyleSheet("min-height: 28px; max-height: 28px; padding: 0 10px; font-size: 11.5px;")
+        self.ft_link_note_btn.setToolTip("Apri l'HUD di ricerca note per collegare appunti o sbobine a questo impegno")
+        self.ft_link_note_btn.clicked.connect(self._on_ft_form_link_note_clicked)
+        fc_layout.addWidget(self.ft_link_note_btn)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        self.ft_save_btn = _make_button("💾 Salva in FlowTime", "primary")
+        self.ft_save_btn.clicked.connect(self._on_ft_save_event)
+        btn_row.addWidget(self.ft_save_btn, 1)
+
+        self.ft_delete_btn = _make_button("🗑️", "danger")
+        self.ft_delete_btn.setToolTip("Elimina impegno selezionato")
+        self.ft_delete_btn.clicked.connect(self._on_ft_delete_active_event)
+        self.ft_delete_btn.setVisible(False)
+        btn_row.addWidget(self.ft_delete_btn)
+
+        self.ft_cancel_edit_btn = _make_button("Annulla")
+        self.ft_cancel_edit_btn.clicked.connect(self._reset_ft_form)
+        self.ft_cancel_edit_btn.setVisible(False)
+        btn_row.addWidget(self.ft_cancel_edit_btn)
+        fc_layout.addLayout(btn_row)
+
+        left_layout.addWidget(form_card)
+        left_layout.addStretch(1)
+        body.addWidget(left_col)
+
+        # --- STACK DESTRO A PIENA LARGHEZZA: 0 = Giorno Timeline | 1 = Settimana Timeline | 2 = Ricerca ---
+        self.ft_main_stack = SlidingStackedWidget(duration_ms=260)
+
+        self.ft_day_timeline = FlowTimeDayTimeline(self)
+        self.ft_day_timeline.event_clicked.connect(self._on_ft_edit_event)
+        self.ft_day_timeline.note_clicked.connect(self._open_note_from_flowtime)
+        self.ft_day_timeline.empty_slot_clicked.connect(self._on_ft_empty_slot_clicked)
+        self.ft_day_timeline.todo_toggled.connect(self._on_ft_todo_toggled)
+        self.ft_main_stack.addWidget(self.ft_day_timeline)  # Indice 0: Vista Giorno
+
+        self.ft_week_view = FlowTimeWeekView(self)
+        self.ft_week_view.date_selected.connect(self._on_ft_week_date_selected)
+        self.ft_week_view.open_day_requested.connect(self._on_ft_open_day_from_week)
+        self.ft_week_view.event_clicked.connect(self._on_ft_edit_event)
+        self.ft_week_view.note_clicked.connect(self._open_note_from_flowtime)
+        self.ft_week_view.empty_slot_clicked.connect(self._on_ft_empty_slot_clicked)
+        self.ft_week_view.todo_toggled.connect(self._on_ft_todo_toggled)
+        self.ft_week_view.prev_week_clicked.connect(lambda: self._shift_ft_selected_days(-7))
+        self.ft_week_view.next_week_clicked.connect(lambda: self._shift_ft_selected_days(7))
+        self.ft_main_stack.addWidget(self.ft_week_view)  # Indice 1: Vista Settimana
+
+        # Pagina 2: Risultati ricerca FlowTime
+        search_page = QFrame()
+        search_page.setObjectName("Card")
+        sp_layout = QVBoxLayout(search_page)
+        sp_layout.setContentsMargins(12, 10, 12, 10)
+        sp_layout.setSpacing(8)
+        sp_hdr = QHBoxLayout()
+        self.ft_search_header_lbl = _make_label("🔍 Risultati Ricerca", "CardTitle")
+        sp_hdr.addWidget(self.ft_search_header_lbl, 1)
+        clear_search_btn = _make_button("✕ Chiudi ricerca")
+        clear_search_btn.clicked.connect(lambda: self.ft_search_input.clear())
+        sp_hdr.addWidget(clear_search_btn)
+        sp_layout.addLayout(sp_hdr)
+        self.ft_search_results_list = ScrollList("Nessun evento o impegno trovato.")
+        sp_layout.addWidget(self.ft_search_results_list, 1)
+        self.ft_main_stack.addWidget(search_page)  # Indice 2: Ricerca
+
+        body.addWidget(self.ft_main_stack, 1)
+
+        # --- COLONNA DESTRA: Pannello Impegni (To-Do) & Note raggruppati per giorno ---
+        self.ft_todo_sidebar = FlowTimeTodoSidebar(self)
+        self.ft_todo_sidebar.date_selected.connect(self._on_ft_week_date_selected)
+        self.ft_todo_sidebar.event_clicked.connect(self._on_ft_edit_event)
+        self.ft_todo_sidebar.note_clicked.connect(self._open_note_from_flowtime)
+        self.ft_todo_sidebar.todo_toggled.connect(self._on_ft_todo_toggled)
+        self.ft_todo_sidebar.add_todo_requested.connect(self._on_ft_quick_add_todo)
+        body.addWidget(self.ft_todo_sidebar)
+
+        layout.addLayout(body, 1)
+        return page
+
+    def _selected_ft_date_str(self) -> str:
+        if hasattr(self, "ft_calendar"):
+            return self.ft_calendar.selectedDate().toString("yyyy-MM-dd")
+        return dt_date.today().isoformat()
+
+    def _set_ft_form_item_type(self, mode: str):
+        self._ft_form_item_type = "todo" if mode == "todo" else "event"
+        is_todo = self._ft_form_item_type == "todo"
+        if hasattr(self, "ft_time_row_widget"):
+            self.ft_time_row_widget.setVisible(not is_todo)
+        if hasattr(self, "ft_title_input"):
+            self.ft_title_input.setPlaceholderText(
+                "Impegno To-Do (es. Innaffiare le piante)…"
+                if is_todo
+                else "Titolo evento / lezione / esame…"
+            )
+
+    def _set_ft_form_color(self, hex_col: str):
+        self._ft_form_color = hex_col or FLOWTIME_COLOR_PALETTE[0][0]
+        self._refresh_ft_form_color_buttons()
+
+    def _refresh_ft_form_color_buttons(self):
+        for hc, btn in getattr(self, "_ft_color_buttons", {}).items():
+            border = "2px solid #FFFFFF" if hc == self._ft_form_color else "1px solid rgba(148,163,184,0.35)"
+            btn.setStyleSheet(f"background-color: {hc}; border: {border}; border-radius: 10px;")
+
+    def _refresh_ft_form_notes_ui(self):
+        if not hasattr(self, "ft_form_notes_layout"):
+            return
+        while self.ft_form_notes_layout.count():
+            item = self.ft_form_notes_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.deleteLater()
+            elif item.layout() is not None:
+                sub = item.layout()
+                while sub.count():
+                    si = sub.takeAt(0)
+                    if si.widget():
+                        si.widget().hide()
+                        si.widget().deleteLater()
+
+        note_map = {int(n["id"]): n for n in db.get_all_study_notes()}
+        valid_ids = [nid for nid in self._ft_form_linked_note_ids if nid in note_map]
+        self._ft_form_linked_note_ids = valid_ids
+
+        if not valid_ids:
+            self.ft_form_notes_box.setVisible(False)
+            self.ft_link_note_btn.setText("🔗 Collega Nota...")
+            return
+
+        self.ft_form_notes_box.setVisible(True)
+        self.ft_link_note_btn.setText(f"🔗 Gestisci Note ({len(valid_ids)})...")
+        for nid in valid_ids[:4]:
+            note = note_map[nid]
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            open_btn = QPushButton(f"📓 {(note.get('title') or 'Nota')[:26]}")
+            open_btn.setObjectName("FTNotePillBtn")
+            open_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            open_btn.setToolTip(f"Apri '{note.get('title') or 'Nota'}' in FlowNotes")
+            open_btn.clicked.connect(lambda _c=False, target_id=nid: self._open_note_from_flowtime(target_id))
+            row.addWidget(open_btn, 1)
+
+            rm_btn = QPushButton("×")
+            rm_btn.setStyleSheet("min-height: 22px; max-height: 22px; min-width: 22px; max-width: 22px; padding: 0px; font-size: 12px;")
+            rm_btn.setToolTip("Scollega questa nota")
+            rm_btn.clicked.connect(lambda _c=False, target_id=nid: self._on_ft_form_unlink_note(target_id))
+            row.addWidget(rm_btn)
+            self.ft_form_notes_layout.addLayout(row)
+
+    def _on_ft_form_unlink_note(self, note_id: int):
+        self._ft_form_linked_note_ids = [x for x in self._ft_form_linked_note_ids if x != note_id]
+        if self._ft_editing_event_id is not None:
+            db.unlink_note_from_event(self._ft_editing_event_id, note_id)
+        self._refresh_ft_form_notes_ui()
+        self._refresh_flowtime_lists()
+
+    def _on_ft_form_link_note_clicked(self):
+        ev_title = self.ft_title_input.text().strip() or (
+            "Modifica Impegno" if self._ft_editing_event_id else "Nuovo Impegno"
+        )
+        dlg = LinkEventNoteDialog(
+            self._ft_editing_event_id,
+            ev_title,
+            preselected_ids=self._ft_form_linked_note_ids,
+            parent=self,
+        )
+        dlg.open_note_requested.connect(self._open_note_from_flowtime)
+        dlg.exec()
+        self._ft_form_linked_note_ids = list(dlg.selected_note_ids)
+        self._refresh_ft_form_notes_ui()
+        self._refresh_flowtime_lists()
+
+    def _on_ft_allday_toggled(self, checked: bool):
+        if hasattr(self, "ft_start_input"):
+            self.ft_start_input.setEnabled(not checked)
+        if hasattr(self, "ft_duration_combo"):
+            self.ft_duration_combo.setEnabled(not checked)
+
+    def _on_ft_view_mode_changed(self, mode_idx: int):
+        if hasattr(self, "ft_search_input") and self.ft_search_input.text().strip():
+            self.ft_search_input.blockSignals(True)
+            self.ft_search_input.clear()
+            self.ft_search_input.blockSignals(False)
+        if hasattr(self, "ft_main_stack"):
+            self.ft_main_stack.setCurrentIndex(1 if mode_idx == 1 else 0)
+            if mode_idx == 0 and hasattr(self, "ft_day_timeline"):
+                QTimer.singleShot(50, self.ft_day_timeline.scroll_to_focus)
+            elif mode_idx == 1 and hasattr(self, "ft_week_view"):
+                QTimer.singleShot(50, self.ft_week_view.scroll_to_focus)
+        self._refresh_flowtime_lists()
+
+    def _on_ft_search_changed(self):
+        q = self.ft_search_input.text().strip() if hasattr(self, "ft_search_input") else ""
+        if hasattr(self, "ft_main_stack"):
+            if q:
+                self.ft_main_stack.setCurrentIndex(2)
+            else:
+                self.ft_main_stack.setCurrentIndex(1 if self.ft_view_week_btn.isChecked() else 0)
+        self._refresh_flowtime_lists()
+
+    def _on_ft_week_date_selected(self, date_str: str):
+        qd = QDate.fromString(date_str, "yyyy-MM-dd")
+        if qd.isValid() and hasattr(self, "ft_calendar"):
+            self.ft_calendar.setSelectedDate(qd)
+
+    def _on_ft_open_day_from_week(self, date_str: str):
+        self._on_ft_week_date_selected(date_str)
+        if hasattr(self, "ft_view_day_btn"):
+            self.ft_view_day_btn.setChecked(True)
+        self._on_ft_view_mode_changed(0)
+
+    def _shift_ft_selected_days(self, delta_days: int):
+        if hasattr(self, "ft_calendar"):
+            new_qdate = self.ft_calendar.selectedDate().addDays(delta_days)
+            self.ft_calendar.setSelectedDate(new_qdate)
+
+    def _on_ft_today_clicked(self):
+        if hasattr(self, "ft_search_input") and self.ft_search_input.text().strip():
+            self.ft_search_input.blockSignals(True)
+            self.ft_search_input.clear()
+            self.ft_search_input.blockSignals(False)
+            self.ft_main_stack.setCurrentIndex(1 if self.ft_view_week_btn.isChecked() else 0)
+        if hasattr(self, "ft_calendar"):
+            self.ft_calendar.setSelectedDate(QDate.currentDate())
+            self._refresh_flowtime_page()
+
+    def _on_ft_date_selected(self):
+        self._refresh_flowtime_lists()
+        if hasattr(self, "ft_main_stack"):
+            if self.ft_main_stack.currentIndex() == 0 and hasattr(self, "ft_day_timeline"):
+                QTimer.singleShot(40, self.ft_day_timeline.scroll_to_focus)
+            elif self.ft_main_stack.currentIndex() == 1 and hasattr(self, "ft_week_view"):
+                QTimer.singleShot(40, self.ft_week_view.scroll_to_focus)
+
+    def _on_ft_month_changed(self, year: int, month: int):
+        self._update_ft_calendar_highlights(year, month)
+
+    def _on_ft_empty_slot_clicked(self, date_str: str, hhmm: str):
+        qd = QDate.fromString(date_str, "yyyy-MM-dd")
+        if qd.isValid() and hasattr(self, "ft_calendar") and qd != self.ft_calendar.selectedDate():
+            self.ft_calendar.setSelectedDate(qd)
+        dlg = TimelineQuickAddDialog(date_str, hhmm, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._refresh_flowtime_page()
+
+    def _on_ft_quick_add_todo(self, date_str: str):
+        qd = QDate.fromString(date_str, "yyyy-MM-dd")
+        if qd.isValid() and hasattr(self, "ft_calendar") and qd != self.ft_calendar.selectedDate():
+            self.ft_calendar.setSelectedDate(qd)
+        dlg = TimelineQuickAddDialog(date_str, "09:00", parent=self)
+        dlg.todo_mode_btn.setChecked(True)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._refresh_flowtime_page()
+
+    def _on_ft_todo_toggled(self, event_id: int):
+        from core.calendar_sync import calendar_manager
+        calendar_manager.toggle_todo(event_id)
+        self._refresh_flowtime_page()
+
+    def _refresh_flowtime_page(self):
+        if not hasattr(self, "ft_calendar"):
+            return
+        sel_date = self.ft_calendar.selectedDate()
+        self._update_ft_calendar_highlights(sel_date.year(), sel_date.month())
+        self._refresh_flowtime_lists()
+        if hasattr(self, "ft_main_stack"):
+            if self.ft_main_stack.currentIndex() == 0 and hasattr(self, "ft_day_timeline"):
+                QTimer.singleShot(70, self.ft_day_timeline.scroll_to_focus)
+            elif self.ft_main_stack.currentIndex() == 1 and hasattr(self, "ft_week_view"):
+                QTimer.singleShot(70, self.ft_week_view.scroll_to_focus)
+
+    def _update_ft_calendar_highlights(self, year: int, month: int):
+        if not hasattr(self, "ft_calendar"):
+            return
+        activity = db.get_dates_with_activity(year, month)
+        self.ft_calendar.set_activity_data(activity, self._active_is_dark(), self._reading_mode)
+
+    def _refresh_flowtime_lists(self):
+        if not hasattr(self, "ft_day_timeline"):
+            return
+        from core.calendar_sync import calendar_manager, ITALIAN_WEEKDAYS
+
+        date_str = self._selected_ft_date_str()
+        search_q = self.ft_search_input.text().strip() if hasattr(self, "ft_search_input") else ""
+        day_events = calendar_manager.get_upcoming_events(days=1, target_date=date_str)
+
+        try:
+            d_obj = dt_date.fromisoformat(date_str)
+            months_full = [
+                "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+                "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"
+            ]
+            day_title = f"{ITALIAN_WEEKDAYS[d_obj.weekday()]} {d_obj.day} {months_full[d_obj.month - 1]} {d_obj.year}"
+        except Exception:
+            d_obj = dt_date.today()
+            day_title = date_str
+
+        day_notes = db.get_notes_for_date(date_str)
+        notes_by_event: Dict[int, List[Dict[str, Any]]] = {}
+        for ev in day_events:
+            eid = int(ev.get("local_id") or ev.get("id"))
+            notes_by_event[eid] = ev.get("linked_notes") or db.get_notes_for_event(eid)
+
+        todo_cnt = sum(1 for e in day_events if e.get("item_type") == "todo")
+        ev_cnt = len(day_events) - todo_cnt
+        self.ft_day_timeline.day_title_lbl.setText(day_title)
+        self.ft_day_timeline.day_stats_lbl.setText(
+            f"{ev_cnt} event{'o' if ev_cnt == 1 else 'i'} · {todo_cnt} To-Do · {len(day_notes)} not{'a' if len(day_notes) == 1 else 'e'}"
+        )
+        self.ft_day_timeline.set_day_data(
+            date_str=date_str,
+            events=day_events,
+            day_notes=day_notes,
+            notes_by_event=notes_by_event,
+            is_dark=self._active_is_dark(),
+            reading_mode=self._reading_mode,
+            selected_event_id=self._ft_editing_event_id,
+        )
+
+        # Aggiorna Vista Settimanale a 7 colonne orarie (Lun–Dom) e Sidebar destra Impegni (To-Do) & Note
+        monday = d_obj - timedelta(days=d_obj.weekday())
+        sunday = monday + timedelta(days=6)
+        week_rows = db.get_calendar_events(start_date=monday.isoformat(), end_date=sunday.isoformat())
+        week_events_by_date: Dict[str, List[Dict[str, Any]]] = {}
+        for r in week_rows:
+            ev_fmt = calendar_manager._format_db_event(r)
+            week_events_by_date.setdefault(ev_fmt["event_date"], []).append(ev_fmt)
+        week_events_by_date.setdefault(date_str, day_events)
+        week_notes_by_date: Dict[str, List[Dict[str, Any]]] = {}
+        for offset in range(7):
+            ds = (monday + timedelta(days=offset)).isoformat()
+            week_notes_by_date[ds] = db.get_notes_for_date(ds)
+        week_notes_by_date.setdefault(date_str, day_notes)
+        week_notes_by_event: Dict[int, List[Dict[str, Any]]] = dict(notes_by_event)
+        for ev_list in week_events_by_date.values():
+            for ev in ev_list:
+                if ev.get("item_type") == "todo" or ev.get("is_all_day"):
+                    eid = int(ev.get("local_id") or ev.get("id"))
+                    if eid not in week_notes_by_event:
+                        week_notes_by_event[eid] = ev.get("linked_notes") or db.get_notes_for_event(eid)
+
+        if hasattr(self, "ft_week_view"):
+            self.ft_week_view.set_week_data(
+                date_str,
+                week_events_by_date,
+                week_notes_by_date,
+                is_dark=self._active_is_dark(),
+                reading_mode=self._reading_mode,
+                selected_event_id=self._ft_editing_event_id,
+            )
+
+        if hasattr(self, "ft_todo_sidebar"):
+            self.ft_todo_sidebar.set_sidebar_data(
+                date_str,
+                week_events_by_date,
+                week_notes_by_date,
+                week_notes_by_event,
+            )
+
+        # Popola pagina ricerca se attiva
+        if search_q and hasattr(self, "ft_search_results_list"):
+            raw_rows = db.search_calendar_events(query=search_q, limit=60)
+            results = [calendar_manager._format_db_event(r) for r in raw_rows]
+            self.ft_search_header_lbl.setText(f"🔍 Risultati ricerca: \"{search_q}\" ({len(results)})")
+            self.ft_search_results_list.clear()
+            if not results:
+                self.ft_search_results_list.show_empty(f"Nessun evento o impegno trovato per '{search_q}'.")
+            else:
+                for ev in results:
+                    self.ft_search_results_list.add_card(self._make_ft_search_card(ev))
+
+    def _make_ft_search_card(self, ev: Dict[str, Any]) -> QFrame:
+        card = QFrame()
+        card.setObjectName("FTSearchResultCard")
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 9, 12, 9)
+        layout.setSpacing(5)
+
+        ev_id = int(ev.get("local_id") or ev.get("id"))
+        is_todo = ev.get("item_type") == "todo"
+        top = QHBoxLayout()
+        top.setSpacing(6)
+        time_label = f"{ev['date']} · ☑️ To-Do" if is_todo else f"{ev['date']} · {ev['time']}"
+        top.addWidget(_make_label(time_label, "FTTimePill"))
+        top.addWidget(_make_label(ev.get("category") or "Personale", "BadgeMuted"))
+        if ev.get("subject"):
+            top.addWidget(_make_label(ev["subject"], "Badge"))
+        top.addStretch(1)
+
+        if is_todo:
+            done_btn = _make_button("✅ Fatto" if ev.get("is_completed") else "☐ Completa")
+            done_btn.setStyleSheet("min-height: 24px; max-height: 24px; padding: 0 8px; font-size: 11px;")
+            done_btn.clicked.connect(lambda _c=False, eid=ev_id: self._on_ft_todo_toggled(eid))
+            top.addWidget(done_btn)
+
+        open_btn = _make_button("✏️ Modifica & Vai", "primary")
+        open_btn.setStyleSheet("min-height: 24px; max-height: 24px; padding: 0 10px; font-size: 11px;")
+        open_btn.clicked.connect(lambda _c=False, e=ev: self._on_ft_open_search_result(e))
+        top.addWidget(open_btn)
+        layout.addLayout(top)
+
+        t_lbl = _make_label(ev.get("summary") or "(Senza titolo)", "CardTitle", wrap=True)
+        layout.addWidget(t_lbl)
+        if ev.get("location"):
+            layout.addWidget(_make_label(f"📍 {ev['location']}", "CardMeta", wrap=True))
+        return card
+
+    def _on_ft_open_search_result(self, ev: Dict[str, Any]):
+        if hasattr(self, "ft_search_input"):
+            self.ft_search_input.blockSignals(True)
+            self.ft_search_input.clear()
+            self.ft_search_input.blockSignals(False)
+        if hasattr(self, "ft_view_day_btn"):
+            self.ft_view_day_btn.setChecked(True)
+        if hasattr(self, "ft_main_stack"):
+            self.ft_main_stack.setCurrentIndex(0)
+        self._on_ft_edit_event(ev)
+
+    def _reset_ft_form(self):
+        self._ft_editing_event_id = None
+        self._ft_form_linked_note_ids = []
+        self.ft_form_title_lbl.setText("➕ Nuovo Impegno")
+        self.ft_form_sync_lbl.setText("")
+        self.ft_save_btn.setText("💾 Salva in FlowTime")
+        self.ft_delete_btn.setVisible(False)
+        self.ft_cancel_edit_btn.setVisible(False)
+        self.ft_type_event_btn.setChecked(True)
+        self._set_ft_form_item_type("event")
+        self.ft_title_input.clear()
+        self.ft_start_input.setText("09:00")
+        self.ft_duration_combo.setCurrentIndex(1)
+        self.ft_allday_chk.setChecked(False)
+        self.ft_category_combo.setCurrentIndex(0)
+        self.ft_subject_input.clear()
+        self.ft_location_input.clear()
+        self.ft_recurrence_combo.setCurrentIndex(0)
+        self._set_ft_form_color(FLOWTIME_COLOR_PALETTE[0][0])
+        self._refresh_ft_form_notes_ui()
+        self._refresh_flowtime_lists()
+
+    def _on_ft_edit_event(self, ev: Dict[str, Any]):
+        ev_date = (ev.get("event_date") or "").strip()
+        if ev_date and hasattr(self, "ft_calendar"):
+            qd = QDate.fromString(ev_date, "yyyy-MM-dd")
+            if qd.isValid() and qd != self.ft_calendar.selectedDate():
+                self.ft_calendar.setSelectedDate(qd)
+        ev_id = int(ev.get("local_id") or ev.get("id"))
+        self._ft_editing_event_id = ev_id
+        is_todo = ev.get("item_type") == "todo"
+        self.ft_form_title_lbl.setText("✏️ Modifica To-Do" if is_todo else "✏️ Modifica Evento")
+        sync_st = ev.get("sync_status") or "local_only"
+        self.ft_form_sync_lbl.setText("☁️ Google" if sync_st == "synced" else "💻 Locale")
+        self.ft_save_btn.setText("💾 Aggiorna")
+        self.ft_delete_btn.setVisible(True)
+        self.ft_cancel_edit_btn.setVisible(True)
+
+        if is_todo:
+            self.ft_type_todo_btn.setChecked(True)
+            self._set_ft_form_item_type("todo")
+        else:
+            self.ft_type_event_btn.setChecked(True)
+            self._set_ft_form_item_type("event")
+
+        self.ft_title_input.setText(ev.get("summary") or "")
+        is_all = bool(ev.get("is_all_day"))
+        self.ft_allday_chk.setChecked(is_all)
+        self.ft_start_input.setText(ev.get("start_time") or "09:00")
+        st_s = (ev.get("start_time") or "").strip()
+        en_s = (ev.get("end_time") or "").strip()
+        if not is_all and not is_todo and ":" in st_s and ":" in en_s:
+            try:
+                sh, sm = [int(x) for x in st_s[:5].split(":")]
+                eh, em = [int(x) for x in en_s[:5].split(":")]
+                diff = (eh * 60 + em) - (sh * 60 + sm)
+                if diff > 0:
+                    idx_d = self.ft_duration_combo.findData(diff)
+                    if idx_d >= 0:
+                        self.ft_duration_combo.setCurrentIndex(idx_d)
+            except Exception:
+                pass
+        cat_idx = self.ft_category_combo.findText(ev.get("category") or "Personale")
+        if cat_idx >= 0:
+            self.ft_category_combo.setCurrentIndex(cat_idx)
+        self.ft_subject_input.setText(ev.get("subject") or "")
+        self.ft_location_input.setText(ev.get("location") or "")
+
+        rec_val = ev.get("recurrence") or "none"
+        rec_idx = self.ft_recurrence_combo.findData(rec_val)
+        self.ft_recurrence_combo.setCurrentIndex(rec_idx if rec_idx >= 0 else 0)
+
+        col_val = ev.get("color") or FLOWTIME_COLOR_PALETTE[0][0]
+        self._set_ft_form_color(col_val)
+
+        self._ft_form_linked_note_ids = [int(n["id"]) for n in db.get_notes_for_event(ev_id)]
+        self._refresh_ft_form_notes_ui()
+        self._refresh_flowtime_lists()
+        self.ft_title_input.setFocus()
+
+    def _on_ft_save_event(self):
+        title = self.ft_title_input.text().strip()
+        if not title:
+            self.ft_title_input.setFocus()
+            return
+        from core.calendar_sync import calendar_manager
+
+        date_str = self._selected_ft_date_str()
+        item_type = self._ft_form_item_type
+        is_todo = item_type == "todo"
+        is_all = True if is_todo else self.ft_allday_chk.isChecked()
+        start_str = "00:00" if is_todo else ("all_day" if is_all else (self.ft_start_input.text().strip() or "09:00"))
+        duration = 0 if is_todo else int(self.ft_duration_combo.currentData() or 60)
+        cat = self.ft_category_combo.currentText()
+        subj = self.ft_subject_input.text().strip()
+        loc = "" if is_todo else self.ft_location_input.text().strip()
+        rec = str(self.ft_recurrence_combo.currentData() or "none")
+        color = self._ft_form_color
+
+        if self._ft_editing_event_id is not None:
+            end_str = ""
+            if not is_all and not is_todo:
+                try:
+                    _, _, start_str, end_str = calendar_manager._parse_date_and_times(date_str, start_str, duration)
+                except Exception:
+                    end_str = ""
+            calendar_manager.update_event(
+                self._ft_editing_event_id,
+                summary=title,
+                date_str=date_str,
+                start_time_str=start_str,
+                end_time_str=end_str,
+                is_all_day=is_all,
+                location=loc,
+                category=cat,
+                subject=subj,
+                color=color,
+                item_type=item_type,
+                recurrence=rec,
+            )
+            for nid in self._ft_form_linked_note_ids:
+                db.link_note_to_event(self._ft_editing_event_id, int(nid), link_type="manual")
+        else:
+            created = calendar_manager.create_event(
+                summary=title,
+                date_str=date_str,
+                start_time_str=start_str,
+                duration_minutes=duration,
+                location=loc,
+                category=cat,
+                subject=subj,
+                color=color,
+                push_to_google=not is_todo,
+                item_type=item_type,
+                recurrence=rec,
+            )
+            if created and created.get("local_id"):
+                cid = int(created["local_id"])
+                for nid in self._ft_form_linked_note_ids:
+                    db.link_note_to_event(cid, int(nid), link_type="manual")
+
+        self._reset_ft_form()
+        self._refresh_flowtime_page()
+
+    def _on_ft_delete_active_event(self):
+        if self._ft_editing_event_id is None:
+            return
+        self._on_ft_delete_event(self._ft_editing_event_id)
+
+    def _on_ft_delete_event(self, event_id: int):
+        from core.calendar_sync import calendar_manager
+        calendar_manager.delete_event(event_id)
+        if self._ft_editing_event_id == event_id:
+            self._reset_ft_form()
+        else:
+            self._refresh_flowtime_page()
+
+    def _on_ft_link_note_clicked(self, event_id: int, event_title: str):
+        dlg = LinkEventNoteDialog(event_id, event_title, parent=self)
+        dlg.open_note_requested.connect(self._open_note_from_flowtime)
+        dlg.exec()
+        self._refresh_flowtime_lists()
+
+    def _on_ft_sync_google_clicked(self):
+        from core.calendar_sync import calendar_manager
+        if not calendar_manager.has_token_file():
+            self._on_connect_calendar_clicked()
+            return
+        calendar_manager.sync_in_background(force=True)
+
+    def _on_ft_sync_finished(self, ok: bool, msg: str):
+        self._update_calendar_status_ui()
+        if hasattr(self, "ft_calendar"):
+            self._refresh_flowtime_page()
 
     # -----------------------------------------------------------------
     # Utility

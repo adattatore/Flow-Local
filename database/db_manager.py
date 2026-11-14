@@ -185,6 +185,62 @@ class DatabaseManager:
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_whis_created_at ON whis_history(created_at);")
 
+        # 9. Tabella Eventi Calendario FlowTime (Local-First + Sync Google opzionale)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS calendar_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                location TEXT DEFAULT '',
+                event_date TEXT NOT NULL,
+                start_time TEXT DEFAULT '',
+                end_time TEXT DEFAULT '',
+                is_all_day INTEGER DEFAULT 0,
+                category TEXT DEFAULT 'Personale',
+                subject TEXT DEFAULT '',
+                color TEXT DEFAULT '#6366F1',
+                source TEXT DEFAULT 'local',
+                google_event_id TEXT DEFAULT '',
+                google_calendar_id TEXT DEFAULT 'primary',
+                google_calendar_name TEXT DEFAULT 'Personale',
+                sync_status TEXT DEFAULT 'local_only',
+                item_type TEXT DEFAULT 'event',
+                is_completed INTEGER DEFAULT 0,
+                recurrence TEXT DEFAULT 'none',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cal_events_date ON calendar_events(event_date);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cal_events_google_id ON calendar_events(google_event_id);")
+
+        # Migrazione incrementale sicura per DB esistenti
+        for col_def in (
+            "item_type TEXT DEFAULT 'event'",
+            "is_completed INTEGER DEFAULT 0",
+            "recurrence TEXT DEFAULT 'none'",
+        ):
+            try:
+                cursor.execute(f"ALTER TABLE calendar_events ADD COLUMN {col_def};")
+            except Exception:
+                pass
+
+        # 10. Tabella Collegamenti Temporali Evento <-> Nota di Studio
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS calendar_note_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL,
+                note_id INTEGER NOT NULL,
+                link_type TEXT DEFAULT 'manual',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(event_id, note_id),
+                FOREIGN KEY (event_id) REFERENCES calendar_events(id) ON DELETE CASCADE,
+                FOREIGN KEY (note_id) REFERENCES study_notes(id) ON DELETE CASCADE
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cal_note_links_event ON calendar_note_links(event_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cal_note_links_note ON calendar_note_links(note_id);")
+
         conn.commit()
         self._seed_default_data()
         self._ensure_updated_defaults()
@@ -1284,6 +1340,413 @@ class DatabaseManager:
             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
         """, (key, str(value)))
         conn.commit()
+
+    # --- FLOWTIME: CALENDARIO LOCALE & COLLEGAMENTI TEMPORALI ---
+    def add_calendar_event(
+        self,
+        title: str,
+        event_date: str,
+        start_time: str = "",
+        end_time: str = "",
+        is_all_day: bool = False,
+        description: str = "",
+        location: str = "",
+        category: str = "Personale",
+        subject: str = "",
+        color: str = "#6366F1",
+        source: str = "local",
+        google_event_id: str = "",
+        google_calendar_id: str = "primary",
+        google_calendar_name: str = "Personale",
+        sync_status: str = "pending_push",
+        item_type: str = "event",
+        is_completed: bool = False,
+        recurrence: str = "none",
+    ) -> int:
+        """Crea un nuovo evento o to-do nel calendario locale SQLite."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        itype = "todo" if (item_type or "").strip().lower() == "todo" else "event"
+        eff_all_day = True if itype == "todo" else bool(is_all_day)
+        cursor.execute("""
+            INSERT INTO calendar_events (
+                title, description, location, event_date, start_time, end_time,
+                is_all_day, category, subject, color, source, google_event_id,
+                google_calendar_id, google_calendar_name, sync_status,
+                item_type, is_completed, recurrence
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            (title or "").strip() or "Nuovo Appuntamento",
+            (description or "").strip(),
+            (location or "").strip(),
+            (event_date or "").strip(),
+            "" if eff_all_day else (start_time or "").strip(),
+            "" if eff_all_day else (end_time or "").strip(),
+            1 if eff_all_day else 0,
+            (category or "Personale").strip(),
+            (subject or "").strip(),
+            (color or "#6366F1").strip(),
+            (source or "local").strip(),
+            (google_event_id or "").strip(),
+            (google_calendar_id or "primary").strip(),
+            (google_calendar_name or "Personale").strip(),
+            (sync_status or "local_only").strip(),
+            itype,
+            1 if is_completed else 0,
+            (recurrence or "none").strip() or "none",
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+    def update_calendar_event(self, event_id: int, **fields) -> bool:
+        """Aggiorna dinamicamente i campi di un evento calendario esistente."""
+        allowed = {
+            "title", "description", "location", "event_date", "start_time", "end_time",
+            "is_all_day", "category", "subject", "color", "source", "google_event_id",
+            "google_calendar_id", "google_calendar_name", "sync_status",
+            "item_type", "is_completed", "recurrence",
+        }
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return False
+        if "is_all_day" in updates:
+            updates["is_all_day"] = 1 if updates["is_all_day"] else 0
+        if "is_completed" in updates:
+            updates["is_completed"] = 1 if updates["is_completed"] else 0
+        set_clauses = [f"{k} = ?" for k in updates]
+        set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+        params = list(updates.values()) + [event_id]
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE calendar_events SET {', '.join(set_clauses)} WHERE id = ?", params)
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def toggle_calendar_todo(self, event_id: int) -> bool:
+        """Inverte lo stato completato/da fare di un To-Do e restituisce il nuovo stato."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            UPDATE calendar_events
+            SET is_completed = CASE WHEN COALESCE(is_completed, 0) = 1 THEN 0 ELSE 1 END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (event_id,),
+        )
+        conn.commit()
+        cursor.execute("SELECT is_completed FROM calendar_events WHERE id = ? LIMIT 1", (event_id,))
+        row = cursor.fetchone()
+        return bool(row and row["is_completed"])
+
+    def delete_calendar_event(self, event_id: int, hard_delete: bool = False) -> bool:
+        """Elimina un evento locale o lo marca 'pending_delete' se sincronizzato con Google."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        if not hard_delete:
+            cursor.execute("SELECT google_event_id FROM calendar_events WHERE id = ?", (event_id,))
+            row = cursor.fetchone()
+            if row and (row["google_event_id"] or "").strip():
+                cursor.execute(
+                    "UPDATE calendar_events SET sync_status = 'pending_delete', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (event_id,),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+
+        cursor.execute("DELETE FROM calendar_events WHERE id = ?", (event_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def get_calendar_event_by_id(self, event_id: int) -> Optional[Dict[str, Any]]:
+        """Recupera un singolo evento calendario tramite ID."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM calendar_events WHERE id = ? LIMIT 1", (event_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def get_calendar_events(
+        self,
+        start_date: str,
+        end_date: str,
+        category: Optional[str] = None,
+        include_pending_delete: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Recupera gli eventi compresi tra start_date e end_date (YYYY-MM-DD)."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        clauses = ["event_date >= ?", "event_date <= ?"]
+        params: List[Any] = [start_date, end_date]
+        if not include_pending_delete:
+            clauses.append("sync_status != 'pending_delete'")
+        if category and category != "Tutte":
+            clauses.append("category = ?")
+            params.append(category)
+
+        sql = f"""
+            SELECT * FROM calendar_events
+            WHERE {' AND '.join(clauses)}
+            ORDER BY event_date ASC, is_all_day DESC, start_time ASC, id ASC
+        """
+        cursor.execute(sql, params)
+        return [dict(r) for r in cursor.fetchall()]
+
+    def search_calendar_events(
+        self,
+        query: str = "",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Ricerca istantanea locale su titolo, descrizione, luogo e materia."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        clauses = ["sync_status != 'pending_delete'"]
+        params: List[Any] = []
+        if start_date:
+            clauses.append("event_date >= ?")
+            params.append(start_date)
+        if end_date:
+            clauses.append("event_date <= ?")
+            params.append(end_date)
+        clean_q = (query or "").strip().lower()
+        if clean_q:
+            like = f"%{clean_q}%"
+            clauses.append("(LOWER(title) LIKE ? OR LOWER(description) LIKE ? OR LOWER(location) LIKE ? OR LOWER(subject) LIKE ? OR LOWER(category) LIKE ?)")
+            params.extend([like, like, like, like, like])
+        params.append(limit)
+        sql = f"""
+            SELECT * FROM calendar_events
+            WHERE {' AND '.join(clauses)}
+            ORDER BY event_date ASC, is_all_day DESC, start_time ASC
+            LIMIT ?
+        """
+        cursor.execute(sql, params)
+        return [dict(r) for r in cursor.fetchall()]
+
+    def get_dates_with_activity(self, year: int, month: int) -> Dict[str, Dict[str, int]]:
+        """Restituisce il conteggio di eventi e note per ciascun giorno del mese (YYYY-MM-DD)."""
+        prefix = f"{year:04d}-{month:02d}-%"
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        activity: Dict[str, Dict[str, int]] = {}
+
+        cursor.execute("""
+            SELECT event_date, COUNT(*) AS cnt
+            FROM calendar_events
+            WHERE event_date LIKE ? AND sync_status != 'pending_delete'
+            GROUP BY event_date
+        """, (prefix,))
+        for r in cursor.fetchall():
+            d = r["event_date"]
+            activity.setdefault(d, {"events": 0, "notes": 0})
+            activity[d]["events"] = int(r["cnt"] or 0)
+
+        cursor.execute("""
+            SELECT DATE(created_at, 'localtime') AS note_date, COUNT(*) AS cnt
+            FROM study_notes
+            WHERE DATE(created_at, 'localtime') LIKE ?
+              AND LOWER(COALESCE(note_type, '')) != 'flashcard'
+            GROUP BY DATE(created_at, 'localtime')
+        """, (prefix,))
+        for r in cursor.fetchall():
+            d = r["note_date"]
+            if d:
+                activity.setdefault(d, {"events": 0, "notes": 0})
+                activity[d]["notes"] = int(r["cnt"] or 0)
+
+        return activity
+
+    def upsert_google_event(
+        self,
+        google_event_id: str,
+        google_calendar_id: str,
+        google_calendar_name: str,
+        title: str,
+        event_date: str,
+        start_time: str,
+        end_time: str,
+        is_all_day: bool,
+        description: str = "",
+        location: str = "",
+        category: str = "Personale",
+    ) -> int:
+        """Inserisce o aggiorna un evento importato da Google Calendar senza creare duplicati."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, sync_status FROM calendar_events WHERE google_event_id = ? AND google_calendar_id = ? LIMIT 1",
+            (google_event_id, google_calendar_id),
+        )
+        existing = cursor.fetchone()
+        if existing:
+            if existing["sync_status"] in ("pending_delete", "pending_push"):
+                return existing["id"]
+            cursor.execute("""
+                UPDATE calendar_events
+                SET title = ?, description = ?, location = ?, event_date = ?,
+                    start_time = ?, end_time = ?, is_all_day = ?,
+                    google_calendar_name = ?, sync_status = 'synced',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (
+                (title or "(Senza Titolo)").strip(),
+                (description or "").strip(),
+                (location or "").strip(),
+                event_date,
+                "" if is_all_day else (start_time or "").strip(),
+                "" if is_all_day else (end_time or "").strip(),
+                1 if is_all_day else 0,
+                google_calendar_name or "Personale",
+                existing["id"],
+            ))
+            conn.commit()
+            return existing["id"]
+
+        return self.add_calendar_event(
+            title=title,
+            event_date=event_date,
+            start_time=start_time,
+            end_time=end_time,
+            is_all_day=is_all_day,
+            description=description,
+            location=location,
+            category=category,
+            source="google",
+            google_event_id=google_event_id,
+            google_calendar_id=google_calendar_id,
+            google_calendar_name=google_calendar_name,
+            sync_status="synced",
+        )
+
+    def get_pending_sync_events(self) -> List[Dict[str, Any]]:
+        """Restituisce gli eventi locali in attesa di push o delete su Google Calendar."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM calendar_events
+            WHERE sync_status IN ('pending_push', 'pending_delete')
+            ORDER BY id ASC
+        """)
+        return [dict(r) for r in cursor.fetchall()]
+
+    def prune_deleted_google_events(self, start_date: str, end_date: str, seen_google_keys: List[tuple]) -> int:
+        """Rimuove gli eventi locali marcati 'synced' nell'intervallo che non esistono più su Google."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, google_event_id, google_calendar_id
+            FROM calendar_events
+            WHERE google_event_id != ''
+              AND sync_status = 'synced'
+              AND event_date >= ? AND event_date <= ?
+        """, (start_date, end_date))
+        seen_set = set(seen_google_keys)
+        to_delete = [
+            r["id"] for r in cursor.fetchall()
+            if (r["google_event_id"], r["google_calendar_id"]) not in seen_set
+        ]
+        if to_delete:
+            placeholders = ",".join("?" for _ in to_delete)
+            cursor.execute(f"DELETE FROM calendar_events WHERE id IN ({placeholders})", to_delete)
+            conn.commit()
+        return len(to_delete)
+
+    def link_note_to_event(self, event_id: int, note_id: int, link_type: str = "manual") -> Optional[int]:
+        """Collega una nota di studio a un evento del calendario."""
+        if not event_id or not note_id:
+            return None
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO calendar_note_links (event_id, note_id, link_type)
+                VALUES (?, ?, ?)
+                ON CONFLICT(event_id, note_id) DO UPDATE SET link_type = excluded.link_type
+            """, (event_id, note_id, link_type))
+            conn.commit()
+            return cursor.lastrowid
+        except Exception as e:
+            print(f"[FlowLocal DB] Errore link_note_to_event: {e}")
+            return None
+
+    def unlink_note_from_event(self, event_id: int, note_id: int) -> bool:
+        """Rimuove il collegamento tra un evento e una nota."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM calendar_note_links WHERE event_id = ? AND note_id = ?", (event_id, note_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def get_notes_for_event(self, event_id: int) -> List[Dict[str, Any]]:
+        """Restituisce le note esplicitamente collegate a un evento."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT n.id, n.title, n.note_type, n.subject, n.topic, n.profile, n.created_at, l.link_type
+            FROM calendar_note_links l
+            JOIN study_notes n ON l.note_id = n.id
+            WHERE l.event_id = ?
+            ORDER BY l.id DESC
+        """, (event_id,))
+        return [dict(r) for r in cursor.fetchall()]
+
+    def get_notes_for_date(self, date_str: str) -> List[Dict[str, Any]]:
+        """Restituisce sia le note collegate a eventi di quel giorno sia quelle create in quella data."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        notes_by_id: Dict[int, Dict[str, Any]] = {}
+
+        # 1. Note esplicitamente collegate a eventi di date_str
+        cursor.execute("""
+            SELECT n.id, n.title, n.note_type, n.subject, n.topic, n.profile, n.created_at,
+                   e.id AS linked_event_id, e.title AS linked_event_title, l.link_type
+            FROM calendar_note_links l
+            JOIN calendar_events e ON l.event_id = e.id
+            JOIN study_notes n ON l.note_id = n.id
+            WHERE e.event_date = ? AND e.sync_status != 'pending_delete'
+            ORDER BY e.start_time ASC, n.id DESC
+        """, (date_str,))
+        for r in cursor.fetchall():
+            d = dict(r)
+            d["temporal_source"] = "linked"
+            notes_by_id[d["id"]] = d
+
+        # 2. Note create in date_str (correlazione temporale automatica)
+        cursor.execute("""
+            SELECT id, title, note_type, subject, topic, profile, created_at
+            FROM study_notes
+            WHERE DATE(created_at, 'localtime') = ?
+              AND LOWER(COALESCE(note_type, '')) != 'flashcard'
+            ORDER BY created_at DESC
+        """, (date_str,))
+        for r in cursor.fetchall():
+            d = dict(r)
+            if d["id"] not in notes_by_id:
+                d["linked_event_id"] = None
+                d["linked_event_title"] = ""
+                d["link_type"] = "same_day"
+                d["temporal_source"] = "created_on_date"
+                notes_by_id[d["id"]] = d
+
+        return list(notes_by_id.values())
+
+    def get_events_for_note(self, note_id: int) -> List[Dict[str, Any]]:
+        """Restituisce gli eventi del calendario collegati a una determinata nota."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT e.*
+            FROM calendar_note_links l
+            JOIN calendar_events e ON l.event_id = e.id
+            WHERE l.note_id = ? AND e.sync_status != 'pending_delete'
+            ORDER BY e.event_date DESC, e.start_time ASC
+        """, (note_id,))
+        return [dict(r) for r in cursor.fetchall()]
 
 
 db = DatabaseManager()
