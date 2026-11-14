@@ -50,6 +50,7 @@ from database import db
 from core.audio_analyzer import AudioAnalyzer
 from core.context_detector import detect_active_context
 from core.audio_ducker import audio_ducker, AudioDucker
+from core.clipboard_tracker import dictation_tracker
 
 RECORD_SAMPLE_RATE = 48000
 WHISPER_SAMPLE_RATE = 16000
@@ -153,12 +154,6 @@ class WindowsInjector:
         if not clean_text:
             return
 
-        old_clipboard = None
-        try:
-            old_clipboard = pyperclip.paste()
-        except Exception:
-            pass
-
         pyperclip.copy(clean_text)
         time.sleep(0.025)
 
@@ -170,16 +165,6 @@ class WindowsInjector:
             user32.keybd_event(cls.VK_V, 0, cls.KEYEVENTF_KEYUP, 0)
         finally:
             user32.keybd_event(cls.VK_CONTROL, 0, cls.KEYEVENTF_KEYUP, 0)
-
-        def restore():
-            time.sleep(0.6)
-            if old_clipboard is not None:
-                try:
-                    pyperclip.copy(old_clipboard)
-                except Exception:
-                    pass
-
-        threading.Thread(target=restore, daemon=True).start()
 
     @classmethod
     def get_target_point(cls) -> Optional[Tuple[int, int]]:
@@ -672,7 +657,8 @@ class LLMRefiner:
         # 3. Verifica Stile Attivo (Zero LLM)
         active_style = db.get_active_style()
         if active_style.get("system_prompt") == "RAW_WHISPER_NO_LLM":
-            return strip_pause_markers(raw_text), 0
+            from core.transcriber import format_spoken_lists
+            return format_spoken_lists(strip_pause_markers(raw_text)), 0
 
         # 4. Selezione dinamica del System Prompt in base alla modalità
         mode_clean = (mode or "natural").lower()
@@ -696,6 +682,15 @@ class LLMRefiner:
         # Assicura la presenza della regola di punteggiatura sintattica naturale (esclusa modalità codice puro)
         if "PUNTEGGIATURA E SCORREVOLEZZA SINTATTICA" not in system_prompt and mode_key != "code":
             system_prompt = f"{system_prompt}\n\n{PUNCTUATION_RULE}"
+
+        # Regola elenchi parlati stile Wispr Flow
+        if mode_key != "code":
+            system_prompt += (
+                "\n\nFORMATTAZIONE ELENCHI PARLATI:\n"
+                "Se l'utente detta una sequenza strutturata per punti (es. 'Uno, ... Due, ... Tre, ...', "
+                "'Primo punto... Secondo punto...', 'Punto uno... Punto due...'), formatta ogni punto su una "
+                "nuova riga iniziando con '- ' e lettera maiuscola, rimuovendo la parola numerica usata come marcatore."
+            )
 
         # Aggiunta Vocabolario al prompt di Qwen
         vocab_terms = db.get_vocabulary_biasing_prompt()
@@ -757,9 +752,9 @@ class LLMRefiner:
 
                 refined = re.sub(r"</?trascri\w*\s*>", "", refined, flags=re.IGNORECASE).strip()
 
-                # Rimuove prefissi o preamboli discorsivi artificiali (es. 'Trascrizione: ...', 'Ecco il testo elaborato: ...')
+                # Rimuove prefissi o preamboli discorsivi artificiali (es. 'Trascrizione: ...', '**TRASCRIZIONE:** ...')
                 refined = re.sub(
-                    r'^(?:ecco(?:\s+qui)?\s+(?:il\s+)?testo\s+(?:elaborato|rifinito|trascritto)|trascrizione|output|testo\s+elaborato|testo\s+rifinito)\s*:\s*(?:<br\s*/?>)*\s*',
+                    r'^\s*(?:\*{1,2}|")?\s*(?:ecco(?:\s+qui)?\s+(?:il\s+)?testo\s+(?:elaborato|rifinito|trascritto)|trascrizione|output|testo\s+elaborato|testo\s+rifinito)\s*(?:\*{1,2})?\s*:\s*(?:<br\s*/?>|\*{1,2})*\s*',
                     '',
                     refined,
                     flags=re.IGNORECASE
@@ -776,6 +771,9 @@ class LLMRefiner:
 
                 # Pulizia esitazioni vocali residue all'inizio
                 refined = strip_vocal_fillers(refined, capitalize_first=should_cap)
+                if mode_key != "code":
+                    from core.transcriber import format_spoken_lists
+                    refined = format_spoken_lists(refined)
 
                 # Rimuove eventuali backslash finali (\) o spazi superflui
                 refined = refined.rstrip()
@@ -791,6 +789,9 @@ class LLMRefiner:
                     clean = normalize_phonetic_variants(raw_text)
                     clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
                     clean = strip_vocal_fillers(clean, capitalize_first=should_cap)
+                    if mode_key != "code":
+                        from core.transcriber import format_spoken_lists
+                        clean = format_spoken_lists(clean)
                     while clean.endswith('\\'):
                         clean = clean[:-1].rstrip()
                     return clean, qwen_ms
@@ -802,6 +803,9 @@ class LLMRefiner:
                     clean = normalize_phonetic_variants(raw_text)
                     clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
                     clean = strip_vocal_fillers(clean, capitalize_first=should_cap)
+                    if mode_key != "code":
+                        from core.transcriber import format_spoken_lists
+                        clean = format_spoken_lists(clean)
                     while clean.endswith('\\'):
                         clean = clean[:-1].rstrip()
                     return clean, qwen_ms
@@ -818,6 +822,9 @@ class LLMRefiner:
         clean = normalize_phonetic_variants(raw_text)
         clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
         clean = strip_vocal_fillers(clean, capitalize_first=should_cap)
+        if mode_key != "code":
+            from core.transcriber import format_spoken_lists
+            clean = format_spoken_lists(clean)
         while clean.endswith('\\'):
             clean = clean[:-1].rstrip()
         return clean, qwen_ms
@@ -1622,6 +1629,16 @@ class FlowLocalEngine:
                             self.stop_recording_and_process()
                 threading.Thread(target=_delayed_stop, daemon=True).start()
 
+    def lock_current_recording(self):
+        """Transizione fluida Push-to-Lock (es. Shift Destro tenuto -> Ctrl Destro / Alt Gr)."""
+        with self.key_lock:
+            if self.is_recording and not self.is_locked and self.is_key_down:
+                self.is_locked = True
+                if self.orb:
+                    self.orb.set_locked(True)
+                    self.orb.set_badge_text("🔒 Bloccato — premi Shift Destro per inviare")
+                threading.Thread(target=sound_locked, daemon=True).start()
+
     def reset_key_state(self):
         """Resetta lo stato del tasto Push-to-Talk dopo sospensione/risveglio di sistema."""
         with self.key_lock:
@@ -1721,6 +1738,7 @@ class FlowLocalEngine:
             app_label, mode_key, mode_label = detect_active_context()
             self.current_context = (app_label, mode_key, mode_label)
             self.active_mode_key = mode_key
+            dictation_tracker.save_focus_target()
 
             # 0. Rilevamento selezione attiva da trasformare (Text-to-Action)
             previous_clip = None
@@ -2300,8 +2318,21 @@ class FlowLocalEngine:
 
                 return
 
-            # Iniezione testo e feedback sonoro
+            # Salvataggio immediato negli appunti + tracker cronologia e Ghost-Text
+            app_label, mode_key, mode_label = context
             target_pt = WindowsInjector.get_target_point()
+            if target_pt is None:
+                dictation_tracker.restore_focus_target()
+                target_pt = WindowsInjector.get_target_point()
+
+            dictation_tracker.record_dictation(
+                final_text,
+                app_name=app_label,
+                style=mode_label,
+                consumed=False,
+            )
+
+            # Iniezione testo e feedback sonoro
             WindowsInjector.paste_text(final_text)
             sound_done()
             if self.orb and target_pt:
@@ -2312,7 +2343,6 @@ class FlowLocalEngine:
             self._start_clipboard_learning_watcher(final_text)
 
             # Salvataggio nel database locale
-            app_label, mode_key, mode_label = context
             db.add_transcription(
                 raw_text=raw_text,
                 final_text=final_text,

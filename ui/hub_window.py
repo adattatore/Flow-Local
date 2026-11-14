@@ -65,7 +65,7 @@ from PyQt6.QtWidgets import (
 from database import db
 from core.exporter import export_to_md, export_to_docx, export_to_pdf, export_to_tex
 from core.audio_sync import archive_audio_for_note, save_note_audio_sync, load_note_audio_sync
-from ui.scientific_editor import ScientificNoteEditor, strip_markdown_syntax
+from ui.scientific_editor import DictationGhostLineEdit, ScientificNoteEditor, strip_markdown_syntax
 from ui.audio_sync_bar import AudioSyncBar
 from core.cloud_sync import cloud_sync
 from core.whis_agent import WhisAgent, WhisStreamWorker
@@ -8396,7 +8396,7 @@ class FlowLocalHub(QMainWindow):
         h_layout.addWidget(key_badge)
 
         h_info = QLabel("<b>Push-to-Talk principale:</b> tieni premuto Shift Destro (sotto Invio) per dettare live, rilascia per incollare con zero focus steal.<br>"
-                        "<b>Doppio tocco:</b> modalità mani libere. <b>Shift Sinistro:</b> resta 100% libero per le maiuscole ordinarie.")
+                        "<b>Push-to-Lock (Hands-Free):</b> premi <b>Ctrl Destro</b> (o <b>Alt Gr</b>) mentre tieni Shift Destro, oppure doppio tocco. <b>Shift Sinistro:</b> resta 100% libero.")
         h_info.setWordWrap(True)
         h_info.setStyleSheet("color: #94A3B8; font-size: 12px; background: transparent;")
         h_layout.addWidget(h_info, 1)
@@ -8455,7 +8455,7 @@ class FlowLocalHub(QMainWindow):
             pass
 
         query = self.history_search.text().strip().lower() if hasattr(self, "history_search") else ""
-        items = db.get_recent_transcriptions(limit=200)
+        items = db.get_recent_transcriptions(limit=200 if query else 20)
         self._last_transcription_marker = items[0]["id"] if items else None
 
         if query:
@@ -8691,7 +8691,7 @@ class FlowLocalHub(QMainWindow):
         input_bar = QHBoxLayout()
         input_bar.setSpacing(10)
 
-        self.whis_input = QLineEdit()
+        self.whis_input = DictationGhostLineEdit(dark_mode=self._active_is_dark())
         self.whis_input.setPlaceholderText("Chiedi qualcosa a Whis o incolla del codice…")
         self.whis_input.setMinimumHeight(40)
         self.whis_input.returnPressed.connect(self._send_whis_text_query)
@@ -9352,7 +9352,7 @@ class FlowLocalHub(QMainWindow):
         col3_layout.addLayout(editor_top_bar)
 
         # Titolo edit senza scatola
-        self.nk_editor_title = QLineEdit()
+        self.nk_editor_title = DictationGhostLineEdit(dark_mode=self._active_is_dark())
         self.nk_editor_title.setObjectName("NKEditorTitle")
         self.nk_editor_title.setPlaceholderText("Titolo della nota...")
         self.nk_editor_title.setMinimumHeight(36)

@@ -17,14 +17,14 @@ import io
 import os
 import re
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib
 matplotlib.use("Agg")
 from matplotlib.mathtext import math_to_image
 
 from PyQt6.QtCore import (
-    Qt, QBuffer, QIODevice, QMimeData, QPoint, QPointF, QRectF,
+    Qt, QBuffer, QEvent, QIODevice, QMimeData, QObject, QPoint, QPointF, QRectF,
     QRegularExpression, QUrl, pyqtSignal
 )
 from PyQt6.QtGui import (
@@ -32,6 +32,7 @@ from PyQt6.QtGui import (
     QColor,
     QDesktopServices,
     QFont,
+    QFontMetricsF,
     QImage,
     QKeyEvent,
     QMouseEvent,
@@ -40,6 +41,7 @@ from PyQt6.QtGui import (
     QPen,
     QSyntaxHighlighter,
     QTextBlockFormat,
+    QTextBlockUserData,
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
@@ -70,6 +72,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.math_eval import evaluate_inline_equals, parse_latex_matrix
+from core.clipboard_tracker import dictation_tracker
+
 
 BASE_DATA_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NOTE_MEDIA_DIR = os.path.join(BASE_DATA_DIR, "note_media")
@@ -78,13 +83,30 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 MAX_INLINE_IMAGE_WIDTH = 520
 
 # Custom QTextFormat properties per blocchi WYSIWYG Notion
-PROP_BLOCK_KIND = QTextFormat.Property.UserProperty + 1   # "quote" | "todo" | "file" | "h1" | "h2" | "h3" | "h4" | "ai_note"
+PROP_BLOCK_KIND = QTextFormat.Property.UserProperty + 1   # "quote" | "todo" | "file" | "h1" | "h2" | "h3" | "h4" | "ai_note" | "callout"
 PROP_FILE_PATH = QTextFormat.Property.UserProperty + 2    # path locale per blocco "file"
 PROP_FRAME_KIND = QTextFormat.Property.UserProperty + 3   # "python" | "bibtex" | "code"
 PROP_LATEX_SOURCE = QTextFormat.Property.UserProperty + 5 # sorgente LaTeX su QTextImageFormat renderizzato
 PROP_AI_NOTE_TITLE = QTextFormat.Property.UserProperty + 6
 PROP_AI_NOTE_BODY = QTextFormat.Property.UserProperty + 7
 PROP_AI_NOTE_EXPANDED = QTextFormat.Property.UserProperty + 8
+
+PLACEHOLDER_TEXTS: Dict[str, str] = {
+    "h1": "Titolo 1",
+    "h2": "Titolo 2",
+    "h3": "Titolo 3",
+    "todo": "To-do",
+    "quote": "Citazione...",
+    "callout": "Nota in evidenza...",
+}
+
+
+class BlockUserData(QTextBlockUserData):
+    """Metadati persistenti per blocco (placeholder ghost-text senza sporcare QTextDocument)."""
+
+    def __init__(self, placeholder_kind: str = ""):
+        super().__init__()
+        self.placeholder_kind: str = placeholder_kind
 
 
 def strip_markdown_syntax(text: str) -> str:
@@ -117,14 +139,44 @@ def _qimage_to_png_b64(img: QImage) -> str:
     return base64.b64encode(bytes(ba.data())).decode("ascii")
 
 
+def _mathtext_to_transparent_qimage(expr: str, dpi: int, ink_hex: str) -> Optional[QImage]:
+    """
+    Renderizza un'espressione LaTeX con matplotlib.mathtext su sfondo 100% trasparente
+    nel colore `ink_hex`, eliminando il rettangolo bianco opaco di default.
+    """
+    import numpy as np
+
+    buf = io.BytesIO()
+    math_to_image(f"${expr}$", buf, dpi=dpi, format="png", color="#000000")
+    src = QImage.fromData(buf.getvalue(), "PNG")
+    if src.isNull():
+        return None
+    src = src.convertToFormat(QImage.Format.Format_RGBA8888)
+    w, h = src.width(), src.height()
+    ptr = src.bits()
+    ptr.setsize(src.sizeInBytes())
+    arr = np.frombuffer(ptr, dtype=np.uint8).reshape((h, src.bytesPerLine() // 4, 4))[:, :w, :].copy()
+
+    # Nero su bianco: luminanza 255 -> trasparente (alpha 0), luminanza 0 -> opaco (alpha 255)
+    gray = arr[:, :, 0].astype(np.float32)
+    alpha = np.clip(255.0 - gray, 0.0, 255.0).astype(np.uint8)
+
+    ink = QColor(ink_hex)
+    arr[:, :, 0] = ink.red()
+    arr[:, :, 1] = ink.green()
+    arr[:, :, 2] = ink.blue()
+    arr[:, :, 3] = alpha
+
+    out = QImage(arr.data, w, h, w * 4, QImage.Format.Format_RGBA8888).copy()
+    return out.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+
+
 def _render_cell_qimage(cell_tex: str, dpi: int = 160, ink_hex: str = "#0F172A") -> QImage:
     """Renderizza una singola cella di matrice tramite matplotlib.mathtext (o fallback QPainter)."""
     clean = (cell_tex or "").strip() or "0"
     try:
-        buf = io.BytesIO()
-        math_to_image(f"${clean}$", buf, dpi=dpi, format="png", color=ink_hex)
-        qimg = QImage.fromData(buf.getvalue(), "PNG")
-        if not qimg.isNull():
+        qimg = _mathtext_to_transparent_qimage(clean, dpi=dpi, ink_hex=ink_hex)
+        if qimg is not None and not qimg.isNull():
             return qimg
     except Exception:
         pass
@@ -306,16 +358,14 @@ def render_latex_to_html(expr: str, is_display: bool = False, dark_mode: bool = 
 
     try:
         dpi = 175 if is_display else 145
-        buf = io.BytesIO()
-        math_to_image(f"${clean}$", buf, dpi=dpi, format="png", color=ink_hex)
-        raw_png = buf.getvalue()
-        qimg = QImage.fromData(raw_png, "PNG")
-        scale_factor = 0.62 if is_display else 0.56
-        w_px = max(12, int(qimg.width() * scale_factor))
-        h_px = max(12, int(qimg.height() * scale_factor))
-        b64 = base64.b64encode(raw_png).decode("ascii")
-        _LATEX_PNG_CACHE[cache_key] = (b64, w_px, h_px)
-        return _format_math_img_tag(b64, w_px, h_px, is_display, clean)
+        qimg = _mathtext_to_transparent_qimage(clean, dpi=dpi, ink_hex=ink_hex)
+        if qimg is not None and not qimg.isNull():
+            scale_factor = 0.62 if is_display else 0.56
+            w_px = max(12, int(qimg.width() * scale_factor))
+            h_px = max(12, int(qimg.height() * scale_factor))
+            b64 = _qimage_to_png_b64(qimg)
+            _LATEX_PNG_CACHE[cache_key] = (b64, w_px, h_px)
+            return _format_math_img_tag(b64, w_px, h_px, is_display, clean)
     except Exception:
         pass
 
@@ -777,15 +827,17 @@ class MarkdownLatexHighlighter(QSyntaxHighlighter):
 SLASH_COMMANDS: List[Dict[str, str]] = [
     {"cmd": "/tabella", "label": "▦  /tabella", "desc": "Tabella interattiva Notion (celle navigabili con Tab)"},
     {"cmd": "/quote", "label": "▎  /quote", "desc": "Blocco citazione con barra verticale"},
+    {"cmd": "/callout", "label": "💡 /callout", "desc": "Nota in evidenza stile Notion"},
     {"cmd": "/todo", "label": "☐  /todo", "desc": "To-Do list interattiva cliccabile"},
     {"cmd": "/code", "label": "⌘  /code", "desc": "Blocco codice a larghezza piena"},
     {"cmd": "/bibtex", "label": "❝  /bibtex", "desc": "Blocco citazione BibTeX accademico"},
     {"cmd": "/file", "label": "📎 /file", "desc": "Upload or embed a file (PDF, Immagine, Doc)"},
     {"cmd": "/immagine", "label": "🖼️ /immagine", "desc": "Incorpora immagine da file"},
     {"cmd": "/formula", "label": "∑  /formula", "desc": "Blocco equazione LaTeX ($$ ... $$)"},
-    {"cmd": "/matrice", "label": "⊞  /matrice", "desc": "Matrice omogenea 4×4 (bmatrix)"},
+    {"cmd": "/matrice", "label": "⊞  /matrice", "desc": "Matrice interattiva modificabile (bmatrix)"},
     {"cmd": "/h1", "label": "H1 /h1", "desc": "Titolo grande di sezione"},
     {"cmd": "/h2", "label": "H2 /h2", "desc": "Sottotitolo di sezione"},
+    {"cmd": "/h3", "label": "H3 /h3", "desc": "Titolo di terzo livello"},
     {"cmd": "/riassumi", "label": "✦  /riassumi", "desc": "Riassumi nota con Qwen 2.5 AI"},
     {"cmd": "/flashcard", "label": "🃏 /flashcard", "desc": "Genera flashcard d'esame"},
 ]
@@ -865,9 +917,11 @@ class SlashCommandPopup(QListWidget):
     def filter_commands(self, prefix: str) -> int:
         self.clear()
         q = (prefix or "").lower()
-        # Alias /tabs -> /tabella
+        # Alias /tabs -> /tabella, /matrix -> /matrice
         if q == "/tabs":
             q = "/tabella"
+        elif q == "/matrix":
+            q = "/matrice"
         for entry in SLASH_COMMANDS:
             if not q or entry["cmd"].startswith(q) or q.lstrip("/") in entry["desc"].lower():
                 item = QListWidgetItem(f"{entry['label']}  —  {entry['desc']}")
@@ -1217,6 +1271,389 @@ class MatrixEditorDialog(QDialog):
         return f"{prefix} {mat}" if prefix else mat
 
 
+class InlineMatrixEditor(QFrame):
+    """
+    Editor in-place (Dual-State Interactive Matrix) sovrapposto alla matrice nella viewport.
+    Supporta navigazione Tab/Frecce, +Riga/-Riga/+Colonna/-Colonna, tipo parentesi,
+    Elimina (✕) e commit automatico su focus-out o Ctrl+Invio.
+    """
+
+    commitRequested = pyqtSignal(str)
+    deleteRequested = pyqtSignal()
+
+    _ENV_CHOICES = [
+        ("[ ]", "bmatrix", "[", "]"),
+        ("( )", "pmatrix", "(", ")"),
+        ("| |", "vmatrix", "|", "|"),
+    ]
+
+    def __init__(
+        self,
+        parent_viewport: QWidget,
+        doc_pos: int,
+        initial_tex: str = "",
+        dark_mode: bool = True,
+    ):
+        super().__init__(parent_viewport)
+        self.doc_pos = doc_pos
+        self._dark_mode = dark_mode
+        self._rows = 3
+        self._cols = 3
+        self._env = "bmatrix"
+        self._prefix = ""
+        self._cells: List[List[QLineEdit]] = []
+        self._closing = False
+
+        initial_values: List[List[str]] = []
+        if initial_tex.strip():
+            m = re.search(r"\\begin\{([bpv])matrix\}(.*?)\\end\{\1matrix\}", initial_tex, re.DOTALL)
+            if m:
+                self._env = f"{m.group(1)}matrix"
+                self._prefix = initial_tex[: m.start()].strip()
+                raw_rows = [r.strip() for r in m.group(2).split(r"\\") if r.strip()]
+                if raw_rows:
+                    initial_values = [[c.strip() for c in r.split("&")] for r in raw_rows]
+                    self._rows = max(1, min(8, len(initial_values)))
+                    self._cols = max(1, min(8, max(len(r) for r in initial_values)))
+
+        self.setObjectName("InlineMatrixEditor")
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._apply_style()
+        self._build_ui(initial_values)
+
+        app = QApplication.instance()
+        if app is not None:
+            app.focusChanged.connect(self._on_app_focus_changed)
+
+    def _apply_style(self):
+        if self._dark_mode:
+            self.setStyleSheet(
+                "QFrame#InlineMatrixEditor {"
+                "  background-color: #18181B;"
+                "  border: 1.5px solid #6366F1;"
+                "  border-radius: 10px;"
+                "}"
+                "QLabel { color: #CBD5E1; font-size: 11px; background: transparent; }"
+                "QLineEdit {"
+                "  background-color: #27272A; color: #F8FAFC; border: 1px solid #3F3F46;"
+                "  border-radius: 5px; padding: 2px 4px; font-size: 12px; min-height: 24px;"
+                "}"
+                "QLineEdit:focus { border: 1px solid #818CF8; background-color: #1E1B4B; }"
+                "QComboBox {"
+                "  background-color: #27272A; color: #F8FAFC; border: 1px solid #3F3F46;"
+                "  border-radius: 5px; padding: 2px 6px; font-size: 11px; min-height: 24px;"
+                "}"
+                "QPushButton {"
+                "  background-color: #27272A; color: #E2E8F0; border: 1px solid #3F3F46;"
+                "  border-radius: 5px; padding: 3px 7px; font-size: 11px; min-height: 22px;"
+                "}"
+                "QPushButton:hover { background-color: #3F3F46; }"
+                "QPushButton#InlineMatDelBtn { color: #F87171; border-color: #4C1D24; }"
+                "QPushButton#InlineMatDelBtn:hover { background-color: #7F1D1D; color: #FFFFFF; }"
+            )
+        else:
+            self.setStyleSheet(
+                "QFrame#InlineMatrixEditor {"
+                "  background-color: #FFFFFF;"
+                "  border: 1.5px solid #6366F1;"
+                "  border-radius: 10px;"
+                "}"
+                "QLabel { color: #334155; font-size: 11px; background: transparent; }"
+                "QLineEdit {"
+                "  background-color: #F8FAFC; color: #0F172A; border: 1px solid #CBD5E1;"
+                "  border-radius: 5px; padding: 2px 4px; font-size: 12px; min-height: 24px;"
+                "}"
+                "QLineEdit:focus { border: 1px solid #6366F1; background-color: #FFFFFF; }"
+                "QComboBox {"
+                "  background-color: #F8FAFC; color: #0F172A; border: 1px solid #CBD5E1;"
+                "  border-radius: 5px; padding: 2px 6px; font-size: 11px; min-height: 24px;"
+                "}"
+                "QPushButton {"
+                "  background-color: #F1F5F9; color: #1E293B; border: 1px solid #CBD5E1;"
+                "  border-radius: 5px; padding: 3px 7px; font-size: 11px; min-height: 22px;"
+                "}"
+                "QPushButton:hover { background-color: #E2E8F0; }"
+                "QPushButton#InlineMatDelBtn { color: #DC2626; border-color: #FECACA; }"
+                "QPushButton#InlineMatDelBtn:hover { background-color: #FEE2E2; }"
+            )
+
+    def _build_ui(self, initial_values: List[List[str]]):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(10, 8, 10, 8)
+        root.setSpacing(6)
+
+        bar = QHBoxLayout()
+        bar.setSpacing(4)
+
+        self.prefix_edit = QLineEdit(self._prefix)
+        self.prefix_edit.setPlaceholderText("A =")
+        self.prefix_edit.setFixedWidth(56)
+        self.prefix_edit.setMinimumHeight(24)
+        self.prefix_edit.installEventFilter(self)
+        bar.addWidget(self.prefix_edit)
+
+        for lbl, dr, dc in [
+            ("+ Riga", 1, 0),
+            ("- Riga", -1, 0),
+            ("+ Colonna", 0, 1),
+            ("- Colonna", 0, -1),
+        ]:
+            btn = QPushButton(lbl)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.clicked.connect(lambda _c=False, r_d=dr, c_d=dc: self._resize_grid(r_d, c_d))
+            bar.addWidget(btn)
+
+        self.env_combo = QComboBox()
+        for label, env_name, _l, _r in self._ENV_CHOICES:
+            self.env_combo.addItem(label, env_name)
+        idx = self.env_combo.findData(self._env)
+        if idx >= 0:
+            self.env_combo.setCurrentIndex(idx)
+        self.env_combo.currentIndexChanged.connect(self._sync_brackets)
+        bar.addWidget(self.env_combo)
+
+        del_btn = QPushButton("✕")
+        del_btn.setObjectName("InlineMatDelBtn")
+        del_btn.setToolTip("Elimina matrice")
+        del_btn.setFixedWidth(26)
+        del_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        del_btn.clicked.connect(self._on_delete)
+        bar.addWidget(del_btn)
+        root.addLayout(bar)
+
+        mat_row = QHBoxLayout()
+        mat_row.setSpacing(5)
+        b_col = "#94A3B8" if self._dark_mode else "#475569"
+        self.left_bracket_lbl = QLabel("[")
+        self.left_bracket_lbl.setStyleSheet(f"font-size: 32px; font-weight: 300; color: {b_col};")
+        self.right_bracket_lbl = QLabel("]")
+        self.right_bracket_lbl.setStyleSheet(f"font-size: 32px; font-weight: 300; color: {b_col};")
+
+        self.grid_widget = QWidget()
+        self.grid_layout = QGridLayout(self.grid_widget)
+        self.grid_layout.setContentsMargins(2, 2, 2, 2)
+        self.grid_layout.setSpacing(4)
+
+        mat_row.addStretch(1)
+        mat_row.addWidget(self.left_bracket_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
+        mat_row.addWidget(self.grid_widget)
+        mat_row.addWidget(self.right_bracket_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
+        mat_row.addStretch(1)
+        root.addLayout(mat_row)
+
+        hint = QLabel("Tab / Frecce: naviga  •  Ctrl+Invio o clic fuori: salva")
+        hint.setStyleSheet("font-size: 10px; opacity: 0.7;")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        root.addWidget(hint)
+
+        self._rebuild_grid(initial_values)
+        self._sync_brackets()
+        self.adjustSize()
+
+    def _sync_brackets(self):
+        env = self.env_combo.currentData() or "bmatrix"
+        for _lbl, name, l_ch, r_ch in self._ENV_CHOICES:
+            if name == env:
+                self.left_bracket_lbl.setText(l_ch)
+                self.right_bracket_lbl.setText(r_ch)
+                break
+
+    def _snapshot_values(self) -> List[List[str]]:
+        return [[c.text() for c in row] for row in self._cells]
+
+    def _resize_grid(self, dr: int, dc: int):
+        new_r = max(1, min(8, self._rows + dr))
+        new_c = max(1, min(8, self._cols + dc))
+        if new_r == self._rows and new_c == self._cols:
+            return
+        vals = self._snapshot_values()
+        self._rows, self._cols = new_r, new_c
+        self._rebuild_grid(vals)
+        self.adjustSize()
+        if self._cells and self._cells[0]:
+            self._cells[0][0].setFocus()
+
+    def _rebuild_grid(self, values: List[List[str]]):
+        while self.grid_layout.count():
+            item = self.grid_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        self._cells.clear()
+
+        for r in range(self._rows):
+            row_edits: List[QLineEdit] = []
+            for c in range(self._cols):
+                val = ""
+                if r < len(values) and c < len(values[r]):
+                    val = values[r][c]
+                elif not values:
+                    val = "1" if (self._rows == self._cols and r == c) else "0"
+                le = QLineEdit(val)
+                le.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                le.setFixedWidth(48)
+                le.setMinimumHeight(26)
+                le.setProperty("mat_pos", (r, c))
+                le.installEventFilter(self)
+                self.grid_layout.addWidget(le, r, c)
+                row_edits.append(le)
+            self._cells.append(row_edits)
+
+    def focus_first_cell(self):
+        if self._cells and self._cells[0]:
+            self._cells[0][0].setFocus()
+            self._cells[0][0].selectAll()
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent):
+            key = event.key()
+            mods = event.modifiers()
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and (mods & Qt.KeyboardModifier.ControlModifier):
+                self.commit()
+                return True
+            if key == Qt.Key.Key_Escape:
+                self.commit()
+                return True
+
+            pos = obj.property("mat_pos") if isinstance(obj, QLineEdit) else None
+            if pos is not None:
+                r, c = pos
+                if key == Qt.Key.Key_Tab:
+                    nc = (c + 1) % self._cols
+                    nr = (r + (1 if nc == 0 else 0)) % self._rows
+                    self._focus_cell(nr, nc)
+                    return True
+                if key == Qt.Key.Key_Backtab:
+                    nc = (c - 1) if c > 0 else (self._cols - 1)
+                    nr = r if c > 0 else ((r - 1) % self._rows)
+                    self._focus_cell(nr, nc)
+                    return True
+                if key == Qt.Key.Key_Up and r > 0:
+                    self._focus_cell(r - 1, c)
+                    return True
+                if key == Qt.Key.Key_Down and r < self._rows - 1:
+                    self._focus_cell(r + 1, c)
+                    return True
+                if key == Qt.Key.Key_Left and isinstance(obj, QLineEdit) and obj.cursorPosition() == 0 and c > 0:
+                    self._focus_cell(r, c - 1)
+                    return True
+                if (
+                    key == Qt.Key.Key_Right
+                    and isinstance(obj, QLineEdit)
+                    and obj.cursorPosition() == len(obj.text())
+                    and c < self._cols - 1
+                ):
+                    self._focus_cell(r, c + 1)
+                    return True
+        return super().eventFilter(obj, event)
+
+    def _focus_cell(self, r: int, c: int):
+        if 0 <= r < len(self._cells) and 0 <= c < len(self._cells[r]):
+            cell = self._cells[r][c]
+            cell.setFocus()
+            cell.selectAll()
+
+    def _on_app_focus_changed(self, _old: Optional[QWidget], new: Optional[QWidget]):
+        if self._closing or new is None:
+            return
+        if new is self or self.isAncestorOf(new):
+            return
+        # Permetti interazione col popup del QComboBox
+        if self.env_combo.view() is not None and (new is self.env_combo.view() or self.env_combo.view().isAncestorOf(new)):
+            return
+        self.commit()
+
+    def _on_delete(self):
+        if self._closing:
+            return
+        self._closing = True
+        self._disconnect_focus()
+        self.deleteRequested.emit()
+
+    def commit(self):
+        if self._closing:
+            return
+        self._closing = True
+        self._disconnect_focus()
+        self.commitRequested.emit(self.to_latex())
+
+    def _disconnect_focus(self):
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                app.focusChanged.disconnect(self._on_app_focus_changed)
+            except TypeError:
+                pass
+
+    def to_latex(self) -> str:
+        env = self.env_combo.currentData() or self._env or "bmatrix"
+        rows_tex = [
+            " & ".join((cell.text().strip() or "0") for cell in row)
+            for row in self._cells
+        ]
+        body = " \\\\\n".join(rows_tex)
+        mat = f"\\begin{{{env}}}\n{body}\n\\end{{{env}}}"
+        prefix = self.prefix_edit.text().strip()
+        return f"{prefix} {mat}" if prefix else mat
+
+
+class DictationGhostLineEdit(QLineEdit):
+    """QLineEdit con anteprima Ghost-Text delle prime 6 parole dell'ultima dettatura FlowType (Tab per incollare)."""
+
+    def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True):
+        super().__init__(parent)
+        self._dark_mode = dark_mode
+        self._ghost_dismissed = False
+        sig = dictation_tracker.signals
+        if sig is not None:
+            sig.historyUpdated.connect(self._on_dictation_updated, Qt.ConnectionType.QueuedConnection)
+
+    def _on_dictation_updated(self):
+        self._ghost_dismissed = False
+        self.update()
+
+    def focusInEvent(self, event):
+        self._ghost_dismissed = False
+        super().focusInEvent(event)
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.text() or not self.hasFocus() or self._ghost_dismissed:
+            return
+        preview = dictation_tracker.get_active_preview()
+        if preview is None:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        ghost_col = QColor(203, 213, 225, 130) if self._dark_mode else QColor(71, 85, 105, 130)
+        painter.setPen(QPen(ghost_col))
+        f = QFont(self.font())
+        f.setItalic(True)
+        painter.setFont(f)
+        rect = self.contentsRect().adjusted(10, 0, -10, 0)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, preview["ghost_text"])
+        painter.end()
+
+    def keyPressEvent(self, event: QKeyEvent):
+        key = event.key()
+        mods = event.modifiers()
+        if not self.text() and not self._ghost_dismissed:
+            preview = dictation_tracker.get_active_preview()
+            if preview is not None:
+                if key == Qt.Key.Key_Tab and not (mods & Qt.KeyboardModifier.ShiftModifier):
+                    full_text = dictation_tracker.consume()
+                    if full_text:
+                        self.setText(full_text)
+                        self.setCursorPosition(len(full_text))
+                    return
+                elif key not in (
+                    Qt.Key.Key_Shift, Qt.Key.Key_Control, Qt.Key.Key_Alt, Qt.Key.Key_Meta
+                ):
+                    self._ghost_dismissed = True
+        super().keyPressEvent(event)
+
+
 class ScientificNoteEditor(QTextEdit):
     """
     Editor WYSIWYG a Blocchi Reali in stile Notion:
@@ -1246,6 +1683,13 @@ class ScientificNoteEditor(QTextEdit):
         self._internal_update: bool = False
         self._slash_start_pos: Optional[int] = None
 
+        # Interactive blocks, inline matrix editor & inline calc ghost-text state
+        self._block_action_rects: List[Tuple[QRectF, str, Any]] = []
+        self._hovered_action_idx: int = -1
+        self._hovered_matrix_pos: Optional[int] = None
+        self._inline_matrix_editor: Optional[InlineMatrixEditor] = None
+        self._inline_calc_suggestion: Optional[Dict[str, Any]] = None
+
         # Audio-Text Sync state
         self._audio_sync_active: bool = False
         self._sync_segments: List[Dict] = []
@@ -1255,6 +1699,8 @@ class ScientificNoteEditor(QTextEdit):
         self._active_highlight_span = None
         self._auto_scroll_paused: bool = False
 
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
         self.setAcceptRichText(False)
         self.document().setDocumentMargin(12 if reading_mode else 4)
         self.highlighter = MarkdownLatexHighlighter(self.document(), dark_mode=dark_mode)
@@ -1264,6 +1710,10 @@ class ScientificNoteEditor(QTextEdit):
         self.slash_popup.hide()
 
         self.textChanged.connect(self._on_internal_text_changed)
+        self.cursorPositionChanged.connect(self._on_cursor_pos_changed)
+        sig = dictation_tracker.signals
+        if sig is not None:
+            sig.historyUpdated.connect(self.viewport().update, Qt.ConnectionType.QueuedConnection)
 
     @property
     def is_studio_view(self) -> bool:
@@ -1399,6 +1849,8 @@ class ScientificNoteEditor(QTextEdit):
             ai_title = str(block.blockFormat().property(PROP_AI_NOTE_TITLE) or "Nota AI").strip()
             ai_body = str(block.blockFormat().property(PROP_AI_NOTE_BODY) or "").strip()
             return f":::ai-note {ai_title}\n{ai_body}\n:::"
+        if kind == "callout":
+            return f"> [!NOTE] {txt}" if txt else "> [!NOTE]"
         if kind == "quote":
             return f"> {txt}"
         if kind == "todo":
@@ -1547,6 +1999,14 @@ class ScientificNoteEditor(QTextEdit):
                 i += 1
                 continue
 
+            # 4b. Blocco Callout (> [!NOTE] ...)
+            callout_m = re.match(r"^>\s*\[!(?:NOTE|CALLOUT|TIP|IMPORTANT)\]\s*(.*)$", stripped, re.IGNORECASE)
+            if callout_m:
+                _ensure_new_block()
+                self._apply_callout_block_at_cursor(cursor, callout_m.group(1).strip())
+                i += 1
+                continue
+
             # 5. Blocco Quote (> ...)
             if line.startswith("> "):
                 _ensure_new_block()
@@ -1664,8 +2124,10 @@ class ScientificNoteEditor(QTextEdit):
         bf = QTextBlockFormat()
         bf.setTopMargin(12 if level == 1 else (9 if level == 2 else 6))
         bf.setBottomMargin(5 if level == 1 else 3)
-        bf.setProperty(PROP_BLOCK_KIND, f"h{level}")
+        kind = f"h{level}"
+        bf.setProperty(PROP_BLOCK_KIND, kind)
         cursor.setBlockFormat(bf)
+        cursor.block().setUserData(BlockUserData(kind))
 
         scale = max(0.8, min(1.5, self._font_scale_pct / 100.0))
         size_map = {1: 15.5, 2: 13.5, 3: 12.0, 4: 11.5}
@@ -1692,11 +2154,10 @@ class ScientificNoteEditor(QTextEdit):
         else:
             try:
                 ink_hex = _editor_ink_hex(self._dark_mode, self._reading_mode)
-                buf = io.BytesIO()
-                math_to_image(f"${clean}$", buf, dpi=175, format="png", color=ink_hex)
-                qimg = QImage.fromData(buf.getvalue(), "PNG")
-                w_px = max(20, int(qimg.width() * 0.62))
-                h_px = max(20, int(qimg.height() * 0.62))
+                qimg = _mathtext_to_transparent_qimage(clean, dpi=175, ink_hex=ink_hex)
+                if qimg is not None and not qimg.isNull():
+                    w_px = max(20, int(qimg.width() * 0.62))
+                    h_px = max(20, int(qimg.height() * 0.62))
             except Exception:
                 qimg = None
 
@@ -1721,12 +2182,29 @@ class ScientificNoteEditor(QTextEdit):
         bf.setBottomMargin(6)
         bf.setProperty(PROP_BLOCK_KIND, "quote")
         cursor.setBlockFormat(bf)
+        cursor.block().setUserData(BlockUserData("quote"))
 
         cf = QTextCharFormat()
         cf.setForeground(QColor("#CBD5E1" if self._dark_mode else "#334155"))
         cursor.setCharFormat(cf)
         if text:
             cursor.insertText(text)
+
+    def _apply_callout_block_at_cursor(self, cursor: QTextCursor, text: str = ""):
+        bf = QTextBlockFormat()
+        bf.setLeftMargin(34)
+        bf.setRightMargin(28)
+        bf.setTopMargin(8)
+        bf.setBottomMargin(8)
+        bf.setProperty(PROP_BLOCK_KIND, "callout")
+        cursor.setBlockFormat(bf)
+        cursor.block().setUserData(BlockUserData("callout"))
+
+        cf = QTextCharFormat()
+        cf.setForeground(QColor("#E2E8F0" if self._dark_mode else "#1E293B"))
+        cursor.setCharFormat(cf)
+        if text:
+            cursor.insertText(text, cf)
 
     def _apply_ai_note_block_at_cursor(
         self,
@@ -1785,6 +2263,7 @@ class ScientificNoteEditor(QTextEdit):
         bf.setBottomMargin(3)
         bf.setProperty(PROP_BLOCK_KIND, "todo")
         cursor.setBlockFormat(bf)
+        cursor.block().setUserData(BlockUserData("todo"))
 
         glyph = "☑ " if checked else "☐ "
         chk_fmt = QTextCharFormat()
@@ -1870,9 +2349,37 @@ class ScientificNoteEditor(QTextEdit):
         cursor.insertImage(fmt)
 
     # -----------------------------------------------------------------
-    # PAINT EVENT: BARRA VERTICALE QUOTE (3px) & CARD CODICE/FILE
+    # PAINT EVENT: CARD, GHOST-TEXT PLACEHOLDERS, INLINE CALC & AZIONI BLOCCO
     # -----------------------------------------------------------------
+    def _matrix_rect_in_viewport(self, frag_pos: int, img_w: float, img_h: float) -> QRectF:
+        c = QTextCursor(self.document())
+        c.setPosition(frag_pos)
+        r = self.cursorRect(c)
+        w = max(40.0, float(img_w or 80.0))
+        h = max(24.0, float(img_h or 40.0))
+        top = r.bottom() - h
+        return QRectF(float(r.left()), float(top), w, h)
+
+    def _draw_delete_badge(self, painter: QPainter, rect: QRectF, hovered: bool):
+        bg = QColor("#EF4444" if hovered else ("#2A2A32" if self._dark_mode else "#E2E8F0"))
+        bg.setAlpha(210 if hovered else 115)
+        fg = QColor("#FFFFFF" if hovered else ("#CBD5E1" if self._dark_mode else "#475569"))
+        fg.setAlpha(255 if hovered else 150)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(bg))
+        painter.drawRoundedRect(rect, 4.0, 4.0)
+        painter.setPen(QPen(fg))
+        f = QFont(self.font())
+        f.setPointSizeF(9.0)
+        f.setWeight(QFont.Weight.Bold)
+        painter.setFont(f)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "✕")
+
     def paintEvent(self, event):
+        self._block_action_rects = []
+        pending_delete_badges: List[Tuple[QRectF, str, Any]] = []
+        vp_rect = self.viewport().rect()
+
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -1894,7 +2401,6 @@ class ScientificNoteEditor(QTextEdit):
         for frame in root.childFrames():
             if frame.frameFormat().hasProperty(PROP_FRAME_KIND):
                 f_rect = doc_layout.frameBoundingRect(frame).translated(hx, vy)
-                # Limita alla larghezza del viewport
                 draw_rect = QRectF(
                     2.0,
                     f_rect.top() + 4.0,
@@ -1904,8 +2410,11 @@ class ScientificNoteEditor(QTextEdit):
                 painter.setPen(QPen(card_bd, 1.0))
                 painter.setBrush(QBrush(card_bg))
                 painter.drawRoundedRect(draw_rect, 8.0, 8.0)
+                if draw_rect.bottom() >= 0 and draw_rect.top() <= vp_rect.height():
+                    del_rect = QRectF(draw_rect.right() - 24.0, draw_rect.top() + 6.0, 18.0, 18.0)
+                    pending_delete_badges.append((del_rect, "delete_frame", frame))
 
-        # 2. Disegna barra verticale Quote (3px) e card rettangolari File
+        # 2. Disegna barra verticale Quote (3px), Callout, File, AI Note
         block = self.document().begin()
         while block.isValid():
             kind = block.blockFormat().property(PROP_BLOCK_KIND)
@@ -1915,6 +2424,33 @@ class ScientificNoteEditor(QTextEdit):
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QBrush(quote_bar_color))
                 painter.drawRoundedRect(bar_rect, 1.5, 1.5)
+            elif kind == "callout":
+                b_rect = doc_layout.blockBoundingRect(block).translated(hx, vy)
+                draw_rect = QRectF(
+                    2.0,
+                    b_rect.top() - 4.0,
+                    max(40.0, self.viewport().width() - 6.0),
+                    max(32.0, b_rect.height() + 8.0),
+                )
+                co_bg = QColor("#F59E0B" if self._dark_mode else "#D97706")
+                co_bg.setAlpha(26 if self._dark_mode else 20)
+                co_bd = QColor("#F59E0B" if self._dark_mode else "#D97706")
+                co_bd.setAlpha(90 if self._dark_mode else 75)
+                painter.setPen(QPen(co_bd, 1.0))
+                painter.setBrush(QBrush(co_bg))
+                painter.drawRoundedRect(draw_rect, 8.0, 8.0)
+                bar_rect = QRectF(4.0, draw_rect.top() + 4.0, 3.0, max(14.0, draw_rect.height() - 8.0))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(QColor("#F59E0B")))
+                painter.drawRoundedRect(bar_rect, 1.5, 1.5)
+                painter.setPen(QPen(QColor("#FBBF24" if self._dark_mode else "#B45309")))
+                ic_font = QFont(self.font())
+                ic_font.setPointSizeF(11.0)
+                painter.setFont(ic_font)
+                painter.drawText(QRectF(12.0, draw_rect.top(), 20.0, 28.0), Qt.AlignmentFlag.AlignCenter, "💡")
+                if draw_rect.bottom() >= 0 and draw_rect.top() <= vp_rect.height():
+                    del_rect = QRectF(draw_rect.right() - 24.0, draw_rect.top() + 6.0, 18.0, 18.0)
+                    pending_delete_badges.append((del_rect, "delete_block", block.blockNumber()))
             elif kind == "file":
                 b_rect = doc_layout.blockBoundingRect(block).translated(hx, vy)
                 draw_rect = QRectF(
@@ -1926,6 +2462,9 @@ class ScientificNoteEditor(QTextEdit):
                 painter.setPen(QPen(card_bd, 1.0))
                 painter.setBrush(QBrush(card_bg))
                 painter.drawRoundedRect(draw_rect, 8.0, 8.0)
+                if draw_rect.bottom() >= 0 and draw_rect.top() <= vp_rect.height():
+                    del_rect = QRectF(draw_rect.right() - 24.0, draw_rect.top() + 6.0, 18.0, 18.0)
+                    pending_delete_badges.append((del_rect, "delete_block", block.blockNumber()))
             elif kind == "ai_note":
                 b_rect = doc_layout.blockBoundingRect(block).translated(hx, vy)
                 draw_rect = QRectF(
@@ -1945,10 +2484,303 @@ class ScientificNoteEditor(QTextEdit):
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(QBrush(self._sync_accent_color))
                 painter.drawRoundedRect(bar_rect, 1.5, 1.5)
+                if draw_rect.bottom() >= 0 and draw_rect.top() <= vp_rect.height():
+                    del_rect = QRectF(draw_rect.right() - 24.0, draw_rect.top() + 6.0, 18.0, 18.0)
+                    pending_delete_badges.append((del_rect, "delete_block", block.blockNumber()))
             block = block.next()
 
         painter.end()
         super().paintEvent(event)
+
+        if self._is_studio_view:
+            return
+
+        fg_painter = QPainter(self.viewport())
+        fg_painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        ghost_color = QColor(226, 232, 240, 110) if self._dark_mode else QColor(30, 41, 59, 110)
+
+        # 3. Ghost-Text Placeholder per blocchi vuoti (/h1, /h2, /h3, /todo, /quote, /callout)
+        #    e overlay hover su Matrici interattive
+        block = self.document().begin()
+        while block.isValid():
+            b_rect = doc_layout.blockBoundingRect(block).translated(hx, vy)
+            if b_rect.bottom() >= -20 and b_rect.top() <= vp_rect.height() + 20:
+                ud = block.userData()
+                p_kind = ud.placeholder_kind if isinstance(ud, BlockUserData) else ""
+                if not p_kind:
+                    bk = block.blockFormat().property(PROP_BLOCK_KIND)
+                    if bk in PLACEHOLDER_TEXTS:
+                        p_kind = bk
+
+                if p_kind in PLACEHOLDER_TEXTS:
+                    txt = block.text()
+                    is_empty = (txt in ("☐ ", "☑ ", "☐", "☑", "")) if p_kind == "todo" else (txt == "")
+                    if is_empty:
+                        end_cur = QTextCursor(block)
+                        end_cur.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+                        crect = self.cursorRect(end_cur)
+                        ph_font = QFont(end_cur.charFormat().font())
+                        if ph_font.pointSizeF() <= 0:
+                            ph_font = QFont(self.font())
+                        fg_painter.setFont(ph_font)
+                        fg_painter.setPen(QPen(ghost_color))
+                        draw_x = float(crect.left() + 2)
+                        avail_w = max(80.0, float(self.viewport().width()) - draw_x - 32.0)
+                        fg_painter.drawText(
+                            QRectF(draw_x, float(crect.top()), avail_w, float(max(18, crect.height()))),
+                            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                            PLACEHOLDER_TEXTS[p_kind],
+                        )
+
+                # Cerca matrici nel blocco per hover pill ("✎ Modifica" + "✕")
+                fit = block.begin()
+                while not fit.atEnd():
+                    frag = fit.fragment()
+                    if frag.isValid():
+                        cf = frag.charFormat()
+                        if cf.hasProperty(PROP_LATEX_SOURCE):
+                            tex = str(cf.property(PROP_LATEX_SOURCE) or "")
+                            if re.search(r"\\begin\{[bpv]matrix\}", tex):
+                                img_fmt = cf.toImageFormat()
+                                m_rect = self._matrix_rect_in_viewport(
+                                    frag.position(), img_fmt.width(), img_fmt.height()
+                                )
+                                is_mat_hovered = (self._hovered_matrix_pos == frag.position())
+                                if is_mat_hovered:
+                                    hl_pen = QPen(QColor("#6366F1"), 1.2, Qt.PenStyle.DashLine)
+                                    fg_painter.setPen(hl_pen)
+                                    fg_painter.setBrush(Qt.BrushStyle.NoBrush)
+                                    fg_painter.drawRoundedRect(m_rect.adjusted(-3, -3, 3, 3), 6.0, 6.0)
+
+                                    edit_rect = QRectF(m_rect.right() - 84.0, max(2.0, m_rect.top() - 10.0), 62.0, 18.0)
+                                    del_rect = QRectF(m_rect.right() - 18.0, max(2.0, m_rect.top() - 10.0), 18.0, 18.0)
+
+                                    edit_idx = len(self._block_action_rects)
+                                    self._block_action_rects.append((edit_rect, "edit_matrix", frag.position()))
+                                    e_hov = (self._hovered_action_idx == edit_idx)
+                                    fg_painter.setPen(Qt.PenStyle.NoPen)
+                                    fg_painter.setBrush(QBrush(QColor("#4F46E5" if e_hov else "#6366F1")))
+                                    fg_painter.drawRoundedRect(edit_rect, 4.0, 4.0)
+                                    fg_painter.setPen(QPen(QColor("#FFFFFF")))
+                                    ef = QFont(self.font())
+                                    ef.setPointSizeF(8.5)
+                                    ef.setWeight(QFont.Weight.DemiBold)
+                                    fg_painter.setFont(ef)
+                                    fg_painter.drawText(edit_rect, Qt.AlignmentFlag.AlignCenter, "✎ Modifica")
+
+                                    del_idx = len(self._block_action_rects)
+                                    self._block_action_rects.append((del_rect, "delete_matrix", frag.position()))
+                                    self._draw_delete_badge(fg_painter, del_rect, self._hovered_action_idx == del_idx)
+                    fit += 1
+            block = block.next()
+
+        # 4. Ghost-Text per Auto-Calcolo Inline (=) oppure Anteprima Dettatura FlowType (prime 6 parole)
+        if self._inline_calc_suggestion is not None:
+            sug = self._inline_calc_suggestion
+            if self.textCursor().position() == sug.get("pos"):
+                crect = self.cursorRect()
+                calc_color = QColor(148, 163, 184, 155) if self._dark_mode else QColor(100, 116, 139, 155)
+                cf_font = QFont(self.font())
+                if sug.get("kind") == "matrix":
+                    cf_font.setPointSizeF(max(8.5, cf_font.pointSizeF() - 1.0))
+                    cf_font.setItalic(True)
+                fg_painter.setFont(cf_font)
+                fg_painter.setPen(QPen(calc_color))
+                gx = float(crect.left() + 2)
+                gw = max(120.0, float(self.viewport().width()) - gx - 12.0)
+                fg_painter.drawText(
+                    QRectF(gx, float(crect.top()), gw, float(max(18, crect.height()))),
+                    Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                    sug.get("ghost_text", ""),
+                )
+        elif self.hasFocus():
+            cur = self.textCursor()
+            cur_blk = cur.block()
+            if cur_blk.isValid() and cur_blk.text() == "" and not cur_blk.blockFormat().property(PROP_BLOCK_KIND):
+                preview = dictation_tracker.get_active_preview()
+                if preview is not None:
+                    crect = self.cursorRect()
+                    d_color = QColor(203, 213, 225, 115) if self._dark_mode else QColor(71, 85, 105, 115)
+                    df = QFont(self.font())
+                    df.setItalic(True)
+                    fg_painter.setFont(df)
+                    fg_painter.setPen(QPen(d_color))
+                    gx = float(crect.left() + 2)
+                    gw = max(120.0, float(self.viewport().width()) - gx - 16.0)
+                    fg_painter.drawText(
+                        QRectF(gx, float(crect.top()), gw, float(max(18, crect.height()))),
+                        Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+                        preview["ghost_text"],
+                    )
+
+        # 5. Pulsanti discreti ✕ per eliminare blocchi speciali (/code, /callout, /file, ai_note)
+        for rect, action_kind, target in pending_delete_badges:
+            idx = len(self._block_action_rects)
+            self._block_action_rects.append((rect, action_kind, target))
+            self._draw_delete_badge(fg_painter, rect, self._hovered_action_idx == idx)
+
+        fg_painter.end()
+
+    # -----------------------------------------------------------------
+    # ELIMINAZIONE BLOCCHI UNDO-SAFE & MATRICE IN-PLACE
+    # -----------------------------------------------------------------
+    def _delete_frame_undoable(self, frame: QTextFrame):
+        if frame is None:
+            return
+        doc = self.document()
+        c = QTextCursor(doc)
+        c.beginEditBlock()
+        start = max(0, frame.firstPosition() - 1)
+        end = min(max(0, doc.characterCount() - 1), frame.lastPosition() + 1)
+        c.setPosition(start)
+        c.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        c.removeSelectedText()
+        c.setBlockFormat(QTextBlockFormat())
+        c.setCharFormat(QTextCharFormat())
+        c.block().setUserData(None)
+        c.endEditBlock()
+        self.setTextCursor(c)
+        self._on_internal_text_changed()
+
+    def _delete_block_undoable(self, block_number: int):
+        doc = self.document()
+        block = doc.findBlockByNumber(block_number)
+        if not block.isValid():
+            return
+        c = QTextCursor(block)
+        c.beginEditBlock()
+        if doc.blockCount() <= 1:
+            c.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            c.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+            c.removeSelectedText()
+            c.setBlockFormat(QTextBlockFormat())
+            c.setCharFormat(QTextCharFormat())
+            block.setUserData(None)
+        else:
+            if block.previous().isValid():
+                c.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                c.movePosition(QTextCursor.MoveOperation.PreviousBlock)
+                c.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+                c.setPosition(block.position() + max(0, len(block.text())), QTextCursor.MoveMode.KeepAnchor)
+                c.removeSelectedText()
+            else:
+                c.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                c.movePosition(QTextCursor.MoveOperation.NextBlock, QTextCursor.MoveMode.KeepAnchor)
+                c.removeSelectedText()
+        c.endEditBlock()
+        self.setTextCursor(c)
+        self._on_internal_text_changed()
+
+    def _delete_matrix_at_pos(self, doc_pos: int):
+        doc = self.document()
+        if doc_pos < 0 or doc_pos >= doc.characterCount() - 1:
+            return
+        c = QTextCursor(doc)
+        c.beginEditBlock()
+        c.setPosition(doc_pos)
+        c.setPosition(doc_pos + 1, QTextCursor.MoveMode.KeepAnchor)
+        c.removeSelectedText()
+        c.endEditBlock()
+        self.setTextCursor(c)
+        self._hovered_matrix_pos = None
+        self._on_internal_text_changed()
+
+    def _close_inline_matrix_editor(self):
+        if self._inline_matrix_editor is not None:
+            ed = self._inline_matrix_editor
+            self._inline_matrix_editor = None
+            ed.hide()
+            ed.deleteLater()
+
+    def _open_inline_matrix_editor(self, doc_pos: int, old_tex: str):
+        self._close_inline_matrix_editor()
+        ed = InlineMatrixEditor(
+            self.viewport(),
+            doc_pos=doc_pos,
+            initial_tex=old_tex,
+            dark_mode=self._dark_mode,
+        )
+
+        def _on_commit(new_tex: str):
+            self._close_inline_matrix_editor()
+            if new_tex and new_tex.strip() != old_tex.strip():
+                doc = self.document()
+                if 0 <= doc_pos < doc.characterCount() - 1:
+                    c = QTextCursor(doc)
+                    c.beginEditBlock()
+                    c.setPosition(doc_pos)
+                    c.setPosition(doc_pos + 1, QTextCursor.MoveMode.KeepAnchor)
+                    c.removeSelectedText()
+                    self._insert_latex_block_at_cursor(c, new_tex)
+                    c.endEditBlock()
+                    self.setTextCursor(c)
+                    self._on_internal_text_changed()
+            self.setFocus()
+
+        def _on_del():
+            self._close_inline_matrix_editor()
+            self._delete_matrix_at_pos(doc_pos)
+            self.setFocus()
+
+        ed.commitRequested.connect(_on_commit)
+        ed.deleteRequested.connect(_on_del)
+
+        c = QTextCursor(self.document())
+        c.setPosition(doc_pos)
+        crect = self.cursorRect(c)
+        px = max(6, min(crect.left(), max(6, self.viewport().width() - ed.width() - 8)))
+        py = max(6, min(crect.top(), max(6, self.viewport().height() - ed.height() - 8)))
+        ed.move(px, py)
+        ed.show()
+        ed.raise_()
+        ed.focus_first_cell()
+        self._inline_matrix_editor = ed
+
+    def _collect_labeled_matrices(self) -> Dict[str, Any]:
+        """Estrae tutte le matrici con etichetta (es. A = [Matrice]) presenti nel documento."""
+        matrices: Dict[str, Any] = {}
+        block = self.document().begin()
+        while block.isValid():
+            prev_text = ""
+            fit = block.begin()
+            while not fit.atEnd():
+                frag = fit.fragment()
+                if frag.isValid():
+                    cf = frag.charFormat()
+                    if cf.hasProperty(PROP_LATEX_SOURCE):
+                        tex = str(cf.property(PROP_LATEX_SOURCE) or "")
+                        parsed = parse_latex_matrix(tex)
+                        if parsed is not None:
+                            lbl, arr = parsed
+                            if not lbl and prev_text:
+                                lm = re.search(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*$", prev_text)
+                                if lm:
+                                    lbl = lm.group(1)
+                            if lbl:
+                                matrices[lbl] = arr
+                        prev_text = ""
+                    else:
+                        prev_text += frag.text().replace("\ufffc", "")
+                fit += 1
+            block = block.next()
+        return matrices
+
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.viewport().update()
+
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.viewport().update()
+
+    def _on_cursor_pos_changed(self):
+        if self._inline_calc_suggestion is not None:
+            if self.textCursor().position() != self._inline_calc_suggestion.get("pos"):
+                self._inline_calc_suggestion = None
+                self.viewport().update()
+        elif dictation_tracker.get_active_preview() is not None:
+            self.viewport().update()
 
     # -----------------------------------------------------------------
     # VISTA STUDIO TOGGLE
@@ -2207,8 +3039,54 @@ class ScientificNoteEditor(QTextEdit):
         self.seekRequested.emit(int(target_ms))
 
     # -----------------------------------------------------------------
-    # MOUSE INTERACTION (TO-DO CHECKBOX & FILE BLOCKS)
+    # MOUSE INTERACTION (HOVER, DELETE BLOCK, MATRIX IN-PLACE, TO-DO)
     # -----------------------------------------------------------------
+    def _find_matrix_at_point(self, pt: QPoint) -> Optional[Tuple[int, str]]:
+        """Restituisce (frag_position, latex_source) se pt cade sopra una matrice renderizzata."""
+        pt_f = QPointF(pt)
+        cur = self.cursorForPosition(pt)
+        block = cur.block()
+        if not block.isValid():
+            return None
+        fit = block.begin()
+        while not fit.atEnd():
+            frag = fit.fragment()
+            if frag.isValid():
+                cf = frag.charFormat()
+                if cf.hasProperty(PROP_LATEX_SOURCE):
+                    tex = str(cf.property(PROP_LATEX_SOURCE) or "")
+                    if re.search(r"\\begin\{[bpv]matrix\}", tex):
+                        img_fmt = cf.toImageFormat()
+                        m_rect = self._matrix_rect_in_viewport(
+                            frag.position(), img_fmt.width(), img_fmt.height()
+                        )
+                        if m_rect.adjusted(-6, -12, 6, 6).contains(pt_f):
+                            return frag.position(), tex
+            fit += 1
+        return None
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        if not self._is_studio_view:
+            pt_f = QPointF(event.pos())
+            new_act_idx = -1
+            for idx, (rect, _kind, _target) in enumerate(self._block_action_rects):
+                if rect.contains(pt_f):
+                    new_act_idx = idx
+                    break
+
+            mat_hit = self._find_matrix_at_point(event.pos())
+            new_mat_pos = mat_hit[0] if mat_hit is not None else None
+
+            if new_act_idx != self._hovered_action_idx or new_mat_pos != self._hovered_matrix_pos:
+                self._hovered_action_idx = new_act_idx
+                self._hovered_matrix_pos = new_mat_pos
+                if new_act_idx >= 0 or new_mat_pos is not None:
+                    self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+                else:
+                    self.viewport().setCursor(Qt.CursorShape.IBeamCursor)
+                self.viewport().update()
+        super().mouseMoveEvent(event)
+
     def mousePressEvent(self, event: QMouseEvent):
         if (
             self._audio_sync_active
@@ -2223,6 +3101,30 @@ class ScientificNoteEditor(QTextEdit):
                 return
 
         if not self._is_studio_view and event.button() == Qt.MouseButton.LeftButton:
+            pt_f = QPointF(event.pos())
+            for rect, action_kind, target in self._block_action_rects:
+                if rect.contains(pt_f):
+                    if action_kind == "delete_frame":
+                        self._delete_frame_undoable(target)
+                    elif action_kind == "delete_block":
+                        self._delete_block_undoable(target)
+                    elif action_kind == "delete_matrix":
+                        self._delete_matrix_at_pos(target)
+                    elif action_kind == "edit_matrix":
+                        c = QTextCursor(self.document())
+                        c.setPosition(target)
+                        c.setPosition(target + 1, QTextCursor.MoveMode.KeepAnchor)
+                        tex = str(c.charFormat().property(PROP_LATEX_SOURCE) or "")
+                        if tex:
+                            self._open_inline_matrix_editor(target, tex)
+                    return
+
+            mat_hit = self._find_matrix_at_point(event.pos())
+            if mat_hit is not None:
+                frag_pos, tex = mat_hit
+                self._open_inline_matrix_editor(frag_pos, tex)
+                return
+
             cur = self.cursorForPosition(event.pos())
             block = cur.block()
             kind = block.blockFormat().property(PROP_BLOCK_KIND)
@@ -2246,34 +3148,30 @@ class ScientificNoteEditor(QTextEdit):
         super().mousePressEvent(event)
 
     def _edit_latex_at_cursor(self, cur: QTextCursor, old_tex: str):
-        new_tex = ""
-        ok = False
         if re.search(r"\\begin\{[bpv]matrix\}", old_tex):
-            dlg = MatrixEditorDialog(initial_tex=old_tex, dark_mode=self._dark_mode, parent=self)
-            if dlg.exec() == QDialog.DialogCode.Accepted:
-                new_tex = dlg.to_latex()
-                ok = True
-        else:
-            val, accepted = QInputDialog.getMultiLineText(
-                self,
-                "Modifica LaTeX",
-                "Codice LaTeX:",
-                old_tex,
-            )
-            if accepted and val.strip():
-                new_tex = val.strip()
-                ok = True
-
-        if ok and new_tex:
-            c = QTextCursor(cur.block())
-            c.movePosition(QTextCursor.MoveOperation.StartOfBlock)
-            c.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+            pos = min(cur.selectionStart(), cur.selectionEnd())
+            self._open_inline_matrix_editor(pos, old_tex)
+            return
+        val, accepted = QInputDialog.getMultiLineText(
+            self,
+            "Modifica LaTeX",
+            "Codice LaTeX:",
+            old_tex,
+        )
+        if accepted and val.strip():
+            c = QTextCursor(cur)
+            c.beginEditBlock()
             c.removeSelectedText()
-            self._insert_latex_block_at_cursor(c, new_tex)
+            self._insert_latex_block_at_cursor(c, val.strip())
+            c.endEditBlock()
             self._on_internal_text_changed()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         if not self._is_studio_view and event.button() == Qt.MouseButton.LeftButton:
+            mat_hit = self._find_matrix_at_point(event.pos())
+            if mat_hit is not None:
+                self._open_inline_matrix_editor(mat_hit[0], mat_hit[1])
+                return
             cur = self.cursorForPosition(event.pos())
             cf = cur.charFormat()
             if not cf.hasProperty(PROP_LATEX_SOURCE):
@@ -2373,13 +3271,14 @@ class ScientificNoteEditor(QTextEdit):
         self._close_slash_popup()
 
         block_commands = {
-            "/formula", "/matrice", "/tabella", "/quote", "/todo",
-            "/h1", "/h2", "/code", "/bibtex", "/file",
+            "/formula", "/matrice", "/matrix", "/tabella", "/quote", "/callout",
+            "/todo", "/h1", "/h2", "/h3", "/code", "/bibtex", "/file",
         }
         if cmd in block_commands and cursor.block().text().strip() != "":
             cursor.insertBlock()
             cursor.setBlockFormat(QTextBlockFormat())
             cursor.setCharFormat(QTextCharFormat())
+            cursor.block().setUserData(None)
 
         if cmd == "/tabella":
             picker = GridSizePickerPopup("Tabella", dark_mode=self._dark_mode, parent=self)
@@ -2392,6 +3291,9 @@ class ScientificNoteEditor(QTextEdit):
                 self._on_internal_text_changed()
         elif cmd == "/quote":
             self._apply_quote_block_at_cursor(cursor, "")
+            self.setTextCursor(cursor)
+        elif cmd == "/callout":
+            self._apply_callout_block_at_cursor(cursor, "")
             self.setTextCursor(cursor)
         elif cmd == "/todo":
             self._apply_todo_block_at_cursor(cursor, "", checked=False)
@@ -2419,22 +3321,30 @@ class ScientificNoteEditor(QTextEdit):
             cursor.movePosition(QTextCursor.MoveOperation.Up)
             cursor.movePosition(QTextCursor.MoveOperation.EndOfLine)
             self.setTextCursor(cursor)
-        elif cmd == "/matrice":
+        elif cmd in ("/matrice", "/matrix"):
             picker = GridSizePickerPopup("Matrice", dark_mode=self._dark_mode, parent=self)
             rect = self.cursorRect()
             picker.move(self.viewport().mapToGlobal(QPoint(rect.left(), rect.bottom() + 4)))
             if picker.exec() == QDialog.DialogCode.Accepted and picker.selected_size():
                 r, c = picker.selected_size()
-                dlg = MatrixEditorDialog(rows=r, cols=c, dark_mode=self._dark_mode, parent=self)
-                if dlg.exec() == QDialog.DialogCode.Accepted:
-                    self._insert_latex_block_at_cursor(cursor, dlg.to_latex())
-                    self.setTextCursor(cursor)
-                    self._on_internal_text_changed()
+                rows_tex = [
+                    " & ".join("1" if (r == c and ri == ci) else "0" for ci in range(c))
+                    for ri in range(r)
+                ]
+                init_tex = "\\begin{bmatrix}\n" + " \\\\\n".join(rows_tex) + "\n\\end{bmatrix}"
+                mat_pos = cursor.position()
+                self._insert_latex_block_at_cursor(cursor, init_tex)
+                self.setTextCursor(cursor)
+                self._on_internal_text_changed()
+                self._open_inline_matrix_editor(mat_pos, init_tex)
         elif cmd == "/h1":
             self._apply_heading_block_at_cursor(cursor, level=1, text="")
             self.setTextCursor(cursor)
         elif cmd == "/h2":
             self._apply_heading_block_at_cursor(cursor, level=2, text="")
+            self.setTextCursor(cursor)
+        elif cmd == "/h3":
+            self._apply_heading_block_at_cursor(cursor, level=3, text="")
             self.setTextCursor(cursor)
         elif cmd == "/riassumi":
             self.setTextCursor(cursor)
@@ -2444,7 +3354,7 @@ class ScientificNoteEditor(QTextEdit):
             self.flashcardsRequested.emit()
 
     # -----------------------------------------------------------------
-    # TASTIERA: TAB IN TABELLA, EXIT CODE FRAME, AUTO-TODO/QUOTE, SLASH
+    # TASTIERA: TAB CALC/TABELLA, BACKSPACE BLOCCHI, AUTO-TODO/QUOTE, SLASH, =
     # -----------------------------------------------------------------
     def keyPressEvent(self, event: QKeyEvent):
         if self._is_studio_view:
@@ -2458,6 +3368,48 @@ class ScientificNoteEditor(QTextEdit):
         if self._audio_sync_active and key == Qt.Key.Key_Space and (mods & Qt.KeyboardModifier.ControlModifier):
             self.togglePlayRequested.emit()
             return
+
+        # 0b. Accetta suggerimento Ghost-Text di Auto-Calcolo (=) con Tab
+        if self._inline_calc_suggestion is not None:
+            if key == Qt.Key.Key_Tab and not (mods & Qt.KeyboardModifier.ShiftModifier):
+                sug = self._inline_calc_suggestion
+                self._inline_calc_suggestion = None
+                c = self.textCursor()
+                c.beginEditBlock()
+                if sug.get("kind") == "matrix":
+                    c.insertText(" ")
+                    self._insert_latex_block_at_cursor(c, sug["latex"])
+                else:
+                    c.insertText(sug.get("insert_text", ""))
+                c.endEditBlock()
+                self.setTextCursor(c)
+                self._on_internal_text_changed()
+                self.viewport().update()
+                return
+            elif key not in (
+                Qt.Key.Key_Shift,
+                Qt.Key.Key_Control,
+                Qt.Key.Key_Alt,
+                Qt.Key.Key_Meta,
+            ):
+                self._inline_calc_suggestion = None
+                self.viewport().update()
+
+        # 0c. Accetta anteprima Ghost-Text della dettatura FlowType con Tab su riga vuota
+        if key == Qt.Key.Key_Tab and not (mods & Qt.KeyboardModifier.ShiftModifier) and not self.slash_popup.isVisible():
+            c_chk = self.textCursor()
+            if c_chk.currentTable() is None and c_chk.block().text() == "" and not c_chk.block().blockFormat().property(PROP_BLOCK_KIND):
+                preview = dictation_tracker.get_active_preview()
+                if preview is not None:
+                    full_text = dictation_tracker.consume()
+                    if full_text:
+                        c_chk.beginEditBlock()
+                        c_chk.insertText(full_text)
+                        c_chk.endEditBlock()
+                        self.setTextCursor(c_chk)
+                        self._on_internal_text_changed()
+                        self.viewport().update()
+                        return
 
         # 1. Menu Slash attivo
         if self.slash_popup.isVisible():
@@ -2502,9 +3454,22 @@ class ScientificNoteEditor(QTextEdit):
                     self.setTextCursor(table.cellAt(nr, nc).firstCursorPosition())
                 return
 
-        # 3. Uscita da QTextFrame (Code / BibTeX) con Shift+Invio o Freccia Giù sull'ultima riga
+        # 3. Uscita da QTextFrame (Code / BibTeX) o eliminazione su Backspace se vuoto
         cur_frame = cursor.currentFrame()
         if cur_frame is not None and cur_frame.frameFormat().hasProperty(PROP_FRAME_KIND):
+            if key == Qt.Key.Key_Backspace and not cursor.hasSelection():
+                if cursor.position() == cur_frame.firstPosition():
+                    frame_txt = ""
+                    fit = cur_frame.begin()
+                    while not fit.atEnd():
+                        fb = fit.currentBlock()
+                        if fb.isValid():
+                            frame_txt += fb.text()
+                        fit += 1
+                    if frame_txt.strip() == "":
+                        self._delete_frame_undoable(cur_frame)
+                        return
+
             is_exit_shortcut = (key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and bool(mods & Qt.KeyboardModifier.ShiftModifier))
             at_last_block = (cursor.block() == cur_frame.lastCursorPosition().block())
             if is_exit_shortcut or (key == Qt.Key.Key_Down and at_last_block):
@@ -2512,29 +3477,59 @@ class ScientificNoteEditor(QTextEdit):
                 if not exit_cur.movePosition(QTextCursor.MoveOperation.NextBlock):
                     exit_cur.movePosition(QTextCursor.MoveOperation.End)
                 if exit_cur.currentFrame() == cur_frame:
-                    # Inserisci un paragrafo normale subito dopo il frame
                     root_cur = self.document().rootFrame().lastCursorPosition()
                     root_cur.insertBlock()
                     root_cur.setBlockFormat(QTextBlockFormat())
                     root_cur.setCharFormat(QTextCharFormat())
+                    root_cur.block().setUserData(None)
                     self.setTextCursor(root_cur)
                 else:
                     self.setTextCursor(exit_cur)
                 return
 
-        # 4. Invio in blocco To-Do o Quote
+        # 3b. Backspace all'inizio di un blocco speciale vuoto -> elimina il blocco / torna a paragrafo
         block = cursor.block()
         b_kind = block.blockFormat().property(PROP_BLOCK_KIND)
+        if key == Qt.Key.Key_Backspace and not cursor.hasSelection() and b_kind:
+            if b_kind == "todo" and cursor.positionInBlock() <= 2 and block.text() in ("☐ ", "☑ ", "☐", "☑", ""):
+                cursor.beginEditBlock()
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                cursor.removeSelectedText()
+                cursor.setBlockFormat(QTextBlockFormat())
+                cursor.setCharFormat(QTextCharFormat())
+                block.setUserData(None)
+                cursor.endEditBlock()
+                self.setTextCursor(cursor)
+                self._on_internal_text_changed()
+                return
+            if cursor.atBlockStart() and block.text() == "":
+                if b_kind in ("callout", "file", "ai_note") and self.document().blockCount() > 1 and block.previous().isValid():
+                    self._delete_block_undoable(block.blockNumber())
+                else:
+                    cursor.beginEditBlock()
+                    cursor.setBlockFormat(QTextBlockFormat())
+                    cursor.setCharFormat(QTextCharFormat())
+                    block.setUserData(None)
+                    cursor.endEditBlock()
+                    self.setTextCursor(cursor)
+                    self._on_internal_text_changed()
+                return
+
+        # 4. Invio in blocco To-Do, Quote, Callout, Heading
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (mods & Qt.KeyboardModifier.ShiftModifier):
             if b_kind == "todo":
                 b_txt = block.text().strip()
                 if b_txt in ("☐", "☑", ""):
                     # Esci dalla lista To-Do
+                    cursor.beginEditBlock()
                     cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
                     cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
                     cursor.removeSelectedText()
                     cursor.setBlockFormat(QTextBlockFormat())
                     cursor.setCharFormat(QTextCharFormat())
+                    block.setUserData(None)
+                    cursor.endEditBlock()
                     self.setTextCursor(cursor)
                     return
                 else:
@@ -2542,23 +3537,27 @@ class ScientificNoteEditor(QTextEdit):
                     self._apply_todo_block_at_cursor(cursor, "", checked=False)
                     self.setTextCursor(cursor)
                     return
-            elif b_kind == "quote" and block.text().strip() == "":
+            elif b_kind in ("quote", "callout") and block.text().strip() == "":
+                cursor.beginEditBlock()
                 cursor.setBlockFormat(QTextBlockFormat())
                 cursor.setCharFormat(QTextCharFormat())
+                block.setUserData(None)
+                cursor.endEditBlock()
                 self.setTextCursor(cursor)
                 return
-            elif b_kind in ("h1", "h2"):
+            elif b_kind in ("h1", "h2", "h3", "h4"):
                 cursor.insertBlock()
                 cursor.setBlockFormat(QTextBlockFormat())
                 cursor.setCharFormat(QTextCharFormat())
+                cursor.block().setUserData(None)
                 self.setTextCursor(cursor)
                 return
 
-        # 5. Auto-conversione "> " -> Quote, "[] " -> To-Do, "# " -> H1, "## " -> H2
+        # 5. Auto-conversione "> " -> Quote, "[] " -> To-Do, "# "/"## "/"### " -> H1/H2/H3
         if key == Qt.Key.Key_Space and not b_kind:
             before_txt = block.text()[: cursor.positionInBlock()]
-            if before_txt in ("#", "##"):
-                lvl = 1 if before_txt == "#" else 2
+            if before_txt in ("#", "##", "###"):
+                lvl = len(before_txt)
                 cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
                 cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(before_txt))
                 cursor.removeSelectedText()
@@ -2600,3 +3599,16 @@ class ScientificNoteEditor(QTextEdit):
 
         if self.slash_popup.isVisible():
             self._update_slash_filter()
+            return
+
+        # 7. Auto-Calcolo Inline alla digitazione di '='
+        if event.text() == "=":
+            c = self.textCursor()
+            b = c.block()
+            before_eq = b.text()[: max(0, c.positionInBlock() - 1)]
+            matrices = self._collect_labeled_matrices()
+            res = evaluate_inline_equals(before_eq, matrices)
+            if res is not None:
+                res["pos"] = c.position()
+                self._inline_calc_suggestion = res
+                self.viewport().update()

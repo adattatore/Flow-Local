@@ -78,6 +78,8 @@ from core.wake_listener import WhisWakeListener
 
 VK_RSHIFT = 0xA1  # Shift Destro (Right Shift, tasto sotto Invio)
 VK_F8 = 0x77      # Tasto F8 (fallback secondario)
+VK_RCONTROL = 0xA3  # Ctrl Destro (Push-to-Lock)
+VK_RMENU = 0xA5     # Alt Gr (Push-to-Lock alternativo)
 
 WM_POWERBROADCAST = 0x0218
 PBT_APMSUSPEND = 0x0004
@@ -112,6 +114,11 @@ def safe_handle_release(engine: FlowLocalEngine):
         engine.handle_key_release()
 
 
+def safe_handle_lock(engine: FlowLocalEngine):
+    with keyboard_lock:
+        engine.lock_current_recording()
+
+
 def start_key_action_worker(engine: FlowLocalEngine):
     """Worker thread dedicato per disaccoppiare WH_KEYBOARD_LL da operazioni bloccanti."""
     def _worker():
@@ -122,6 +129,8 @@ def start_key_action_worker(engine: FlowLocalEngine):
                     safe_handle_press(engine)
                 elif action == "release":
                     safe_handle_release(engine)
+                elif action == "lock":
+                    safe_handle_lock(engine)
             except Exception as e:
                 print(f"[FlowLocal] Errore key_action_worker: {e}")
 
@@ -255,9 +264,10 @@ def ensure_ollama_running():
 
 
 def run_keyboard_poller(engine: FlowLocalEngine, hook_manager: Optional[KeyboardHookManager] = None):
-    """Poller hardware nativo Win32 (Livello 1) per Shift Destro e F8."""
+    """Poller hardware nativo Win32 (Livello 1) per Shift Destro, F8 e Ctrl Destro/AltGr (Push-to-Lock)."""
     user32 = ctypes.windll.user32
     was_down = False
+    was_lock_down = False
     last_wall = time.time()
     last_gap_recover = 0.0
 
@@ -267,11 +277,13 @@ def run_keyboard_poller(engine: FlowLocalEngine, hook_manager: Optional[Keyboard
             if poller_reset_event.is_set():
                 poller_reset_event.clear()
                 was_down = False
+                was_lock_down = False
 
             # Fallback di sicurezza per Modern Standby (salto temporale > 3s)
             if (now_wall - last_wall) > 3.0 and (now_wall - last_gap_recover) > 5.0:
                 last_gap_recover = now_wall
                 was_down = False
+                was_lock_down = False
                 engine.reset_key_state()
                 if hook_manager is not None:
                     threading.Thread(target=hook_manager.rehook, daemon=True).start()
@@ -288,6 +300,14 @@ def run_keyboard_poller(engine: FlowLocalEngine, hook_manager: Optional[Keyboard
             elif not is_down and was_down:
                 was_down = False
                 key_action_queue.put("release")
+
+            lock_down = bool(user32.GetAsyncKeyState(VK_RCONTROL) & 0x8000) or bool(user32.GetAsyncKeyState(VK_RMENU) & 0x8000)
+            if lock_down and not was_lock_down:
+                was_lock_down = True
+                if is_down and engine.is_recording and not engine.is_locked:
+                    key_action_queue.put("lock")
+            elif not lock_down and was_lock_down:
+                was_lock_down = False
         except Exception:
             pass
 
@@ -618,10 +638,11 @@ def main():
     start_key_action_worker(engine)
 
     def on_key_event(event):
-        """Intercetta Shift Destro (Right Shift) e F8 senza bloccare il thread WH_KEYBOARD_LL."""
+        """Intercetta Shift Destro (Right Shift), F8 e Ctrl Destro/AltGr (Push-to-Lock) senza bloccare WH_KEYBOARD_LL."""
         try:
             name = (event.name or "").lower()
             scan = getattr(event, "scan_code", None)
+            is_ext = bool(getattr(event, "is_extended", False))
             is_rshift = (scan == 54 or name in ("right shift", "maiusc (destra)", "maiusc destra", "rshift"))
 
             if is_rshift or name == "f8":
@@ -631,6 +652,15 @@ def main():
                     key_action_queue.put("release")
                 # Sopprime l'evento a livello di sistema operativo per non inserire modificatori mentre si parla
                 return False
+
+            is_lock_key = (
+                name in ("right ctrl", "ctrl destra", "ctrl (destra)", "rctrl", "alt gr", "right alt", "alt destra", "ralt")
+                or (scan == 29 and is_ext)
+            )
+            if is_lock_key and event.event_type == "down":
+                if engine.is_recording and not engine.is_locked and engine.is_key_down:
+                    key_action_queue.put("lock")
+                    return False
         except Exception:
             pass
         return True
