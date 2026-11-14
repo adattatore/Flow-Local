@@ -408,11 +408,12 @@ class CloudSyncManager:
         # 1. Trascrizione ed elaborazione della lezione
         subj_desc = f" ({subject})" if subject else ""
         report(f"Sbobinatura di '{filename}'{subj_desc}...", 10)
-        markdown = engine.transcribe_audio_file(
+        markdown, sync_data = engine.transcribe_audio_file(
             file_path=audio_path,
             subject_context=subject,
             progress_callback=progress_callback,
             cancel_check=cancel_check,
+            return_sync_data=True,
         )
 
         if cancel_check and cancel_check():
@@ -434,6 +435,15 @@ class CloudSyncManager:
             note_type="Sbobina",
             tags=tags_str,
         )
+
+        try:
+            from core.audio_sync import archive_audio_for_note, save_note_audio_sync
+            archived_audio = archive_audio_for_note(new_note_id, audio_path)
+            if archived_audio:
+                db.update_study_note_audio_path(new_note_id, archived_audio)
+                save_note_audio_sync(new_note_id, archived_audio, (sync_data or {}).get("segments", []))
+        except Exception as sync_err:
+            print(f"[FlowLocal CloudSync] Avviso salvataggio audio sync: {sync_err}")
 
         # 3. Estrazione Flashcard d'esame
         report("Estrazione flashcard d'esame con Qwen...", 94)

@@ -15,6 +15,7 @@ dependencies = [
     "mss>=10.2.0",
     "numpy>=2.5.4",
     "pillow>=13.0.0",
+    "pycaw>=20240210",
     "pygame>=2.6.1",
     "pymupdf>=2.1",
     "pynput>=1.8.2",

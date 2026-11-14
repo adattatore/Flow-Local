@@ -16,6 +16,8 @@ import sounddevice as sd
 from scipy import signal
 from PyQt6.QtCore import QThread, pyqtSignal, QObject
 
+from core.audio_ducker import audio_ducker
+
 # Pattern di riconoscimento wake-word case-insensitive
 # Supporta: "Whis", "Ehi Whis", "Hey Whis", "Ok Whis", "Ciao Whis", "Allora Whis", "Senti Whis", "Wis", "Wiz", "Whizz", "Uis", "Quiz", "Luis", "Miss"
 WAKE_WORD_PATTERN = re.compile(
@@ -127,6 +129,8 @@ class WhisWakeListener(QThread):
         with self._lock:
             self._is_paused = bool(paused)
             if self._is_paused:
+                if self.listener_state == STATE_WAITING_FOR_COMMAND:
+                    audio_ducker.unduck()
                 # Svuota immediatamente la coda audio residua
                 while not self._audio_queue.empty():
                     try:
@@ -163,6 +167,7 @@ class WhisWakeListener(QThread):
             self.listener_state = STATE_WAITING_FOR_COMMAND
             self.waiting_command_start_time = time.time()
             self.waiting_command_timeout = timeout
+        audio_ducker.duck()
         if not self.isRunning():
             self.start()
         self.followup_activated.emit(prompt_status)
@@ -171,6 +176,7 @@ class WhisWakeListener(QThread):
     def stop(self):
         """Interrompe il thread in modo pulito e chiude il dispositivo audio."""
         self._running = False
+        audio_ducker.unduck()
         try:
             if self._stream:
                 self._stream.stop()
@@ -238,6 +244,7 @@ class WhisWakeListener(QThread):
                 timeout_limit = getattr(self, "waiting_command_timeout", 7.0) or 7.0
                 if not is_speaking and (current_time - self.waiting_command_start_time > timeout_limit):
                     self.listener_state = STATE_IDLE
+                    audio_ducker.unduck()
                     self.command_timeout.emit()
                     self.status_message.emit("🟢 Pronto — Mani Libere Attive (Pronuncia \"Whis...\")")
 
@@ -254,6 +261,7 @@ class WhisWakeListener(QThread):
                     ring_buffer.clear()
                 if self.listener_state == STATE_WAITING_FOR_COMMAND:
                     self.listener_state = STATE_IDLE
+                    audio_ducker.unduck()
                     self.command_timeout.emit()
                 continue
 
@@ -332,6 +340,7 @@ class WhisWakeListener(QThread):
             if not text or self._is_paused:
                 if self.listener_state == STATE_WAITING_FOR_COMMAND:
                     self.listener_state = STATE_IDLE
+                    audio_ducker.unduck()
                     self.command_timeout.emit()
                     self.status_message.emit("🟢 Pronto — Mani Libere Attive (Pronuncia \"Whis...\")")
                 return
@@ -339,6 +348,7 @@ class WhisWakeListener(QThread):
             if self.listener_state == STATE_WAITING_FOR_COMMAND:
                 # FASE 2: L'utente sta rispondendo all'ascolto aperto di Whis
                 self.listener_state = STATE_IDLE
+                audio_ducker.unduck()
                 # Se l'utente ha ripetuto per caso "Whis ..." togliamo il prefisso
                 match = WAKE_WORD_PATTERN.match(text)
                 raw_command = match.group(1).strip() if match else text.strip()
@@ -366,6 +376,7 @@ class WhisWakeListener(QThread):
                 if not command or len(command.split()) < 2 or len(command) < 4:
                     self.listener_state = STATE_WAITING_FOR_COMMAND
                     self.waiting_command_start_time = time.time()
+                    audio_ducker.duck()
                     self.wake_activated.emit()
                     self.status_message.emit("🎙️ In ascolto... Dimmi pure!")
                 else:

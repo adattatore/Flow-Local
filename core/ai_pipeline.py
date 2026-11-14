@@ -15,6 +15,7 @@ import math
 import time
 import json
 import wave
+import queue
 import ctypes
 import difflib
 import tempfile
@@ -48,6 +49,7 @@ from faster_whisper import WhisperModel
 from database import db
 from core.audio_analyzer import AudioAnalyzer
 from core.context_detector import detect_active_context
+from core.audio_ducker import audio_ducker, AudioDucker
 
 RECORD_SAMPLE_RATE = 48000
 WHISPER_SAMPLE_RATE = 16000
@@ -442,7 +444,7 @@ def normalize_phonetic_variants(text: str) -> str:
     return text
 
 
-def strip_vocal_fillers(text: str) -> str:
+def strip_vocal_fillers(text: str, capitalize_first: bool = True) -> str:
     """Rimuove esitazioni vocali pure e tic verbali vuoti (mmm, ehm, uhm) all'inizio o isolati."""
     if not text:
         return text
@@ -450,9 +452,85 @@ def strip_vocal_fillers(text: str) -> str:
     cleaned = re.sub(r'^(?:ehm|uhm|mmm|vabb[eè]|beh)\b[\s,.:;—–-]*', '', text, flags=re.IGNORECASE).strip()
     # Rimuove esitazioni isolate all'interno del testo
     cleaned = re.sub(r'\b(?:ehm|uhm|mmm)\b[\s,.:;—–-]*', '', cleaned, flags=re.IGNORECASE).strip()
-    if cleaned and cleaned[0].islower():
+    if capitalize_first and cleaned and cleaned[0].islower():
         cleaned = cleaned[0].upper() + cleaned[1:]
     return cleaned or text
+
+
+def normalize_audio_robust(audio_data: np.ndarray) -> Tuple[np.ndarray, float]:
+    """
+    Normalizzazione audio robusta basata sul 98° percentile + Soft-Clipping iperbolico (tanh):
+    1. Rimuove eventuale DC offset: audio_data = audio_data - np.mean(audio_data)
+    2. Calcola p98 = np.percentile(np.abs(audio_data), 98)
+    3. Se p98 > 1e-5, scala portando il 98° percentile a 0.85: audio_data = audio_data * (0.85 / p98)
+    4. Applica soft-clipping iperbolico: audio_data = np.tanh(audio_data)
+    Restituisce (audio_normalizzato_float32, p98).
+    """
+    if audio_data is None or len(audio_data) == 0:
+        return np.zeros(0, dtype=np.float32), 0.0
+
+    audio_data = audio_data - np.mean(audio_data)
+    p98 = float(np.percentile(np.abs(audio_data), 98))
+    if p98 > 1e-5:
+        audio_data = audio_data * (0.85 / p98)
+        audio_data = np.tanh(audio_data).astype(np.float32)
+    else:
+        audio_data = audio_data.astype(np.float32, copy=False)
+    return audio_data, p98
+
+
+def compute_dynamic_beam_size(duration_sec: float) -> int:
+    """
+    Calcola dinamicamente beam_size per Faster-Whisper in base alla durata del buffer audio:
+    - duration_sec < 2.5        -> beam_size = 1 (comandi rapidissimi)
+    - 2.5 <= duration_sec <= 8.0 -> beam_size = 3 (frasi medie)
+    - duration_sec > 8.0        -> beam_size = 4 (dettati lunghi)
+    """
+    if duration_sec < 2.5:
+        return 1
+    if duration_sec <= 8.0:
+        return 3
+    return 4
+
+
+def join_streaming_chunks(chunks: List[str]) -> str:
+    """
+    Unisce in ordine FIFO i micro-chunk trascritti/rifiniti in streaming,
+    preservando la continuità sintattica, la punteggiatura e i cambi di paragrafo.
+    """
+    valid = [c.strip() for c in chunks if c and c.strip()]
+    if not valid:
+        return ""
+    if len(valid) == 1:
+        return valid[0]
+
+    acc = valid[0]
+    for nxt in valid[1:]:
+        acc_r = acc.rstrip()
+        nxt_l = nxt.lstrip()
+        if not nxt_l:
+            continue
+        if acc.endswith("\n\n") or nxt_l.startswith("\n"):
+            acc = f"{acc_r}\n\n{nxt_l.lstrip()}"
+            continue
+
+        last_ch = acc_r[-1] if acc_r else ""
+        # Se il chunk precedente termina con virgola o punto e virgola e il successivo
+        # inizia con una parola comune maiuscola non seguita da maiuscole (non acronimo),
+        # armonizza l'iniziale in minuscolo per continuità sintattica.
+        if last_ch in (",", ";") and len(nxt_l) >= 2 and nxt_l[0].isupper() and nxt_l[1].islower():
+            first_word = re.split(r"\s+|[,.;:!?]", nxt_l, maxsplit=1)[0]
+            known_proper = {
+                "Whis", "FlowLocal", "FlowType", "FlowStudy", "FlowNotes", "FlowTime",
+                "Antigravity", "PyQt6", "Ollama", "Qwen", "Whisper", "LaTeX", "Markdown",
+                "Google", "Windows", "Spotify", "Git", "GitHub", "Python", "CUDA",
+                "Triscina", "Selinunte", "Castelvetrano", "Palermo", "Giada", "Alessandro",
+            }
+            if first_word not in known_proper:
+                nxt_l = nxt_l[0].lower() + nxt_l[1:]
+
+        acc = f"{acc_r} {nxt_l}"
+    return acc.strip()
 
 
 MODE_SYSTEM_PROMPTS = {
@@ -567,18 +645,25 @@ class LLMRefiner:
     """Stadio 2: Rifinitura semantica, punteggiatura e vocabolario tecnico con Qwen 2.5."""
 
     @classmethod
-    def refine(cls, raw_text: str, mode: str = "natural") -> Tuple[str, int]:
+    def refine(cls, raw_text: str, mode: str = "natural", previous_context: str = "") -> Tuple[str, int]:
         t0 = time.time()
         if not raw_text or not raw_text.strip():
             return raw_text, 0
 
+        prev_ctx = (previous_context or "").strip()[-60:].strip()
+        # Se il contesto precedente non termina con punteggiatura di fine periodo, non forzare la maiuscola
+        should_cap = True
+        if prev_ctx and prev_ctx[-1:] not in (".", "!", "?", ":", "\n"):
+            should_cap = False
+
         # Normalizzazione deterministica delle varianti fonetiche
         raw_text = normalize_phonetic_variants(raw_text)
 
-        # 1. Snippet Vocali deterministici
-        expanded = db.match_and_expand_snippet(raw_text)
-        if expanded:
-            return expanded, 0
+        # 1. Snippet Vocali deterministici (solo se non siamo nel mezzo di un dettato multi-chunk)
+        if not prev_ctx:
+            expanded = db.match_and_expand_snippet(raw_text)
+            if expanded:
+                return expanded, 0
 
         # 2. Controllo Flashcard automatica
         if raw_text.strip().lower().startswith("flashcard:"):
@@ -617,7 +702,17 @@ class LLMRefiner:
         if vocab_terms:
             system_prompt += f"\nVocabolario e termini tecnici da rispettare: {vocab_terms}."
 
-        clean_prompt_text = strip_vocal_fillers(raw_text)
+        # Continuità sintattica e di punteggiatura tra chunk in streaming (ultimi 60 caratteri)
+        if prev_ctx:
+            system_prompt += (
+                "\n\nCONTESTO DI CONTINUITÀ DAL CHUNK PRECEDENTE (NON RIPETERE MAI NELL'OUTPUT):\n"
+                f"Il frammento immediatamente precedente già trascritto termina con: \"{prev_ctx}\".\n"
+                "Mantieni piena continuità sintattica, concordanza grammaticale e coerenza di punteggiatura/maiuscole con questo contesto, "
+                "ma restituisci ESCLUSIVAMENTE il testo rifinito contenuto in <trascrizione></trascrizione>, "
+                "senza mai ripetere o includere il contesto precedente."
+            )
+
+        clean_prompt_text = strip_vocal_fillers(raw_text, capitalize_first=should_cap)
         user_content = f"Testo pronunciato da elaborare:\n<trascrizione>\n{clean_prompt_text}\n</trascrizione>"
 
         payload = {
@@ -637,13 +732,14 @@ class LLMRefiner:
         }
 
         qwen_ms = 0
+        req_timeout = max(6.0, min(14.0, 6.0 + len(raw_text) / 80.0))
         try:
             req = urllib.request.Request(
                 OLLAMA_API_URL,
                 data=json.dumps(payload).encode("utf-8"),
                 headers={"Content-Type": "application/json"}
             )
-            with urllib.request.urlopen(req, timeout=6.0) as resp:
+            with urllib.request.urlopen(req, timeout=req_timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 content = data.get("message", {}).get("content", "").strip()
                 qwen_ms = int((time.time() - t0) * 1000)
@@ -674,8 +770,12 @@ class LLMRefiner:
                 if refined.startswith('"') and refined.endswith('"'):
                     refined = refined[1:-1].strip()
 
+                # Se l'LLM ha accidentalmente ripetuto il previous_context all'inizio, rimuovilo
+                if prev_ctx and refined.lower().startswith(prev_ctx.lower()) and not clean_prompt_text.lower().startswith(prev_ctx.lower()):
+                    refined = refined[len(prev_ctx):].lstrip()
+
                 # Pulizia esitazioni vocali residue all'inizio
-                refined = strip_vocal_fillers(refined)
+                refined = strip_vocal_fillers(refined, capitalize_first=should_cap)
 
                 # Rimuove eventuali backslash finali (\) o spazi superflui
                 refined = refined.rstrip()
@@ -690,7 +790,7 @@ class LLMRefiner:
                     print(f"[FlowLocal] Allucinazione LLM scartata ({len(refined)} car > {max_allowed_len:.0f} max). Fallback su testo acustico.")
                     clean = normalize_phonetic_variants(raw_text)
                     clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
-                    clean = strip_vocal_fillers(clean)
+                    clean = strip_vocal_fillers(clean, capitalize_first=should_cap)
                     while clean.endswith('\\'):
                         clean = clean[:-1].rstrip()
                     return clean, qwen_ms
@@ -701,7 +801,7 @@ class LLMRefiner:
                     print(f"[FlowLocal] Parafrasi arbitraria LLM scartata (deriva lessicale eccessiva). Fallback su trascrizione acustica.")
                     clean = normalize_phonetic_variants(raw_text)
                     clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
-                    clean = strip_vocal_fillers(clean)
+                    clean = strip_vocal_fillers(clean, capitalize_first=should_cap)
                     while clean.endswith('\\'):
                         clean = clean[:-1].rstrip()
                     return clean, qwen_ms
@@ -717,7 +817,7 @@ class LLMRefiner:
         qwen_ms = int((time.time() - t0) * 1000)
         clean = normalize_phonetic_variants(raw_text)
         clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
-        clean = strip_vocal_fillers(clean)
+        clean = strip_vocal_fillers(clean, capitalize_first=should_cap)
         while clean.endswith('\\'):
             clean = clean[:-1].rstrip()
         return clean, qwen_ms
@@ -753,9 +853,9 @@ class LLMRefiner:
         return drift_ratio <= 0.30
 
     @classmethod
-    def refine_text(cls, raw_text: str, mode: str = "natural") -> Tuple[str, int]:
+    def refine_text(cls, raw_text: str, mode: str = "natural", previous_context: str = "") -> Tuple[str, int]:
         """Alias architetturale per refine."""
-        return cls.refine(raw_text, mode=mode)
+        return cls.refine(raw_text, mode=mode, previous_context=previous_context)
 
     @classmethod
     def transform_selection(cls, selected_text: str, voice_command: str) -> str:
@@ -857,19 +957,18 @@ class LLMRefiner:
         ctx_instruction = f"\nMateria / Parole chiave della lezione: {clean_ctx}." if clean_ctx else ""
 
         system_prompt = (
-            "SEI UN SBOBINATORE UNIVERSITARIO ESPERTO. "
+            "SEI UN SBOBINATORE UNIVERSITARIO FEDELE E PRECISO. "
             f"{ctx_instruction}\n\n"
-            "Trasforma la trascrizione grezza della lezione in una sbobina scorrevole, ordinata e fedelissima alle parole del docente, "
-            "senza ripetere mai due volte lo stesso paragrafo o titolo. "
-            "Usa paragrafi chiari, qualche titolo ## solo sui veri cambi di argomento ed elenchi puntati essenziali. "
-            "Quando introduci un titolo di sezione o cambio argomento (## Titolo), inserisci accanto ad esso il minutaggio approssimativo di inizio "
-            "tra parentesi quadre ricavato dai riferimenti [MM:SS] presenti nel testo (es. ## 2. Il Nesso di Causalità [14:20] o ## Il Nesso di Causalità [14:20]). "
-            "Non lasciare marcatori temporali [MM:SS] isolati all'interno delle frasi ordinarie. "
-            "Non scrivere mai etichette artificiali come 'Sottotitolo 1', 'Definizioni in Grassetto' o 'Riformulazione della Lezione'. "
-            "Correggi evidenti refusi fonetici coerenti con il contesto della materia (es. tirocinio, polizza, fatti dolosi, falso ideologico, "
-            "responsabilità in vigilando, colpa generica, imprudenza, imperizia, negligenza). "
-            "Quando incontri un tag `[AUDIO_NON_CHIARO da MM:SS a MM:SS]` o una frase realmente incomprensibile, "
-            "trasformalo esclusivamente nel segnaposto **`[Audio non chiaro / testo incompleto: da MM:SS a MM:SS]`** senza inventare nulla per riempire il vuoto."
+            "Trasforma la trascrizione grezza della lezione in una sbobina scorrevole, ordinata e FEDELISSIMA alle parole esatte del docente, "
+            "così che l'allineamento audio parola-per-parola resti preciso.\n"
+            "REGOLE TASSATIVE:\n"
+            "1. NON riassumere, NON parafrasare e NON tagliare frasi pronunciate: aggiungi solo punteggiatura corretta, divisione in paragrafi e correggi evidenti refusi fonetici coerenti con la materia.\n"
+            "2. NON inventare MAI concetti, NON completare elenchi con frasi come 'Non specificate nel testo, ma potrebbero includere...' e NON aggiungere commenti meta come 'Questo esempio illustra...'.\n"
+            "3. Usa SOLO titoli brevi di livello 2 (## Titolo breve [MM:SS], massimo 7 parole) nei veri cambi di argomento, seguiti SEMPRE da una riga vuota (\\n\\n) prima del testo parlato. NON usare mai ### o #### e NON mettere mai un intero paragrafo sulla riga di ##.\n"
+            "4. Se ritieni utile aggiungere un breve riassunto, una sintesi o un chiarimento di supporto che NON è stato pronunciato testualmente, inseriscilo ESCLUSIVAMENTE in una nota espandibile dedicata nel formato:\n"
+            ":::ai-note Titolo breve\nContenuto sintetico della nota.\n:::\n"
+            "5. Non lasciare marcatori temporali [MM:SS] isolati nelle frasi ordinarie.\n"
+            "6. Quando incontri `[AUDIO_NON_CHIARO da MM:SS a MM:SS]` o una frase incomprensibile, trasformalo esclusivamente in **`[Audio non chiaro / testo incompleto: da MM:SS a MM:SS]`** senza inventare nulla."
         )
 
         user_content = f"<trascrizione_lezione>\n{clean_chunk}\n</trascrizione_lezione>"
@@ -927,6 +1026,33 @@ class LLMRefiner:
                 # Pulizia regex finale: rimuove backtick residui attorno ai segnaposto temporali
                 refined = re.sub(r'`+(\[Audio non chiaro[^\]]+\])`+', r'\1', refined)
                 refined = re.sub(r'`+(\*{0,2}\[Audio non chiaro[^\]]+\]\*{0,2})`+', r'\1', refined)
+
+                # Rimuove eventuali caratteri cirillici spuri allucinati da Whisper/LLM (es. ОффStaff -> Staff)
+                refined = re.sub(r'[\u0400-\u04FF]+', '', refined)
+
+                # Guardrail titoli: normalizza ###/#### e impedisce che interi paragrafi finiscano su righe # / ##
+                fixed_lines: List[str] = []
+                for ln in refined.splitlines():
+                    hm = re.match(r'^(#{1,4})\s+(.*)$', ln)
+                    if hm:
+                        body_h = hm.group(2).strip()
+                        if body_h.startswith("**") and body_h.endswith("**") and len(body_h) > 4:
+                            body_h = body_h[2:-2].strip()
+                        words_h = body_h.split()
+                        if len(words_h) > 12:
+                            # Se c'è un punto fermo nei primi 12 vocaboli, separa titolo e paragrafo; altrimenti demota a testo normale
+                            sent_m = re.match(r'^([^.!?]{4,90}[.!?])\s+(.+)$', body_h)
+                            if sent_m and len(sent_m.group(1).split()) <= 12:
+                                fixed_lines.append(f"## {sent_m.group(1).strip()}")
+                                fixed_lines.append("")
+                                fixed_lines.append(sent_m.group(2).strip())
+                            else:
+                                fixed_lines.append(body_h)
+                        else:
+                            fixed_lines.append(f"## {body_h}")
+                    else:
+                        fixed_lines.append(ln)
+                refined = "\n".join(fixed_lines).strip()
 
                 if refined:
                     return refined
@@ -1208,6 +1334,145 @@ class LLMRefiner:
         return results[:3]
 
 
+class StreamingChunkSession:
+    """
+    Sessione FIFO asincrona per il Micro-Chunking in Streaming (Background Silence Segmentation)
+    durante il Push-to-Talk o la registrazione attiva in FlowType.
+    Elabora in background ciascun segmento audio sganciato (>= 4s con pausa >= 0.9s)
+    tramite Faster-Whisper + Qwen 2.5 mentre l'utente sta ancora parlando, propagando
+    gli ultimi 60 caratteri del chunk precedente rifinito (previous_context) sia a Whisper
+    (initial_prompt) sia a Qwen per continuità sintattica e di punteggiatura.
+    """
+
+    def __init__(self, engine: "FlowLocalEngine", src_rate: int, mode: str):
+        self.engine = engine
+        self.src_rate = int(src_rate)
+        self.mode = mode or "natural"
+        self.fifo_queue: "queue.Queue[Optional[List[np.ndarray]]]" = queue.Queue()
+        self.completed_chunks: List[Dict[str, Any]] = []
+        self.previous_context: str = ""
+        self.has_enqueued_chunks: bool = False
+        self.total_audio_duration_s: float = 0.0
+        self._cancelled: bool = False
+        self._worker_started: bool = False
+        self._worker_thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+        self._done_event = threading.Event()
+        self._done_event.set()
+
+    def enqueue_chunk(self, frames: List[np.ndarray]):
+        if not frames:
+            return
+        with self._lock:
+            self.has_enqueued_chunks = True
+            total_samples = sum(len(f) for f in frames)
+            if self.src_rate > 0:
+                self.total_audio_duration_s += total_samples / float(self.src_rate)
+            self._done_event.clear()
+            self.fifo_queue.put(list(frames))
+            if not self._worker_started:
+                self._worker_started = True
+                self._worker_thread = threading.Thread(
+                    target=self._worker_loop,
+                    daemon=True,
+                    name="FlowLocalStreamingChunkWorker",
+                )
+                self._worker_thread.start()
+
+    def finish_and_wait(self, timeout: float = 25.0):
+        with self._lock:
+            if not self._worker_started:
+                return
+            self.fifo_queue.put(None)
+        self._done_event.wait(timeout=timeout)
+
+    def finalize_and_collect(self, timeout: float = 15.0) -> List[Tuple[str, str, int, int]]:
+        """
+        Attende il completamento dei micro-chunk in coda FIFO e restituisce la lista
+        ordinata di tuple (raw_text, refined_text, whisper_ms, qwen_ms).
+        """
+        self.finish_and_wait(timeout=timeout)
+        return [
+            (
+                str(c.get("raw_text", "")),
+                str(c.get("refined_text", "")),
+                int(c.get("whisper_ms", 0)),
+                int(c.get("qwen_ms", 0)),
+            )
+            for c in self.completed_chunks
+        ]
+
+    def cancel(self):
+        """Annulla e svuota la sessione di micro-chunking."""
+        with self._lock:
+            self._cancelled = True
+            while not self.fifo_queue.empty():
+                try:
+                    self.fifo_queue.get_nowait()
+                except queue.Empty:
+                    break
+            if self._worker_started:
+                self.fifo_queue.put(None)
+
+    def _worker_loop(self):
+        try:
+            while True:
+                frames = self.fifo_queue.get()
+                if frames is None:
+                    break
+                try:
+                    self._process_single_chunk(frames)
+                except Exception as e:
+                    print(f"[FlowLocal StreamChunk] Errore elaborazione micro-chunk: {e}")
+        finally:
+            self._done_event.set()
+
+    def _process_single_chunk(self, frames: List[np.ndarray]):
+        raw_chunk, whisper_ms, duration_s = self.engine._transcribe_single_audio_segment(
+            frames,
+            self.src_rate,
+            previous_context=self.previous_context,
+        )
+        if not raw_chunk or not raw_chunk.strip():
+            return
+
+        # Gestione comandi vocali inline di auto-correzione ("Anzi, cancella tutto...")
+        after_cmd = apply_inline_voice_commands(raw_chunk)
+        if after_cmd != raw_chunk:
+            # L'utente ha pronunciato un comando di reset: svuota i chunk precedenti
+            self.completed_chunks.clear()
+            self.previous_context = ""
+            raw_chunk = after_cmd
+            if not raw_chunk or not raw_chunk.strip():
+                return
+
+        raw_chunk = normalize_phonetic_variants(raw_chunk)
+        raw_chunk = db.apply_phonetic_replacements(raw_chunk)
+
+        refined_chunk, qwen_ms = LLMRefiner.refine(
+            raw_chunk,
+            mode=self.mode,
+            previous_context=self.previous_context,
+        )
+        refined_chunk = strip_pause_markers(refined_chunk).rstrip()
+        while refined_chunk.endswith('\\'):
+            refined_chunk = refined_chunk[:-1].rstrip()
+
+        if refined_chunk:
+            self.previous_context = refined_chunk[-60:].strip()
+            self.completed_chunks.append({
+                "raw_text": raw_chunk,
+                "refined_text": refined_chunk,
+                "whisper_ms": whisper_ms,
+                "qwen_ms": qwen_ms,
+                "duration_s": duration_s,
+            })
+            print(
+                f"[FlowLocal StreamChunk] Chunk #{len(self.completed_chunks)} pronto "
+                f"(Whisper {whisper_ms}ms + Qwen {qwen_ms}ms): {refined_chunk}"
+            )
+
+
 class FlowLocalEngine:
     def __init__(self, orb=None, hub=None, whis_hud=None):
         self.orb = orb
@@ -1260,6 +1525,13 @@ class FlowLocalEngine:
         self.active_mode_key = "natural"
         self.active_selection_text: Optional[str] = None
         self.previous_clipboard: Optional[str] = None
+
+        # Stato Background Silence Segmentation (Micro-Chunking in Streaming)
+        self._noise_floor: float = 0.003
+        self._silence_rms_threshold: float = 0.008
+        self._chunk_speech_duration_s: float = 0.0
+        self._chunk_silence_duration_s: float = 0.0
+        self._streaming_session: Optional[StreamingChunkSession] = None
 
         self.last_press_time = 0.0
         self.last_release_time = 0.0
@@ -1394,9 +1666,48 @@ class FlowLocalEngine:
         except Exception:
             pass
 
+        chunk_dur_s = len(chunk) / float(self.sample_rate or 48000)
+
         with self.lock:
-            if self.is_recording:
+            if not self.is_recording:
+                # Calibrazione adattiva rumore di fondo in IDLE
+                if rms < 0.025:
+                    self._noise_floor = 0.96 * self._noise_floor + 0.04 * rms
+                    self._silence_rms_threshold = max(0.0045, min(0.018, self._noise_floor * 2.4 + 0.0025))
+            else:
                 self.audio_frames.append(chunk)
+
+                # Background Silence Segmentation (Micro-Chunking in Streaming)
+                # Attivo durante la dettatura standard (non durante comandi brevi su selezione testo)
+                if self._streaming_session is not None and self.active_selection_text is None:
+                    if rms >= self._silence_rms_threshold:
+                        self._chunk_speech_duration_s += chunk_dur_s
+                        self._chunk_silence_duration_s = 0.0
+                    else:
+                        if self._chunk_speech_duration_s > 0.25:
+                            self._chunk_silence_duration_s += chunk_dur_s
+
+                    # Calcola durata totale accumulata nel buffer corrente
+                    accumulated_samples = sum(len(c) for c in self.audio_frames)
+                    accumulated_dur_s = accumulated_samples / float(self.sample_rate or 48000)
+
+                    # Quando rilevi una pausa naturale >= 0.9s e il buffer corrente supera i 4.0s
+                    if (
+                        self._chunk_silence_duration_s >= 0.90
+                        and accumulated_dur_s >= 4.0
+                        and self._chunk_speech_duration_s >= 0.80
+                    ):
+                        # Sgancia il segmento accumulato mantenendo gli ultimi ~3 frame silenziosi come pre-roll
+                        if len(self.audio_frames) > 4:
+                            detached_frames = list(self.audio_frames[:-3])
+                            self.audio_frames = list(self.audio_frames[-3:])
+                        else:
+                            detached_frames = list(self.audio_frames)
+                            self.audio_frames.clear()
+
+                        self._chunk_speech_duration_s = 0.0
+                        self._chunk_silence_duration_s = 0.0
+                        self._streaming_session.enqueue_chunk(detached_frames)
 
     def start_recording(self, locked=False):
         if self.is_paused:
@@ -1469,8 +1780,18 @@ class FlowLocalEngine:
                     except Exception:
                         pass
 
-            # Pre-buffer di 350ms
+            # Smart Audio-Ducking su Spotify / App Multimediali (fade-out 120ms al 15%)
+            audio_ducker.duck()
+
+            # Pre-buffer di 350ms + reset stato Micro-Chunking in streaming
             self.audio_frames = list(self.analyzer.ring_buffer)
+            self._chunk_speech_duration_s = 0.0
+            self._chunk_silence_duration_s = 0.0
+            self._streaming_session = StreamingChunkSession(
+                engine=self,
+                src_rate=self.sample_rate,
+                mode=self.active_mode_key,
+            )
             self.is_recording = True
             self.is_locked = locked
             self.record_start_time = time.time()
@@ -1502,14 +1823,25 @@ class FlowLocalEngine:
             rec_context = self.current_context
             selection_text = self.active_selection_text
             prev_clipboard = self.previous_clipboard
+            streaming_session = self._streaming_session
             self.active_selection_text = None
             self.previous_clipboard = None
+            self._streaming_session = None
+            self._chunk_speech_duration_s = 0.0
+            self._chunk_silence_duration_s = 0.0
+
+        # Ripristina il volume originale delle app multimediali (fade-in 200ms)
+        audio_ducker.unduck()
+
+        has_prior_chunks = bool(streaming_session and streaming_session.has_enqueued_chunks)
 
         if self.orb:
             self.orb.set_state("WHISPER")
             self.orb.set_locked(False)
 
-        if not captured:
+        if not captured and not has_prior_chunks:
+            if streaming_session:
+                streaming_session.cancel()
             if self.orb:
                 self.orb.set_state("IDLE")
             # Ripristina previous_clipboard se presente
@@ -1522,9 +1854,12 @@ class FlowLocalEngine:
 
         total_samples = sum(len(c) for c in captured)
         src_rate = self.sample_rate
-        duration_s = total_samples / src_rate
+        tail_duration_s = total_samples / src_rate if src_rate else 0.0
+        total_duration_s = tail_duration_s + (streaming_session.total_audio_duration_s if streaming_session else 0.0)
 
-        if duration_s < 0.20:
+        if tail_duration_s < 0.20 and not has_prior_chunks:
+            if streaming_session:
+                streaming_session.cancel()
             if self.orb:
                 self.orb.set_state("IDLE")
             if prev_clipboard is not None:
@@ -1536,7 +1871,7 @@ class FlowLocalEngine:
 
         threading.Thread(
             target=self._transcribe_and_inject,
-            args=(captured, src_rate, duration_s, rec_mode, rec_context, selection_text, prev_clipboard),
+            args=(captured, src_rate, total_duration_s, rec_mode, rec_context, selection_text, prev_clipboard, streaming_session),
             daemon=True
         ).start()
 
@@ -1555,112 +1890,203 @@ class FlowLocalEngine:
             down=src_rate // g,
         ).astype(np.float32)
 
-    def _transcribe_and_inject(self, captured_chunks: List[np.ndarray], src_rate: int, duration_s: float, mode: str, context: tuple = ("Desktop", "natural", "Naturale"), selection_text: Optional[str] = None, previous_clipboard: Optional[str] = None):
+    def _transcribe_single_audio_segment(
+        self,
+        captured_chunks: List[np.ndarray],
+        src_rate: int,
+        previous_context: str = "",
+    ) -> Tuple[str, int, float]:
+        """
+        Esegue la pipeline acustica su un singolo segmento audio (o micro-chunk):
+        1. Normalizzazione Robusta sul 98° percentile + Soft-Clipping iperbolico (np.tanh)
+        2. Beam Search Dinamico (beam_size 1 / 3 / 4) in base a duration_sec
+           con condition_on_previous_text=True, vad_filter=True (min_silence_duration_ms=400)
+           e initial_prompt arricchito con gli ultimi 60 caratteri del chunk precedente.
+        Restituisce (raw_text, whisper_ms, duration_sec).
+        """
+        if not captured_chunks:
+            return "", 0, 0.0
+
         t0 = time.time()
-        whisper_ms = 0
-        launched_to_target = False
-        try:
-            raw_audio = np.concatenate(captured_chunks, axis=0).flatten()
-            audio_data = self._resample_to_16k(raw_audio, src_rate)
+        raw_audio = np.concatenate(captured_chunks, axis=0).flatten()
+        if raw_audio.size == 0:
+            return "", 0, 0.0
 
-            # 1. Normalizzazione audio (elimina problemi di microfoni a basso guadagno)
-            max_val = float(np.max(np.abs(audio_data)))
-            if max_val > 0.0005:
-                audio_data = (audio_data / max_val * 0.85).astype(np.float32)
-            else:
-                print("[FlowLocal] Livello audio impercettibile / microfono muto.")
-                if self.orb:
-                    self.orb.set_state("IDLE")
-                if previous_clipboard is not None:
-                    try:
-                        pyperclip.copy(previous_clipboard)
-                    except Exception:
-                        pass
-                return
+        audio_data = self._resample_to_16k(raw_audio, src_rate)
+        duration_sec = len(audio_data) / float(WHISPER_SAMPLE_RATE)
+        if duration_sec < 0.15:
+            return "", 0, duration_sec
 
-            # Attende il caricamento asincrono del modello se l'utente ha parlato subito all'avvio
-            if not self._model_ready.is_set():
-                self._model_ready.wait(timeout=30.0)
-            if self.model is None:
-                print(f"[FlowLocal] Modello Whisper non disponibile: {self._model_error or 'timeout'}")
-                if self.orb:
-                    self.orb.set_state("IDLE")
-                if previous_clipboard is not None:
-                    try:
-                        pyperclip.copy(previous_clipboard)
-                    except Exception:
-                        pass
-                return
+        # 1. Normalizzazione Audio Robusta (98° percentile + Soft-Clipping np.tanh)
+        audio_data, p98 = normalize_audio_robust(audio_data)
+        if p98 <= 1e-4:
+            return "", 0, duration_sec
 
-            # 2. Faster-Whisper Inference con VAD, barriere anti-allucinazione e bias acustico dinamico
-            db_prompt = db.get_whisper_initial_prompt(limit=40)
-            if db_prompt:
-                whisper_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} {db_prompt}"
-            else:
-                whisper_prompt = DEFAULT_WHISPER_INITIAL_PROMPT
+        # Attende il caricamento asincrono del modello se l'utente ha parlato subito all'avvio
+        if not self._model_ready.is_set():
+            self._model_ready.wait(timeout=30.0)
+        if self.model is None:
+            print(f"[FlowLocal] Modello Whisper non disponibile: {self._model_error or 'timeout'}")
+            return "", 0, duration_sec
 
-            segments, info = self.model.transcribe(
+        # 2. Costruzione initial_prompt con vocabolario utente + continuità chunk precedente (ultimi 60 car.)
+        db_prompt = db.get_whisper_initial_prompt(limit=40)
+        base_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} {db_prompt}".strip() if db_prompt else DEFAULT_WHISPER_INITIAL_PROMPT
+        ctx_tail = (previous_context or "").strip()[-60:].strip()
+        if ctx_tail:
+            whisper_prompt = f"{base_prompt} {ctx_tail}"
+        else:
+            whisper_prompt = base_prompt
+
+        # 3. Beam Search Dinamico su Faster-Whisper
+        beam_size = compute_dynamic_beam_size(duration_sec)
+
+        segments, _ = self.model.transcribe(
+            audio_data,
+            beam_size=beam_size,
+            language="it",
+            temperature=0.0,
+            condition_on_previous_text=True,
+            no_speech_threshold=0.6,
+            vad_filter=True,
+            vad_parameters=dict(
+                min_silence_duration_ms=400,
+                speech_pad_ms=200,
+            ),
+            initial_prompt=whisper_prompt,
+        )
+
+        segments = list(segments)
+        # Fallback senza VAD solo per audio con durata ed energia significative
+        if not segments and duration_sec >= 0.45 and p98 >= 0.010:
+            segments, _ = self.model.transcribe(
                 audio_data,
-                beam_size=1,
+                beam_size=beam_size,
                 language="it",
                 temperature=0.0,
-                condition_on_previous_text=False,
+                condition_on_previous_text=True,
                 no_speech_threshold=0.6,
-                vad_filter=True,
-                vad_parameters=dict(
-                    min_silence_duration_ms=500,
-                    speech_pad_ms=200,
-                ),
+                vad_filter=False,
                 initial_prompt=whisper_prompt,
             )
-
             segments = list(segments)
-            # Fallback senza VAD solo per audio con durata ed energia significative
-            if not segments and duration_s >= 0.45 and max_val >= 0.015:
-                segments, _ = self.model.transcribe(
-                    audio_data,
-                    beam_size=1,
-                    language="it",
-                    temperature=0.0,
-                    condition_on_previous_text=False,
-                    no_speech_threshold=0.6,
-                    vad_filter=False,
-                    initial_prompt=whisper_prompt,
+
+        # Analisi delle pause temporali (> 1.3 secondi)
+        text_parts = []
+        prev_end = None
+
+        for seg in segments:
+            if seg.no_speech_prob > 0.6:
+                continue
+            seg_text = seg.text.strip()
+            if not seg_text:
+                continue
+
+            if prev_end is not None and (seg.start - prev_end) > 1.3:
+                text_parts.append("[PAUSA_CAMBIO_ARGOMENTO]")
+
+            text_parts.append(seg_text)
+            prev_end = seg.end
+
+        raw_text = " ".join(text_parts).strip()
+        whisper_ms = int((time.time() - t0) * 1000)
+        return raw_text, whisper_ms, duration_sec
+
+    def _transcribe_and_inject(
+        self,
+        captured_chunks: List[np.ndarray],
+        src_rate: int,
+        duration_s: float,
+        mode: str,
+        context: tuple = ("Desktop", "natural", "Naturale"),
+        selection_text: Optional[str] = None,
+        previous_clipboard: Optional[str] = None,
+        streaming_session: Optional[StreamingChunkSession] = None,
+    ):
+        whisper_ms = 0
+        qwen_ms = 0
+        launched_to_target = False
+        try:
+            has_streamed_chunks = bool(streaming_session and streaming_session.has_enqueued_chunks)
+
+            # Se il micro-chunking in background ha già processato segmenti durante il Push-to-Talk:
+            if has_streamed_chunks and not (selection_text and selection_text.strip()):
+                prior_results = streaming_session.finalize_and_collect(timeout=15.0)
+                prev_ctx = streaming_session.previous_context
+
+                tail_raw, tail_w_ms, _ = self._transcribe_single_audio_segment(
+                    captured_chunks,
+                    src_rate,
+                    previous_context=prev_ctx,
                 )
-                segments = list(segments)
 
-            # Analisi delle pause temporali (> 1.3 secondi)
-            text_parts = []
-            prev_end = None
+                raw_parts = [r[0] for r in prior_results if r[0]]
+                refined_parts = [r[1] for r in prior_results if r[1]]
+                whisper_ms = sum(r[2] for r in prior_results) + tail_w_ms
+                qwen_ms = sum(r[3] for r in prior_results)
 
-            for seg in segments:
-                if seg.no_speech_prob > 0.6:
-                    continue
-                seg_text = seg.text.strip()
-                if not seg_text:
-                    continue
+                if tail_raw:
+                    tail_clean = apply_inline_voice_commands(tail_raw)
+                    if tail_clean:
+                        tail_clean = normalize_phonetic_variants(tail_clean)
+                        tail_clean = db.apply_phonetic_replacements(tail_clean)
+                        raw_parts.append(tail_clean)
 
-                if prev_end is not None and (seg.start - prev_end) > 1.3:
-                    text_parts.append("[PAUSA_CAMBIO_ARGOMENTO]")
+                        if self.orb:
+                            self.orb.set_state("QWEN")
+                        tail_refined, tail_q_ms = LLMRefiner.refine(
+                            tail_clean,
+                            mode=mode,
+                            previous_context=prev_ctx,
+                        )
+                        qwen_ms += tail_q_ms
+                        tail_refined = strip_pause_markers(tail_refined).rstrip()
+                        while tail_refined.endswith('\\'):
+                            tail_refined = tail_refined[:-1].rstrip()
+                        if tail_refined:
+                            refined_parts.append(tail_refined)
 
-                text_parts.append(seg_text)
-                prev_end = seg.end
+                raw_text = join_streaming_chunks(raw_parts)
+                final_text = join_streaming_chunks(refined_parts)
 
-            raw_text = " ".join(text_parts).strip()
-            whisper_ms = int((time.time() - t0) * 1000)
+                if not raw_text and not final_text:
+                    print("[FlowLocal] Nessun testo vocale rilevato nei micro-chunk.")
+                    if self.orb:
+                        self.orb.set_state("IDLE")
+                    if previous_clipboard is not None:
+                        try:
+                            pyperclip.copy(previous_clipboard)
+                        except Exception:
+                            pass
+                    return
 
-            if not raw_text:
-                print("[FlowLocal] Nessun testo vocale rilevato.")
-                if self.orb:
-                    self.orb.set_state("IDLE")
-                if previous_clipboard is not None:
-                    try:
-                        pyperclip.copy(previous_clipboard)
-                    except Exception:
-                        pass
-                return
+                print(
+                    f"[FlowLocal] Micro-Chunking completato ({len(prior_results) + (1 if tail_raw else 0)} segmenti, "
+                    f"Whisper tot: {whisper_ms}ms, Qwen tot: {qwen_ms}ms): {final_text}"
+                )
+            else:
+                if streaming_session:
+                    streaming_session.cancel()
 
-            print(f"[FlowLocal] Trascrizione grezza Whisper ({whisper_ms}ms): {raw_text}")
+                raw_text, whisper_ms, _ = self._transcribe_single_audio_segment(
+                    captured_chunks,
+                    src_rate,
+                    previous_context="",
+                )
+
+                if not raw_text:
+                    print("[FlowLocal] Nessun testo vocale rilevato o livello audio impercettibile.")
+                    if self.orb:
+                        self.orb.set_state("IDLE")
+                    if previous_clipboard is not None:
+                        try:
+                            pyperclip.copy(previous_clipboard)
+                        except Exception:
+                            pass
+                    return
+
+                print(f"[FlowLocal] Trascrizione grezza Whisper ({whisper_ms}ms): {raw_text}")
+                final_text = ""
 
             # =========================================================
             # CASO 0: ROUTER VOCALE ASSISTENTE WHIS (Zero-Focus)
@@ -1779,32 +2205,50 @@ class FlowLocalEngine:
                     sound_done()
                     return
 
-            # Comandi vocali inline di auto-correzione ("Anzi, cancella tutto...")
-            raw_text = apply_inline_voice_commands(raw_text)
-            if not raw_text:
-                print("[FlowLocal] Dettatura annullata tramite comando vocale inline.")
+            if not has_streamed_chunks:
+                # Comandi vocali inline di auto-correzione ("Anzi, cancella tutto...")
+                raw_text = apply_inline_voice_commands(raw_text)
+                if not raw_text:
+                    print("[FlowLocal] Dettatura annullata tramite comando vocale inline.")
+                    if self.orb:
+                        self.orb.set_state("IDLE")
+                    if previous_clipboard is not None:
+                        try:
+                            pyperclip.copy(previous_clipboard)
+                        except Exception:
+                            pass
+                    sound_done()
+                    return
+
+                # Normalizzazione automatica varianti fonetiche e sostituzione alias da DB
+                raw_text = normalize_phonetic_variants(raw_text)
+                raw_text = db.apply_phonetic_replacements(raw_text)
+
+                # Stadio 2: Rifinitura Qwen 2.5
                 if self.orb:
-                    self.orb.set_state("IDLE")
-                if previous_clipboard is not None:
-                    try:
-                        pyperclip.copy(previous_clipboard)
-                    except Exception:
-                        pass
-                sound_done()
-                return
+                    self.orb.set_state("QWEN")
 
-            # Normalizzazione automatica varianti fonetiche e sostituzione alias da DB
-            raw_text = normalize_phonetic_variants(raw_text)
-            raw_text = db.apply_phonetic_replacements(raw_text)
-
-            # Stadio 2: Rifinitura Qwen 2.5
-            if self.orb:
-                self.orb.set_state("QWEN")
-
-            final_text, qwen_ms = LLMRefiner.refine(raw_text, mode=mode)
-            final_text = strip_pause_markers(final_text).rstrip()
-            while final_text.endswith('\\'):
-                final_text = final_text[:-1].rstrip()
+                final_text, qwen_ms = LLMRefiner.refine(raw_text, mode=mode)
+                final_text = strip_pause_markers(final_text).rstrip()
+                while final_text.endswith('\\'):
+                    final_text = final_text[:-1].rstrip()
+            else:
+                # Se nella coda l'utente ha pronunciato "cancella tutto" sull'intero dettato
+                checked_inline = apply_inline_voice_commands(final_text)
+                if not checked_inline:
+                    print("[FlowLocal] Dettatura in streaming annullata tramite comando vocale inline.")
+                    if self.orb:
+                        self.orb.set_state("IDLE")
+                    if previous_clipboard is not None:
+                        try:
+                            pyperclip.copy(previous_clipboard)
+                        except Exception:
+                            pass
+                    sound_done()
+                    return
+                final_text = checked_inline.rstrip()
+                while final_text.endswith('\\'):
+                    final_text = final_text[:-1].rstrip()
 
             # 4. Trigger Vocale Zero-Focus per Appunti Rapidi ("Prendi nota", "Appunto", ecc.)
             is_quick_note = bool(
@@ -1984,8 +2428,9 @@ class FlowLocalEngine:
         file_path: str,
         subject_context: str = "",
         progress_callback: Optional[Callable[..., None]] = None,
-        cancel_check: Optional[Callable[[], bool]] = None
-    ) -> str:
+        cancel_check: Optional[Callable[[], bool]] = None,
+        return_sync_data: bool = False
+    ):
         """Sbobina un file audio o video (.mp3, .m4a, .wav, .ogg, .mp4, .mov, .mkv, .webm)
         con pre-processing d'aula, de-noising FFT, Faster-Whisper, gestione VRAM e Qwen 2.5 7B."""
         if not os.path.exists(file_path):
@@ -2102,6 +2547,7 @@ class FlowLocalEngine:
                 compression_ratio_threshold=2.2,
                 log_prob_threshold=-1.2,
                 no_speech_threshold=0.65,
+                word_timestamps=True,
                 vad_filter=True,
                 vad_parameters=dict(
                     threshold=0.35,
@@ -2111,6 +2557,7 @@ class FlowLocalEngine:
             )
 
             raw_parts = []
+            sync_segments: List[Dict[str, Any]] = []
             repeat_count = 0
             last_text = ""
             last_timestamp_sec = -999.0
@@ -2165,11 +2612,27 @@ class FlowLocalEngine:
 
                 raw_parts.append(f"{insert_time_prefix}{text_clean}")
 
+                seg_words = []
+                for w_obj in (getattr(seg, "words", None) or []):
+                    w_txt = (getattr(w_obj, "word", "") or "").strip()
+                    if not w_txt:
+                        continue
+                    w_s = round(float(getattr(w_obj, "start", start_sec) or start_sec), 3)
+                    w_e = round(float(getattr(w_obj, "end", w_s) or w_s), 3)
+                    seg_words.append({"w": w_txt, "s": w_s, "e": max(w_s, w_e)})
+                sync_segments.append({
+                    "start": round(float(start_sec), 3),
+                    "end": round(float(end_sec), 3),
+                    "text": text_clean,
+                    "words": seg_words,
+                })
+
             flush_unclear()
 
             full_raw_text = " ".join(raw_parts).strip()
             if not full_raw_text:
-                return "*(Nessun parlato rilevato nel file audio)*"
+                empty_md = "*(Nessun parlato rilevato nel file audio)*"
+                return (empty_md, {"segments": []}) if return_sync_data else empty_md
 
             # Normalizzazione automatica varianti fonetiche e glossario utente
             full_raw_text = normalize_phonetic_variants(full_raw_text)
@@ -2230,11 +2693,26 @@ class FlowLocalEngine:
             clean_summary = (summary or "").strip()
 
             if clean_summary:
-                final_markdown = f"{clean_summary}\n\n{lecture_body}".strip()
+                summary_lines = [
+                    re.sub(r'^>\s*', '', sl).strip()
+                    for sl in clean_summary.splitlines()
+                    if sl.strip()
+                ]
+                # Rimuovi eventuale intestazione ridondante "📌 Punti Chiave della Lezione:"
+                if summary_lines and "punti chiave" in summary_lines[0].lower():
+                    summary_lines = summary_lines[1:]
+                summary_body = "\n".join(summary_lines).strip()
+                if summary_body:
+                    ai_note_block = f":::ai-note Sommario Esecutivo\n{summary_body}\n:::"
+                    final_markdown = f"{ai_note_block}\n\n{lecture_body}".strip()
+                else:
+                    final_markdown = lecture_body
             else:
                 final_markdown = lecture_body
 
             report("Sbobinatura completata con successo!", 100)
+            if return_sync_data:
+                return final_markdown, {"segments": sync_segments}
             return final_markdown
 
         finally:

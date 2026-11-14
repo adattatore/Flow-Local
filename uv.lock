@@ -732,6 +732,7 @@ dependencies = [
     { name = "mss" },
     { name = "numpy" },
     { name = "pillow" },
+    { name = "pycaw" },
     { name = "pygame" },
     { name = "pymupdf" },
     { name = "pynput" },
@@ -757,6 +758,7 @@ requires-dist = [
     { name = "mss", specifier = ">=10.2.0" },
     { name = "numpy", specifier = ">=2.5.4" },
     { name = "pillow", specifier = ">=13.0.0" },
+    { name = "pycaw", specifier = ">=20240210" },
     { name = "pygame", specifier = ">=2.6.1" },
     { name = "pymupdf", specifier = ">=2.1" },
     { name = "pynput", specifier = ">=1.8.2" },
@@ -1995,6 +1997,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e9/e6/78ebbb10a8c8e4b61a59249394a4a594c1a7af95593dc933a349c8d00964/pyasn1_modules-0.4.2.tar.gz", hash = "sha256:677091de870a80aae844b1ca6134f54652fa2c8c5a52aa396440ac3106e941e6", size = 307892, upload-time = "2025-03-28T02:41:22.17Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl", hash = "sha256:29253a9207ce32b64c3ac6600edc75368f98473906e8fd1043bd6b5b1de2c14a", size = 181259, upload-time = "2025-03-28T02:41:19.028Z" },
+]
+
+[[package]]
+name = "pycaw"
+version = "20260927"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "comtypes" },
+    { name = "psutil" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/51/2870619bf47cef359505d88d277b71c18ae5af18ffe94e707dbce6def6c2/pycaw-20260927.tar.gz", hash = "sha256:3a833ace1a76d0cee134366366d64c56ea9552ebc6f572580e4299ad552743f6", size = 29644, upload-time = "2026-09-26T20:05:02.191Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/af/79/baf93a0a0b53a886f6a84ac05dd8491068c8a7c54db4ccd247acdcff9d1c/pycaw-20260927-py3-none-any.whl", hash = "sha256:d5b162a87536956af8dfa0fc53b1c77870a30706445ffd7f92a2ed184f65ddf4", size = 28463, upload-time = "2026-09-26T20:05:00.817Z" },
 ]
 
 [[package]]

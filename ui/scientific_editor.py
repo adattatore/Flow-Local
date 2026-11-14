@@ -78,17 +78,22 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 MAX_INLINE_IMAGE_WIDTH = 520
 
 # Custom QTextFormat properties per blocchi WYSIWYG Notion
-PROP_BLOCK_KIND = QTextFormat.Property.UserProperty + 1   # "quote" | "todo" | "file" | "h1" | "h2"
+PROP_BLOCK_KIND = QTextFormat.Property.UserProperty + 1   # "quote" | "todo" | "file" | "h1" | "h2" | "h3" | "h4" | "ai_note"
 PROP_FILE_PATH = QTextFormat.Property.UserProperty + 2    # path locale per blocco "file"
 PROP_FRAME_KIND = QTextFormat.Property.UserProperty + 3   # "python" | "bibtex" | "code"
 PROP_LATEX_SOURCE = QTextFormat.Property.UserProperty + 5 # sorgente LaTeX su QTextImageFormat renderizzato
+PROP_AI_NOTE_TITLE = QTextFormat.Property.UserProperty + 6
+PROP_AI_NOTE_BODY = QTextFormat.Property.UserProperty + 7
+PROP_AI_NOTE_EXPANDED = QTextFormat.Property.UserProperty + 8
 
 
 def strip_markdown_syntax(text: str) -> str:
-    """Rimuove tag Markdown (#, ##, **, $$, ```) per titoli e anteprime pulite nella sidebar."""
+    """Rimuove tag Markdown (#, ##, **, $$, ```, :::ai-note) per titoli e anteprime pulite nella sidebar."""
     if not text:
         return ""
-    s = re.sub(r"```[a-zA-Z]*", "", text)
+    s = re.sub(r":::ai-note[^\n]*\n?", "", text)
+    s = s.replace(":::", "")
+    s = re.sub(r"```[a-zA-Z]*", "", s)
     s = s.replace("$$", "").replace("**", "")
     s = re.sub(r"^#{1,6}\s+", "", s, flags=re.MULTILINE)
     s = re.sub(r"^>\s+", "", s, flags=re.MULTILINE)
@@ -1227,6 +1232,8 @@ class ScientificNoteEditor(QTextEdit):
     flashcardsRequested = pyqtSignal()
     studioViewChanged = pyqtSignal(bool)
     markdownModified = pyqtSignal()
+    seekRequested = pyqtSignal(int)
+    togglePlayRequested = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True, reading_mode: bool = False):
         super().__init__(parent)
@@ -1238,6 +1245,15 @@ class ScientificNoteEditor(QTextEdit):
         self._is_studio_view: bool = False
         self._internal_update: bool = False
         self._slash_start_pos: Optional[int] = None
+
+        # Audio-Text Sync state
+        self._audio_sync_active: bool = False
+        self._sync_segments: List[Dict] = []
+        self._sync_spans: List = []
+        self._sync_dirty: bool = False
+        self._sync_accent_color: QColor = QColor("#6366F1")
+        self._active_highlight_span = None
+        self._auto_scroll_paused: bool = False
 
         self.setAcceptRichText(False)
         self.document().setDocumentMargin(12 if reading_mode else 4)
@@ -1295,6 +1311,8 @@ class ScientificNoteEditor(QTextEdit):
     def _on_internal_text_changed(self):
         if self._internal_update or self._is_studio_view:
             return
+        if self._audio_sync_active:
+            self._sync_dirty = True
         self._raw_markdown = self._serialize_document_to_markdown()
         self.markdownModified.emit()
 
@@ -1373,6 +1391,14 @@ class ScientificNoteEditor(QTextEdit):
             return f"# {txt}"
         if kind == "h2":
             return f"## {txt}"
+        if kind == "h3":
+            return f"### {txt}"
+        if kind == "h4":
+            return f"#### {txt}"
+        if kind == "ai_note":
+            ai_title = str(block.blockFormat().property(PROP_AI_NOTE_TITLE) or "Nota AI").strip()
+            ai_body = str(block.blockFormat().property(PROP_AI_NOTE_BODY) or "").strip()
+            return f":::ai-note {ai_title}\n{ai_body}\n:::"
         if kind == "quote":
             return f"> {txt}"
         if kind == "todo":
@@ -1466,6 +1492,25 @@ class ScientificNoteEditor(QTextEdit):
                 i += 1
                 continue
 
+            # 1b. Blocco Nota AI collassabile (:::ai-note Titolo ... :::)
+            if stripped.startswith(":::ai-note"):
+                ai_title = stripped[len(":::ai-note"):].strip() or "Sintesi AI"
+                ai_lines = []
+                i += 1
+                while i < len(lines) and lines[i].strip() != ":::":
+                    ai_lines.append(lines[i])
+                    i += 1
+                if i < len(lines) and lines[i].strip() == ":::":
+                    i += 1
+                _ensure_new_block()
+                self._apply_ai_note_block_at_cursor(
+                    cursor,
+                    title=ai_title,
+                    body="\n".join(ai_lines).strip(),
+                    expanded=False,
+                )
+                continue
+
             # 2. Tabella Markdown -> Vera QTextTable interattiva
             if stripped.startswith("|") and "|" in stripped[1:]:
                 table_rows: List[List[str]] = []
@@ -1534,15 +1579,15 @@ class ScientificNoteEditor(QTextEdit):
                     cursor.insertText(f"$$\n{expr}\n$$")
                 continue
 
-            # 5c. Titoli WYSIWYG (# e ## senza simboli # visibili)
-            if line.startswith("# "):
+            # 5c. Titoli WYSIWYG (#, ##, ###, #### senza simboli # visibili)
+            h_match = re.match(r"^(#{1,4})\s+(.*)$", line)
+            if h_match:
+                h_level = len(h_match.group(1))
+                h_text = h_match.group(2).strip()
+                if h_text.startswith("**") and h_text.endswith("**") and len(h_text) > 4:
+                    h_text = h_text[2:-2].strip()
                 _ensure_new_block()
-                self._apply_heading_block_at_cursor(cursor, level=1, text=line[2:])
-                i += 1
-                continue
-            if line.startswith("## "):
-                _ensure_new_block()
-                self._apply_heading_block_at_cursor(cursor, level=2, text=line[3:])
+                self._apply_heading_block_at_cursor(cursor, level=h_level, text=h_text)
                 i += 1
                 continue
 
@@ -1617,15 +1662,17 @@ class ScientificNoteEditor(QTextEdit):
 
     def _apply_heading_block_at_cursor(self, cursor: QTextCursor, level: int = 1, text: str = ""):
         bf = QTextBlockFormat()
-        bf.setTopMargin(14 if level == 1 else 10)
-        bf.setBottomMargin(6 if level == 1 else 4)
+        bf.setTopMargin(12 if level == 1 else (9 if level == 2 else 6))
+        bf.setBottomMargin(5 if level == 1 else 3)
         bf.setProperty(PROP_BLOCK_KIND, f"h{level}")
         cursor.setBlockFormat(bf)
 
         scale = max(0.8, min(1.5, self._font_scale_pct / 100.0))
+        size_map = {1: 15.5, 2: 13.5, 3: 12.0, 4: 11.5}
+        pt_size = size_map.get(level, 11.5)
         cf = QTextCharFormat()
-        cf.setFontWeight(QFont.Weight.Bold)
-        cf.setFontPointSize(round((24 if level == 1 else 18) * scale, 1))
+        cf.setFontWeight(QFont.Weight.Bold if level <= 2 else QFont.Weight.DemiBold)
+        cf.setFontPointSize(round(pt_size * scale, 1))
         cf.setForeground(QColor("#F8FAFC" if self._dark_mode else "#0F172A"))
         cursor.setCharFormat(cf)
         if text:
@@ -1680,6 +1727,57 @@ class ScientificNoteEditor(QTextEdit):
         cursor.setCharFormat(cf)
         if text:
             cursor.insertText(text)
+
+    def _apply_ai_note_block_at_cursor(
+        self,
+        cursor: QTextCursor,
+        title: str = "Sintesi AI",
+        body: str = "",
+        expanded: bool = False,
+    ):
+        bf = QTextBlockFormat()
+        bf.setTopMargin(7)
+        bf.setBottomMargin(7)
+        bf.setLeftMargin(14)
+        bf.setRightMargin(14)
+        bf.setProperty(PROP_BLOCK_KIND, "ai_note")
+        bf.setProperty(PROP_AI_NOTE_TITLE, title or "Sintesi AI")
+        bf.setProperty(PROP_AI_NOTE_BODY, body or "")
+        bf.setProperty(PROP_AI_NOTE_EXPANDED, bool(expanded))
+        cursor.setBlockFormat(bf)
+
+        scale = max(0.8, min(1.5, self._font_scale_pct / 100.0))
+        hdr_cf = QTextCharFormat()
+        hdr_cf.setFontWeight(QFont.Weight.DemiBold)
+        hdr_cf.setFontPointSize(round(10.0 * scale, 1))
+        hdr_cf.setForeground(QColor(self._sync_accent_color))
+
+        clean_title = (title or "Sintesi AI").strip()
+        if expanded and body:
+            cursor.insertText(f"▾ 💡 Nota AI · {clean_title}\u2028", hdr_cf)
+            body_cf = QTextCharFormat()
+            body_cf.setFontPointSize(round(10.0 * scale, 1))
+            body_cf.setForeground(QColor("#CBD5E1" if self._dark_mode else "#334155"))
+            cursor.insertText(body.strip().replace("\n", "\u2028"), body_cf)
+        else:
+            cursor.insertText(f"▸ 💡 Nota AI · {clean_title}  (clicca per espandere)", hdr_cf)
+
+    def _toggle_ai_note_block(self, block):
+        bf = block.blockFormat()
+        title = str(bf.property(PROP_AI_NOTE_TITLE) or "Sintesi AI")
+        body = str(bf.property(PROP_AI_NOTE_BODY) or "")
+        expanded = not bool(bf.property(PROP_AI_NOTE_EXPANDED))
+
+        self._internal_update = True
+        try:
+            cur = QTextCursor(block)
+            cur.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            cur.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+            cur.removeSelectedText()
+            self._apply_ai_note_block_at_cursor(cur, title=title, body=body, expanded=expanded)
+        finally:
+            self._internal_update = False
+        self.viewport().update()
 
     def _apply_todo_block_at_cursor(self, cursor: QTextCursor, text: str = "", checked: bool = False):
         bf = QTextBlockFormat()
@@ -1828,6 +1926,25 @@ class ScientificNoteEditor(QTextEdit):
                 painter.setPen(QPen(card_bd, 1.0))
                 painter.setBrush(QBrush(card_bg))
                 painter.drawRoundedRect(draw_rect, 8.0, 8.0)
+            elif kind == "ai_note":
+                b_rect = doc_layout.blockBoundingRect(block).translated(hx, vy)
+                draw_rect = QRectF(
+                    2.0,
+                    b_rect.top() - 3.0,
+                    max(40.0, self.viewport().width() - 6.0),
+                    max(28.0, b_rect.height() + 6.0),
+                )
+                ai_bg = QColor(self._sync_accent_color)
+                ai_bg.setAlpha(24 if self._dark_mode else 18)
+                ai_bd = QColor(self._sync_accent_color)
+                ai_bd.setAlpha(95 if self._dark_mode else 75)
+                painter.setPen(QPen(ai_bd, 1.0))
+                painter.setBrush(QBrush(ai_bg))
+                painter.drawRoundedRect(draw_rect, 8.0, 8.0)
+                bar_rect = QRectF(4.0, draw_rect.top() + 4.0, 3.0, max(14.0, draw_rect.height() - 8.0))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(self._sync_accent_color))
+                painter.drawRoundedRect(bar_rect, 1.5, 1.5)
             block = block.next()
 
         painter.end()
@@ -1965,9 +2082,146 @@ class ScientificNoteEditor(QTextEdit):
         self._on_internal_text_changed()
 
     # -----------------------------------------------------------------
+    # AUDIO-TEXT SYNC (KARAOKE HIGHLIGHTING & ALT+CLICK SEEK)
+    # -----------------------------------------------------------------
+    def set_sync_accent_color(self, hex_color: str):
+        col = QColor(hex_color or "#6366F1")
+        if col.isValid():
+            self._sync_accent_color = col
+            if self._active_highlight_span is not None:
+                self._apply_extra_selection_span(self._active_highlight_span)
+
+    def set_audio_sync_data(self, segments: Optional[List[Dict]]):
+        self._auto_scroll_paused = False
+        self._active_highlight_span = None
+        if not segments:
+            self._audio_sync_active = False
+            self._sync_segments = []
+            self._sync_spans = []
+            self._sync_dirty = False
+            self.setExtraSelections([])
+            return
+        self._audio_sync_active = True
+        self._sync_segments = list(segments)
+        self._rebuild_sync_spans()
+
+    def _rebuild_sync_spans(self):
+        if not self._audio_sync_active or not self._sync_segments:
+            self._sync_spans = []
+            self._sync_dirty = False
+            return
+        from core.audio_sync import AudioTextAligner, build_doc_tokens_from_qtextdocument
+        doc_tokens = build_doc_tokens_from_qtextdocument(self.document())
+        self._sync_spans = AudioTextAligner.align(self._sync_segments, doc_tokens)
+        self._sync_dirty = False
+
+    def clear_audio_highlight(self):
+        self._active_highlight_span = None
+        self.setExtraSelections([])
+
+    def resume_auto_scroll(self):
+        self._auto_scroll_paused = False
+
+    def _apply_extra_selection_span(self, span):
+        if span is None:
+            self.setExtraSelections([])
+            return
+        cur = QTextCursor(self.document())
+        doc_len = max(0, self.document().characterCount() - 1)
+        s_pos = max(0, min(int(span.char_start), doc_len))
+        e_pos = max(s_pos, min(int(span.char_end), doc_len))
+        cur.setPosition(s_pos)
+        cur.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+
+        bg = QColor(self._sync_accent_color)
+        bg.setAlpha(80 if self._dark_mode else 65)
+
+        sel = QTextEdit.ExtraSelection()
+        sel.cursor = cur
+        fmt = QTextCharFormat()
+        fmt.setBackground(QBrush(bg))
+        sel.format = fmt
+        self.setExtraSelections([sel])
+
+    def highlight_audio_position(self, pos_ms: int):
+        if not self._audio_sync_active or self._is_studio_view:
+            return
+        if self._sync_dirty:
+            self._rebuild_sync_spans()
+        from core.audio_sync import AudioTextAligner
+        span = AudioTextAligner.find_span_at_ms(self._sync_spans, pos_ms)
+        if span == self._active_highlight_span:
+            return
+        self._active_highlight_span = span
+        self._apply_extra_selection_span(span)
+        if span is not None and not self._auto_scroll_paused:
+            self._scroll_to_char_discreetly(span.char_start)
+
+    def _scroll_to_char_discreetly(self, char_pos: int):
+        doc_len = max(0, self.document().characterCount() - 1)
+        pos = max(0, min(int(char_pos), doc_len))
+        cur = QTextCursor(self.document())
+        cur.setPosition(pos)
+        rect = self.cursorRect(cur)
+        vp_rect = self.viewport().rect().adjusted(0, 16, 0, -16)
+        vbar = self.verticalScrollBar()
+        if vbar is None:
+            return
+        if rect.top() < vp_rect.top():
+            delta = rect.top() - vp_rect.top() - 24
+            vbar.setValue(vbar.value() + delta)
+        elif rect.bottom() > vp_rect.bottom():
+            delta = rect.bottom() - vp_rect.bottom() + 24
+            vbar.setValue(vbar.value() + delta)
+
+    def _find_ms_for_cursor(self, cur: QTextCursor) -> Optional[int]:
+        if not self._audio_sync_active:
+            return None
+        if self._sync_dirty:
+            self._rebuild_sync_spans()
+        from core.audio_sync import AudioTextAligner
+        return AudioTextAligner.find_ms_for_char(self._sync_spans, cur.position()) if hasattr(AudioTextAligner, "find_ms_for_char") else AudioTextAligner.find_ms_at_char(self._sync_spans, cur.position())
+
+    def wheelEvent(self, event):
+        if self._audio_sync_active:
+            self._auto_scroll_paused = True
+        super().wheelEvent(event)
+
+    def contextMenuEvent(self, event):
+        menu = self.createStandardContextMenu()
+        if self._audio_sync_active and not self._is_studio_view:
+            cur = self.cursorForPosition(event.pos())
+            target_ms = self._find_ms_for_cursor(cur)
+            if target_ms is not None:
+                first_act = menu.actions()[0] if menu.actions() else None
+                listen_act = menu.addAction("🔊 Ascolta da questo punto")
+                if first_act is not None:
+                    menu.removeAction(listen_act)
+                    menu.insertAction(first_act, listen_act)
+                    menu.insertSeparator(first_act)
+                listen_act.triggered.connect(lambda _chk=False, ms=target_ms: self._emit_seek(ms))
+        menu.exec(event.globalPos())
+
+    def _emit_seek(self, target_ms: int):
+        self._auto_scroll_paused = False
+        self.seekRequested.emit(int(target_ms))
+
+    # -----------------------------------------------------------------
     # MOUSE INTERACTION (TO-DO CHECKBOX & FILE BLOCKS)
     # -----------------------------------------------------------------
     def mousePressEvent(self, event: QMouseEvent):
+        if (
+            self._audio_sync_active
+            and not self._is_studio_view
+            and event.button() == Qt.MouseButton.LeftButton
+            and (event.modifiers() & Qt.KeyboardModifier.AltModifier)
+        ):
+            cur = self.cursorForPosition(event.pos())
+            target_ms = self._find_ms_for_cursor(cur)
+            if target_ms is not None:
+                self._emit_seek(target_ms)
+                return
+
         if not self._is_studio_view and event.button() == Qt.MouseButton.LeftButton:
             cur = self.cursorForPosition(event.pos())
             block = cur.block()
@@ -1975,6 +2229,10 @@ class ScientificNoteEditor(QTextEdit):
 
             if kind == "todo" and cur.positionInBlock() <= 2:
                 self._toggle_todo_block(block)
+                return
+
+            if kind == "ai_note":
+                self._toggle_ai_note_block(block)
                 return
 
             if kind == "file":
@@ -2195,6 +2453,11 @@ class ScientificNoteEditor(QTextEdit):
 
         key = event.key()
         mods = event.modifiers()
+
+        # 0. Scorciatoia Play/Pausa Audio-Sync (Ctrl+Spazio) nelle sbobine
+        if self._audio_sync_active and key == Qt.Key.Key_Space and (mods & Qt.KeyboardModifier.ControlModifier):
+            self.togglePlayRequested.emit()
+            return
 
         # 1. Menu Slash attivo
         if self.slash_popup.isVisible():

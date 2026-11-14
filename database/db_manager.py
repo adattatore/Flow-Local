@@ -92,6 +92,7 @@ class DatabaseManager:
             ("profile", "TEXT DEFAULT 'Alessandro'"),
             ("subject", "TEXT DEFAULT 'Generale'"),
             ("topic", "TEXT DEFAULT 'Generale'"),
+            ("audio_path", "TEXT DEFAULT ''"),
         ]:
             try:
                 cursor.execute(f"ALTER TABLE study_notes ADD COLUMN {col_name} {col_sql};")
@@ -1047,12 +1048,22 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, audio_path, created_at
             FROM study_notes
             WHERE id = ?
         """, (note_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
+
+    def update_study_note_audio_path(self, note_id: int, audio_path: str) -> None:
+        """Associa il percorso della traccia audio archiviata alla nota indicata."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE study_notes SET audio_path = ? WHERE id = ?",
+            (audio_path or "", int(note_id)),
+        )
+        conn.commit()
 
     def delete_study_note(self, item_id: int):
         """Elimina una nota o sbobina, tutte le eventuali flashcard collegate e i collegamenti associati."""
@@ -1061,6 +1072,11 @@ class DatabaseManager:
         cursor.execute("DELETE FROM note_links WHERE source_id = ? OR target_id = ?", (item_id, item_id))
         cursor.execute("DELETE FROM study_notes WHERE id = ? OR parent_note_id = ?", (item_id, item_id))
         conn.commit()
+        try:
+            from core.audio_sync import delete_note_audio_sync
+            delete_note_audio_sync(item_id)
+        except Exception:
+            pass
 
     # --- GRAFO DELLA CONOSCENZA & NOTE COLLEGATE (OBSIDIAN STYLE) ---
     def add_note_link(self, source_id: int, target_id: int, reason: str = "") -> Optional[int]:

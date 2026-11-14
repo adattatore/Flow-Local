@@ -35,6 +35,8 @@ from faster_whisper import WhisperModel
 from database import db
 from ui.voice_orb import VoiceOrbOverlay
 from ui.hub_window import FlowLocalHub
+from core.audio_ducker import audio_ducker
+from core.ai_pipeline import normalize_audio_robust, compute_dynamic_beam_size
 
 RECORD_SAMPLE_RATE = 48000
 WHISPER_SAMPLE_RATE = 16000
@@ -302,6 +304,7 @@ class FlowLocalEngine:
         with self.lock:
             if self.is_recording:
                 return
+            audio_ducker.duck()
             self.audio_frames = list(self.ring_buffer)
             self.is_recording = True
             self.is_locked = locked
@@ -324,6 +327,8 @@ class FlowLocalEngine:
             self.is_locked = False
             captured = list(self.audio_frames)
             self.audio_frames = []
+
+        audio_ducker.unduck()
 
         if self.orb:
             self.orb.show_whisper()
@@ -352,6 +357,14 @@ class FlowLocalEngine:
     def _transcribe_and_inject(self, audio_data: np.ndarray, duration_s: float):
         t0 = time.time()
         try:
+            audio_data, p98 = normalize_audio_robust(audio_data)
+            if p98 <= 1e-4:
+                if self.orb:
+                    self.orb.hide()
+                return
+
+            beam_size = compute_dynamic_beam_size(duration_s)
+
             # Biasing Whisper da database vocabolario
             vocab_prompt = db.get_vocabulary_prompt_string()
             if vocab_prompt:
@@ -361,13 +374,14 @@ class FlowLocalEngine:
 
             segments, info = self.model.transcribe(
                 audio_data,
-                beam_size=5,
+                beam_size=beam_size,
                 language="it",
                 temperature=0.0,
-                condition_on_previous_text=False,
+                condition_on_previous_text=True,
+                no_speech_threshold=0.6,
                 vad_filter=True,
                 vad_parameters=dict(
-                    min_silence_duration_ms=350,
+                    min_silence_duration_ms=400,
                     speech_pad_ms=200,
                 ),
                 initial_prompt=initial_prompt,

@@ -9,9 +9,15 @@ from core.ai_pipeline import (
     DEFAULT_WHISPER_INITIAL_PROMPT,
     normalize_phonetic_variants as _base_normalize_phonetic_variants,
     FlowLocalEngine,
+    LLMRefiner,
+    StreamingChunkSession,
+    normalize_audio_robust,
+    compute_dynamic_beam_size,
+    join_streaming_chunks,
     WHIS_WAKE_REGEX,
     strip_vocal_fillers,
 )
+from core.audio_ducker import AudioDucker, audio_ducker
 
 
 def normalize_post_transcription(text: str) -> str:
@@ -41,6 +47,13 @@ __all__ = [
     "normalize_phonetic_variants",
     "normalize_post_transcription",
     "FlowLocalEngine",
+    "LLMRefiner",
+    "StreamingChunkSession",
+    "normalize_audio_robust",
+    "compute_dynamic_beam_size",
+    "join_streaming_chunks",
+    "AudioDucker",
+    "audio_ducker",
     "WHIS_WAKE_REGEX",
     "strip_vocal_fillers",
 ]

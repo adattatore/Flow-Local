@@ -22,6 +22,7 @@ from PyQt6.QtGui import QPainter, QColor, QLinearGradient, QFont, QPen
 
 from core.whis_agent import WhisAgent, WhisStreamWorker
 from core.audio_feedback import audio_feedback, MODE_VOICE, MODE_SOFT_CHIME, MODE_MUTE
+from core.audio_ducker import audio_ducker
 
 
 class WhisAvatar(QWidget):
@@ -365,6 +366,7 @@ class WhisHUD(QWidget):
     def start_query(self, user_query: str, selection_text: Optional[str] = None):
         """Inizia l'elaborazione e lo streaming visivo della risposta di Whis."""
         self.auto_hide_timer.stop()
+        audio_ducker.unduck()
         audio_feedback.stop()
 
         # Ripristina stile bordo standard se era in stato di ascolto
@@ -676,6 +678,7 @@ class WhisHUD(QWidget):
     def show_followup_listening(self, prompt_text: str = "🎙️ Ti ascolto... dimmi il titolo!"):
         """Attiva l'ascolto per la risposta dell'utente preservando la domanda di Whis a schermo."""
         self.auto_hide_timer.stop()
+        audio_ducker.duck()
         self.card.setStyleSheet("""
             QFrame#whis_card {
                 background-color: #0f1118;
@@ -695,6 +698,7 @@ class WhisHUD(QWidget):
         """Apre l'HUD in modalità Fase 2 Alexa: 'In ascolto... Dimmi pure!'."""
         self.auto_hide_timer.stop()
         audio_feedback.stop()
+        audio_ducker.duck()
 
         if self.worker and self.worker.isRunning():
             try:
@@ -739,6 +743,7 @@ class WhisHUD(QWidget):
 
     def dismiss_wake(self):
         """Chiude l'HUD se è trascorso il timeout senza comandi ricevuti."""
+        audio_ducker.unduck()
         audio_feedback.stop()
         if self.orb:
             self.orb.dismiss_whis()

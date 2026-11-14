@@ -64,13 +64,16 @@ from PyQt6.QtWidgets import (
 
 from database import db
 from core.exporter import export_to_md, export_to_docx, export_to_pdf, export_to_tex
+from core.audio_sync import archive_audio_for_note, save_note_audio_sync, load_note_audio_sync
 from ui.scientific_editor import ScientificNoteEditor, strip_markdown_syntax
+from ui.audio_sync_bar import AudioSyncBar
 from core.cloud_sync import cloud_sync
 from core.whis_agent import WhisAgent, WhisStreamWorker
 from core.audio_feedback import (
     audio_feedback, MODE_VOICE, MODE_SOFT_CHIME, MODE_MUTE,
     VOICE_PRESETS, DEFAULT_VOICE_KEY, TEST_PHRASE
 )
+from core.audio_ducker import audio_ducker
 
 # Rilevamento GPU tramite NVML (opzionale, senza warning)
 GPU_AVAILABLE = False
@@ -2919,6 +2922,71 @@ QPushButton#SpotifyCtrlBtn:pressed {{
     padding: 0px;
     padding-top: 2px;
 }}
+
+/* ---------------- AUDIO SYNC BAR (FLOWNOTES SBOBINE) ---------------- */
+QFrame#AudioSyncBar {{
+    background-color: {p['surface_soft']};
+    {p['top_box_border_qss']}
+    border-radius: {p['btn_radius']};
+    margin-top: 8px;
+}}
+QPushButton#AudioSyncPlayBtn {{
+    background-color: {p.get('accent') or p.get('nav_checked_border') or '#6366F1'};
+    border: none;
+    border-radius: 15px;
+    color: #FFFFFF;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 0px;
+}}
+QPushButton#AudioSyncPlayBtn:hover {{
+    background-color: {p['nav_checked_border']};
+}}
+QPushButton#AudioSyncJumpBtn, QPushButton#AudioSyncSpeedBtn {{
+    background-color: {p['pill_bg']};
+    {p['pill_border_qss']}
+    border-radius: {p['small_radius']};
+    color: {p['text']};
+    font-size: 11px;
+    font-weight: 600;
+    padding: 0 8px;
+    min-height: 26px;
+    max-height: 26px;
+}}
+QPushButton#AudioSyncJumpBtn:hover, QPushButton#AudioSyncSpeedBtn:hover {{
+    {p['pill_hover_qss']}
+}}
+QPushButton#AudioSyncJumpBtn:pressed, QPushButton#AudioSyncSpeedBtn:pressed {{
+    {p['pill_pressed_qss']}
+}}
+QLabel#AudioSyncTimeLabel {{
+    background-color: transparent;
+    border: none;
+    color: {p['subtitle']};
+    font-size: 11px;
+    font-weight: 600;
+}}
+QSlider#AudioSyncSlider {{
+    background-color: transparent;
+}}
+QSlider#AudioSyncSlider::groove:horizontal {{
+    border: none;
+    height: 4px;
+    background-color: {p['divider']};
+    border-radius: 2px;
+}}
+QSlider#AudioSyncSlider::sub-page:horizontal {{
+    background-color: {p.get('accent') or p.get('nav_checked_border') or '#6366F1'};
+    border-radius: 2px;
+}}
+QSlider#AudioSyncSlider::handle:horizontal {{
+    background-color: {p.get('accent') or p.get('nav_checked_border') or '#6366F1'};
+    border: 2px solid {p['surface_soft']};
+    width: 12px;
+    height: 12px;
+    margin: -4px 0;
+    border-radius: 7px;
+}}
 QPushButton#SettingsGearBtn {{
     background-color: {p['pill_bg']};
     {p['pill_border_qss']}
@@ -3858,7 +3926,7 @@ def _make_card() -> (QFrame, QVBoxLayout):
 
 class AudioTranscribeThread(QThread):
     progress = pyqtSignal(str, int)  # status_msg, percent
-    finished = pyqtSignal(str, str)  # final_markdown, file_name
+    finished = pyqtSignal(str, str, str, object)  # final_markdown, file_name, source_path, sync_data
     error = pyqtSignal(str)
     cancelled = pyqtSignal()
 
@@ -3885,18 +3953,19 @@ class AudioTranscribeThread(QThread):
             def is_cancelled() -> bool:
                 return self.cancel_requested
 
-            markdown = target_engine.transcribe_audio_file(
+            markdown, sync_data = target_engine.transcribe_audio_file(
                 self.file_path,
                 subject_context=self.subject_context,
                 progress_callback=on_progress,
-                cancel_check=is_cancelled
+                cancel_check=is_cancelled,
+                return_sync_data=True
             )
             if self.cancel_requested:
                 self.cancelled.emit()
                 return
 
             file_name = os.path.basename(self.file_path)
-            self.finished.emit(markdown, file_name)
+            self.finished.emit(markdown, file_name, self.file_path, sync_data)
         except InterruptedError:
             self.cancelled.emit()
         except Exception as e:
@@ -5897,11 +5966,21 @@ class HubSettingsDialog(QDialog):
         sc_layout = QVBoxLayout(sys_card)
         sc_layout.setContentsMargins(14, 10, 14, 10)
         sc_layout.setSpacing(6)
-        sc_layout.addWidget(_make_label("⚡ Motore AI & Scorciatoie", "CardTitle"))
+        sc_layout.addWidget(_make_label("⚡ Motore AI, Audio & Scorciatoie", "CardTitle"))
         hw_str = "● GPU CUDA attiva (Whisper float16 + Ollama)" if GPU_AVAILABLE else "● CPU Fast (Whisper int8)"
         hw_lbl = QLabel(hw_str)
         hw_lbl.setStyleSheet(f"color: {'#10B981' if GPU_AVAILABLE else '#F59E0B'}; font-size: 12px; font-weight: 600; background: transparent;")
         sc_layout.addWidget(hw_lbl)
+
+        self.auto_duck_checkbox = QCheckBox("Abbassa automaticamente la musica durante la dettatura (Auto-Ducking)")
+        self.auto_duck_checkbox.setChecked(audio_ducker.is_enabled())
+        self.auto_duck_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.auto_duck_checkbox.setStyleSheet(
+            "QCheckBox { font-size: 12px; font-weight: 600; padding: 4px 0px; background: transparent; }"
+        )
+        self.auto_duck_checkbox.toggled.connect(self._on_auto_duck_toggled)
+        sc_layout.addWidget(self.auto_duck_checkbox)
+
         hint_lbl = QLabel("• Push-to-Talk: Shift Destro (doppio tocco = Mani Libere)\n• Scorciatoia secondaria: F8\n• Assistente Whis: pronuncia \"Whis...\" durante la dettatura")
         hint_lbl.setWordWrap(True)
         hint_lbl.setObjectName("PageSubtitle")
@@ -5914,6 +5993,13 @@ class HubSettingsDialog(QDialog):
         close_btn.clicked.connect(self.accept)
         close_row.addWidget(close_btn)
         layout.addLayout(close_row)
+
+    def _on_auto_duck_toggled(self, checked: bool):
+        audio_ducker.set_enabled(bool(checked))
+        if hasattr(self.hub, "styles_auto_duck_chk") and self.hub.styles_auto_duck_chk is not None:
+            self.hub.styles_auto_duck_chk.blockSignals(True)
+            self.hub.styles_auto_duck_chk.setChecked(bool(checked))
+            self.hub.styles_auto_duck_chk.blockSignals(False)
 
     def _on_theme_pill_clicked(self, theme_key: str):
         self.hub._set_theme(theme_key)
@@ -8116,6 +8202,11 @@ class FlowLocalHub(QMainWindow):
                 self.nk_editor_body.set_theme_modes(is_dark, self._reading_mode)
             elif hasattr(self.nk_editor_body, "set_dark_mode"):
                 self.nk_editor_body.set_dark_mode(is_dark)
+            if hasattr(self.nk_editor_body, "set_sync_accent_color"):
+                p_sync = self._active_palette()
+                self.nk_editor_body.set_sync_accent_color(
+                    p_sync.get("accent") or p_sync.get("nav_checked_border") or "#6366F1"
+                )
 
         overlay = ThemeRevealOverlay(self, old_pixmap) if old_pixmap is not None else None
         self.setUpdatesEnabled(False)
@@ -9327,7 +9418,25 @@ class FlowLocalHub(QMainWindow):
             "Scrivi o detta qui in Markdown + LaTeX ($...$), incolla immagini (Ctrl+V) o digita '/' per i comandi..."
         )
         self.nk_editor_body.setMinimumHeight(240)
+        p_init = self._active_palette()
+        self.nk_editor_body.set_sync_accent_color(
+            p_init.get("accent") or p_init.get("nav_checked_border") or "#6366F1"
+        )
         col3_layout.addWidget(self.nk_editor_body, 1)
+
+        # Smart Audio Bar contestuale per le sbobine (nascosta di default)
+        self.nk_audio_bar = AudioSyncBar(self)
+        self.nk_audio_bar.hide()
+        col3_layout.addWidget(self.nk_audio_bar)
+
+        self.nk_audio_bar.positionChangedMs.connect(self.nk_editor_body.highlight_audio_position)
+        self.nk_audio_bar.playbackStateChanged.connect(
+            lambda playing: None if playing else self.nk_editor_body.clear_audio_highlight()
+        )
+        self.nk_editor_body.seekRequested.connect(
+            lambda ms: self.nk_audio_bar.seek_ms(ms, auto_play=True)
+        )
+        self.nk_editor_body.togglePlayRequested.connect(self.nk_audio_bar.toggle_play_pause)
 
         # Auto-save silenzioso con debounce 800ms
         self._nk_loading_note = False
@@ -9708,6 +9817,15 @@ class FlowLocalHub(QMainWindow):
                 if idx >= 0:
                     self.nk_editor_type.setCurrentIndex(idx)
                 self.nk_editor_body.set_markdown_text(note.get("content_markdown") or "")
+                sync_data = load_note_audio_sync(note_id)
+                if sync_data and sync_data.get("audio_path"):
+                    self.nk_editor_body.set_audio_sync_data(sync_data.get("segments") or [])
+                    if hasattr(self, "nk_audio_bar"):
+                        self.nk_audio_bar.load_audio(sync_data["audio_path"])
+                else:
+                    self.nk_editor_body.set_audio_sync_data(None)
+                    if hasattr(self, "nk_audio_bar"):
+                        self.nk_audio_bar.unload()
                 self._set_nk_autosave_badge(saved=True)
             finally:
                 self._nk_loading_note = False
@@ -9826,6 +9944,9 @@ class FlowLocalHub(QMainWindow):
             if hasattr(self, "nk_editor_body") and self.nk_editor_body.is_studio_view:
                 self.nk_editor_body.set_studio_view(False)
             self.nk_editor_body.set_markdown_text("")
+            self.nk_editor_body.set_audio_sync_data(None)
+            if hasattr(self, "nk_audio_bar"):
+                self.nk_audio_bar.unload()
             self._set_nk_autosave_badge(saved=True)
             self.nk_editor_title.setFocus()
         finally:
@@ -9849,6 +9970,9 @@ class FlowLocalHub(QMainWindow):
                 self._nk_selected_note_id = None
                 self.nk_editor_title.setText("")
                 self.nk_editor_body.set_markdown_text("")
+                self.nk_editor_body.set_audio_sync_data(None)
+                if hasattr(self, "nk_audio_bar"):
+                    self.nk_audio_bar.unload()
                 self._set_nk_autosave_badge(saved=True)
             finally:
                 self._nk_loading_note = False
@@ -10656,10 +10780,10 @@ class FlowLocalHub(QMainWindow):
             "L'operazione di sbobinatura è stata interrotta con successo."
         )
 
-    def _on_sbobina_finished(self, markdown: str, file_name: str):
+    def _on_sbobina_finished(self, markdown: str, file_name: str, source_path: str = "", sync_data=None):
         self.sbobina_progress_box.hide()
         self.sbobina_btn.setEnabled(True)
-        self.sbobina_btn.setText("🎙️ Sbobina File Audio")
+        self.sbobina_btn.setText("🎙️ Sbobina")
 
         # Salva la sbobina nella tabella study_notes del database
         title = f"Sbobina: {file_name}"
@@ -10669,7 +10793,22 @@ class FlowLocalHub(QMainWindow):
             note_type="Sbobina",
             tags=f"Audio, {file_name}"
         )
+
+        # Archivia audio in data/audio_notes/ e salva la mappa timestamp parola-per-parola
+        if source_path and os.path.exists(source_path):
+            try:
+                archived_audio = archive_audio_for_note(new_id, source_path)
+                if archived_audio:
+                    db.update_study_note_audio_path(new_id, archived_audio)
+                    segments = (sync_data or {}).get("segments", []) if isinstance(sync_data, dict) else []
+                    save_note_audio_sync(new_id, archived_audio, segments)
+            except Exception as sync_err:
+                print(f"[FlowLocal Sbobina] Avviso salvataggio audio sync: {sync_err}")
+
         self._refresh_notes()
+        if hasattr(self, "nk_tree"):
+            self._refresh_notekeeper()
+            self._load_note_into_nk_editor(new_id)
         self._start_autolinking(new_id, title, markdown)
 
         QMessageBox.information(
@@ -11158,9 +11297,33 @@ class FlowLocalHub(QMainWindow):
     # -----------------------------------------------------------------
     def _build_styles_page(self) -> QWidget:
         page, layout = self._make_page(
-            "Stili & Prompt",
-            "Seleziona una modalità e modifica il relativo System Prompt.",
+            "Stili & Impostazioni",
+            "Seleziona una modalità, modifica il System Prompt e configura l'audio in dettatura.",
         )
+
+        # Card impostazione rapida Auto-Ducking
+        duck_card = QFrame()
+        duck_card.setObjectName("Card")
+        duck_layout = QHBoxLayout(duck_card)
+        duck_layout.setContentsMargins(14, 10, 14, 10)
+        duck_layout.setSpacing(10)
+
+        self.styles_auto_duck_chk = QCheckBox(
+            "🎵 Abbassa automaticamente la musica durante la dettatura (Auto-Ducking)"
+        )
+        self.styles_auto_duck_chk.setChecked(audio_ducker.is_enabled())
+        self.styles_auto_duck_chk.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.styles_auto_duck_chk.setStyleSheet(
+            "QCheckBox { font-size: 13px; font-weight: 600; padding: 2px 0px; background: transparent; }"
+        )
+        self.styles_auto_duck_chk.toggled.connect(lambda checked: audio_ducker.set_enabled(bool(checked)))
+        duck_layout.addWidget(self.styles_auto_duck_chk)
+        duck_layout.addStretch(1)
+
+        duck_badge = QLabel("Spotify / Browser • 15% fade")
+        duck_badge.setObjectName("Badge")
+        duck_layout.addWidget(duck_badge)
+        layout.addWidget(duck_card)
 
         tabs_row = QHBoxLayout()
         tabs_row.setSpacing(8)
