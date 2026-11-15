@@ -52,7 +52,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import (
     QPainter, QPen, QBrush, QColor, QFont, QFontMetrics, QPainterPath, QRadialGradient,
-    QLinearGradient, QCursor, QPolygonF, QIcon, QPixmap, QKeySequence, QShortcut, QTextCharFormat
+    QLinearGradient, QCursor, QPolygonF, QIcon, QPixmap, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
 )
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
@@ -67,6 +67,16 @@ from core.exporter import export_to_md, export_to_docx, export_to_pdf, export_to
 from core.audio_sync import archive_audio_for_note, save_note_audio_sync, load_note_audio_sync
 from ui.scientific_editor import DictationGhostLineEdit, ScientificNoteEditor, strip_markdown_syntax
 from ui.audio_sync_bar import AudioSyncBar
+from ui.notes_tree import (
+    SamsungNotesTreeWidget,
+    ROLE_NODE_DATA,
+    ROLE_COUNT,
+    ROLE_FOLDER_COLOR,
+    ROLE_IS_FOLDER,
+    ROLE_LOCKED_FOLDER,
+    make_vector_folder_icon,
+)
+from ui.command_palette import GlobalCommandPalette
 from core.cloud_sync import cloud_sync
 from core.whis_agent import WhisAgent, WhisStreamWorker
 from core.audio_feedback import (
@@ -7832,9 +7842,15 @@ class FlowLocalHub(QMainWindow):
         self.cloud_sync = cloud_sync
         self._cloud_queue_thread = None
 
+        self._nk_current_filter_folder_id: Optional[int] = None
         self._build_ui()
         self._sync_editor_typography()
         self._refresh_current_page()
+
+        # Scorciatoia globale Command Palette (Ctrl+K)
+        self._cmd_palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        self._cmd_palette_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._cmd_palette_shortcut.activated.connect(self._open_command_palette)
 
         # Sync iniziale e periodico Google Calendar in background (se connesso)
         QTimer.singleShot(1500, self._startup_google_calendar_sync)
@@ -8221,6 +8237,8 @@ class FlowLocalHub(QMainWindow):
         )
         self._sync_editor_typography()
         self._apply_windows_titlebar_theme(self._current_theme, self._reading_mode)
+        if hasattr(self, "nk_tree") and hasattr(self.nk_tree, "set_theme_palette"):
+            self.nk_tree.set_theme_palette(self._active_palette())
         if hasattr(self, "spotify_bar"):
             self.spotify_bar.set_theme_mode(is_dark)
         if hasattr(self, "flowtype_style_title"):
@@ -9169,15 +9187,18 @@ class FlowLocalHub(QMainWindow):
         profile_row.addWidget(self.nk_card_view_btn)
         col1_layout.addLayout(profile_row)
 
-        # Albero Unificato Materia -> Argomento -> Note (Notion Tree)
-        self.nk_tree = QTreeWidget()
+        # Albero Cartelle & Sottocartelle Stile Samsung Notes (FlowNotes)
+        self.nk_tree = SamsungNotesTreeWidget()
         self.nk_tree.setObjectName("NKTree")
-        self.nk_tree.setHeaderHidden(True)
-        self.nk_tree.setColumnCount(1)
-        self.nk_tree.setIndentation(14)
-        self.nk_tree.setAnimated(True)
-        self.nk_tree.header().setStretchLastSection(True)
+        self.nk_tree.set_theme_palette(self._active_palette())
         self.nk_tree.currentItemChanged.connect(self._on_nk_tree_item_changed)
+        self.nk_tree.noteMovedToFolder.connect(self._on_nk_note_moved)
+        self.nk_tree.folderMovedToParent.connect(self._on_nk_folder_moved)
+        self.nk_tree.createSubfolderRequested.connect(self._on_nk_create_subfolder)
+        self.nk_tree.renameFolderRequested.connect(self._on_nk_rename_folder)
+        self.nk_tree.changeFolderColorRequested.connect(self._on_nk_change_folder_color)
+        self.nk_tree.deleteFolderRequested.connect(self._on_nk_delete_folder)
+        self.nk_tree.toggleNoteStudiedRequested.connect(self._on_nk_toggle_studied)
         col1_layout.addWidget(self.nk_tree, 1)
 
         # Footer compatto della Sidebar
@@ -9549,8 +9570,28 @@ class FlowLocalHub(QMainWindow):
             self.nk_col2.hide()
         self._sync_nk_panel_toggles()
 
+    def _make_note_leaf_item(self, note: Dict, p: Dict[str, str], max_len: int = 32) -> QTreeWidgetItem:
+        clean_t = strip_markdown_syntax((note.get("title") or "Senza titolo").replace("Nota: ", "").strip()) or "Senza titolo"
+        is_sbobina = (note.get("note_type") == "sbobina") or bool(note.get("audio_path"))
+        tags_str = (note.get("tags") or "")
+        is_studied = bool(note.get("is_studied")) or ("Studiata" in tags_str)
+        icon_prefix = "🎙️" if is_sbobina else ("✅" if is_studied else "📄")
+        label = f"{icon_prefix} {clean_t[:max_len]}"
+        leaf = QTreeWidgetItem([label])
+        leaf.setData(0, Qt.ItemDataRole.UserRole, ("note", note["id"]))
+        leaf.setData(0, ROLE_NODE_DATA, ("note", note["id"]))
+        leaf.setData(0, ROLE_IS_FOLDER, False)
+        leaf.setToolTip(0, clean_t)
+        leaf.setForeground(0, QBrush(QColor(p["text"])))
+        leaf.setFlags(
+            Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsDragEnabled
+        )
+        return leaf
+
     def _refresh_notekeeper(self):
-        """Ricarica l'albero unificato Materia -> Argomento -> Note (foglie cliccabili stile Notion)."""
+        """Ricarica l'albero gerarchico stile Samsung Notes (Tutte, Recenti, Cartelle/Sottocartelle -> Note)."""
         if not hasattr(self, "nk_tree"):
             return
         prof_text = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Tutti i profili"
@@ -9563,77 +9604,105 @@ class FlowLocalHub(QMainWindow):
             topic=None,
             search_query=sq,
         )
-        tree = db.get_subjects_tree(prof_filter)
+        folders = db.get_folders_tree(profile=prof_filter)
+
+        p = self._active_palette()
+        if hasattr(self.nk_tree, "set_theme_palette"):
+            self.nk_tree.set_theme_palette(p)
 
         self.nk_tree.blockSignals(True)
         self.nk_tree.clear()
 
-        p = self._active_palette()
+        # 1. Voce fissa/collassabile in cima: Tutte le note
+        all_item = QTreeWidgetItem(["Tutte le note"])
+        all_item.setData(0, Qt.ItemDataRole.UserRole, ("all",))
+        all_item.setData(0, ROLE_NODE_DATA, ("all",))
+        all_item.setData(0, ROLE_IS_FOLDER, True)
+        all_item.setData(0, ROLE_LOCKED_FOLDER, True)
+        all_item.setData(0, ROLE_COUNT, len(all_notes))
+        all_item.setIcon(0, make_vector_folder_icon(p.get("accent", "#6366F1"), 16))
+        f_top = QFont("Segoe UI", 9)
+        f_top.setWeight(QFont.Weight.DemiBold)
+        all_item.setFont(0, f_top)
+        all_item.setForeground(0, QBrush(QColor(p["title"])))
+        all_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        self.nk_tree.addTopLevelItem(all_item)
 
-        # Sezione rapida in cima: Recenti / Tutte
-        recent_item = QTreeWidgetItem([f"🕒 Recenti / Tutte ({len(all_notes)})"])
-        recent_item.setData(0, Qt.ItemDataRole.UserRole, ("filter", "all", "all"))
+        # 2. Sezione rapida: Recenti (ultimi appunti modificati)
+        recent_slice = all_notes[:8]
+        recent_item = QTreeWidgetItem(["Recenti"])
+        recent_item.setData(0, Qt.ItemDataRole.UserRole, ("recent",))
+        recent_item.setData(0, ROLE_NODE_DATA, ("recent",))
+        recent_item.setData(0, ROLE_IS_FOLDER, True)
+        recent_item.setData(0, ROLE_LOCKED_FOLDER, True)
+        recent_item.setData(0, ROLE_COUNT, len(recent_slice))
+        recent_item.setIcon(0, make_vector_folder_icon(p.get("subtitle", "#9CA3AF"), 16))
+        recent_item.setFont(0, f_top)
         recent_item.setForeground(0, QBrush(QColor(p["badge_text"])))
-        r_font = QFont("Segoe UI", 9)
-        r_font.setBold(True)
-        recent_item.setFont(0, r_font)
-        for n in all_notes[:10]:
-            clean_t = strip_markdown_syntax((n.get("title") or "Senza titolo").replace("Nota: ", "").strip()) or "Senza titolo"
-            leaf = QTreeWidgetItem([f"📄 {clean_t[:34]}"])
-            leaf.setData(0, Qt.ItemDataRole.UserRole, ("note", n["id"]))
-            leaf.setToolTip(0, clean_t)
-            leaf.setForeground(0, QBrush(QColor(p["text"])))
-            recent_item.addChild(leaf)
-        self.nk_tree.addTopLevelItem(recent_item)
+        recent_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        for n in recent_slice:
+            recent_item.addChild(self._make_note_leaf_item(n, p, max_len=32))
+        self.nk_tree.addTopLevelItem(recent_slice and recent_item or recent_item)
         recent_item.setExpanded(True)
 
-        # Raggruppa le note per (subject, topic)
-        notes_by_sub_top: Dict[tuple, List[Dict]] = {}
+        # 3. Albero gerarchico delle cartelle & sottocartelle
+        notes_by_folder: Dict[Optional[int], List[Dict]] = {}
         for n in all_notes:
-            key = (n.get("subject") or "Generale", n.get("topic") or "Generale")
-            notes_by_sub_top.setdefault(key, []).append(n)
+            fid = n.get("folder_id")
+            notes_by_folder.setdefault(fid, []).append(n)
 
-        subject_palette = ["#6366F1", "#0EA5E9", "#10B981", "#F59E0B", "#EC4899", "#8B5CF6"]
-        for idx, (subj, topic_list) in enumerate(tree.items()):
-            dot_color = subject_palette[idx % len(subject_palette)]
-            s_item = QTreeWidgetItem([subj])
-            s_item.setData(0, Qt.ItemDataRole.UserRole, ("filter", subj, "all"))
-            s_font = QFont("Segoe UI", 9)
-            s_font.setBold(True)
-            s_item.setFont(0, s_font)
-            s_item.setForeground(0, QBrush(QColor(p["title"])))
+        children_by_parent: Dict[Optional[int], List[Dict]] = {}
+        for f in folders:
+            children_by_parent.setdefault(f.get("parent_id"), []).append(f)
 
-            dot_pm = QPixmap(10, 10)
-            dot_pm.fill(Qt.GlobalColor.transparent)
-            dp = QPainter(dot_pm)
-            dp.setRenderHint(QPainter.RenderHint.Antialiasing)
-            dp.setPen(Qt.PenStyle.NoPen)
-            dp.setBrush(QColor(dot_color))
-            dp.drawEllipse(2, 2, 6, 6)
-            dp.end()
-            s_item.setIcon(0, QIcon(dot_pm))
+        def _build_folder_node(f_dict: Dict) -> tuple[QTreeWidgetItem, int]:
+            fid = f_dict["id"]
+            color_hex = f_dict.get("color") or "#6366F1"
+            f_item = QTreeWidgetItem([f_dict["name"]])
+            f_item.setData(0, Qt.ItemDataRole.UserRole, ("folder", fid))
+            f_item.setData(0, ROLE_NODE_DATA, ("folder", fid))
+            f_item.setData(0, ROLE_IS_FOLDER, True)
+            f_item.setData(0, ROLE_LOCKED_FOLDER, False)
+            f_item.setData(0, ROLE_FOLDER_COLOR, color_hex)
+            f_item.setIcon(0, make_vector_folder_icon(color_hex, 16))
+            f_font = QFont("Segoe UI", 9)
+            f_font.setWeight(QFont.Weight.DemiBold)
+            f_item.setFont(0, f_font)
+            f_item.setForeground(0, QBrush(QColor(p["title"])))
+            f_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled
+                | Qt.ItemFlag.ItemIsSelectable
+                | Qt.ItemFlag.ItemIsDragEnabled
+                | Qt.ItemFlag.ItemIsDropEnabled
+            )
 
-            for t_info in topic_list:
-                t_name = t_info["topic"]
-                t_notes = notes_by_sub_top.get((subj, t_name), [])
-                if sq and not t_notes:
-                    continue
-                t_item = QTreeWidgetItem([f"{t_name} ({len(t_notes)})"])
-                t_item.setData(0, Qt.ItemDataRole.UserRole, ("filter", subj, t_name))
-                t_item.setForeground(0, QBrush(QColor(p["subtitle"])))
-                for n in t_notes:
-                    clean_t = strip_markdown_syntax((n.get("title") or "Senza titolo").replace("Nota: ", "").strip()) or "Senza titolo"
-                    leaf = QTreeWidgetItem([f"📄 {clean_t[:32]}"])
-                    leaf.setData(0, Qt.ItemDataRole.UserRole, ("note", n["id"]))
-                    leaf.setToolTip(0, clean_t)
-                    leaf.setForeground(0, QBrush(QColor(p["text"])))
-                    t_item.addChild(leaf)
-                s_item.addChild(t_item)
-                t_item.setExpanded(True)
+            direct_notes = notes_by_folder.get(fid, [])
+            total_count = len(direct_notes)
 
-            if not sq or s_item.childCount() > 0:
-                self.nk_tree.addTopLevelItem(s_item)
-                s_item.setExpanded(True)
+            for sub_f in children_by_parent.get(fid, []):
+                sub_item, sub_cnt = _build_folder_node(sub_f)
+                total_count += sub_cnt
+                if not sq or sub_cnt > 0:
+                    f_item.addChild(sub_item)
+                    sub_item.setExpanded(True)
+
+            for n in direct_notes:
+                f_item.addChild(self._make_note_leaf_item(n, p, max_len=30))
+
+            f_item.setData(0, ROLE_COUNT, total_count)
+            return f_item, total_count
+
+        for root_f in children_by_parent.get(None, []):
+            r_item, r_cnt = _build_folder_node(root_f)
+            if not sq or r_cnt > 0:
+                self.nk_tree.addTopLevelItem(r_item)
+                r_item.setExpanded(True)
+
+        # Eventuali note orfane senza folder_id
+        orphan_notes = notes_by_folder.get(None, [])
+        if orphan_notes:
+            for n in orphan_notes:
+                self.nk_tree.addTopLevelItem(self._make_note_leaf_item(n, p, max_len=32))
 
         self.nk_tree.blockSignals(False)
         self._refresh_nk_notes_list()
@@ -9662,19 +9731,26 @@ class FlowLocalHub(QMainWindow):
             note_id = data[1]
             self._load_note_into_nk_editor(note_id)
             return
-        if data[0] == "filter":
-            _, subj, topic = data
-        else:
-            subj, topic = data
-        if subj == "all":
+        if data[0] in ("all", "recent"):
+            self._nk_current_filter_folder_id = None
             self._nk_current_filter_subject = None
             self._nk_current_filter_topic = None
-        elif topic == "all":
-            self._nk_current_filter_subject = subj
+        elif data[0] == "folder":
+            self._nk_current_filter_folder_id = data[1]
+            self._nk_current_filter_subject = None
             self._nk_current_filter_topic = None
-        else:
-            self._nk_current_filter_subject = subj
-            self._nk_current_filter_topic = topic
+        elif data[0] == "filter":
+            self._nk_current_filter_folder_id = None
+            _, subj, topic = data
+            if subj == "all":
+                self._nk_current_filter_subject = None
+                self._nk_current_filter_topic = None
+            elif topic == "all":
+                self._nk_current_filter_subject = subj
+                self._nk_current_filter_topic = None
+            else:
+                self._nk_current_filter_subject = subj
+                self._nk_current_filter_topic = topic
         self._refresh_nk_notes_list()
         self._sync_whis_study_context()
 
@@ -9689,12 +9765,13 @@ class FlowLocalHub(QMainWindow):
             profile=prof_filter,
             subject=self._nk_current_filter_subject,
             topic=self._nk_current_filter_topic,
-            search_query=sq
+            search_query=sq,
+            folder_id=getattr(self, "_nk_current_filter_folder_id", None),
         )
 
         self.nk_notes_list.clear()
         if not notes:
-            self.nk_notes_list.show_empty("Nessuna nota per l'argomento selezionato.")
+            self.nk_notes_list.show_empty("Nessuna nota per la cartella selezionata.")
             return
 
         for n in notes:
@@ -9704,6 +9781,162 @@ class FlowLocalHub(QMainWindow):
         # Se nessuna nota è selezionata, carica la prima nell'editor
         if getattr(self, "_nk_selected_note_id", None) is None and notes:
             self._load_note_into_nk_editor(notes[0]["id"])
+
+    # -----------------------------------------------------------------
+    # Gestione Cartelle Gerarchiche (Samsung Notes Style)
+    # -----------------------------------------------------------------
+    def _on_nk_create_subfolder(self, parent_id: int):
+        name, ok = QInputDialog.getText(self, "Nuova Sottocartella", "Nome sottocartella:")
+        if not ok or not name.strip():
+            return
+        prof = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Alessandro"
+        if prof == "Tutti i profili":
+            prof = "Alessandro"
+        db.create_folder(name=name.strip(), parent_id=parent_id, profile=prof)
+        self._refresh_notekeeper()
+
+    def _on_nk_rename_folder(self, folder_id: int):
+        folders = {f["id"]: f for f in db.get_folders_tree()}
+        cur_name = folders.get(folder_id, {}).get("name", "")
+        new_name, ok = QInputDialog.getText(self, "Rinomina Cartella", "Nuovo nome:", text=cur_name)
+        if not ok or not new_name.strip():
+            return
+        db.rename_folder(folder_id, new_name.strip())
+        self._refresh_notekeeper()
+
+    def _on_nk_change_folder_color(self, folder_id: int, color_hex: str):
+        db.set_folder_color(folder_id, color_hex)
+        self._refresh_notekeeper()
+
+    def _on_nk_delete_folder(self, folder_id: int):
+        notes_in_folder = db.get_notes_by_hierarchy(folder_id=folder_id)
+        if notes_in_folder:
+            box = QMessageBox(self)
+            box.setWindowTitle("Elimina Cartella")
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setText(f"La cartella contiene {len(notes_in_folder)} note (incluse eventuali sottocartelle).")
+            box.setInformativeText("Vuoi spostare le note nella cartella Generale prima di eliminare?")
+            btn_move = box.addButton("Sposta in Generale", QMessageBox.ButtonRole.AcceptRole)
+            btn_del_all = box.addButton("Elimina tutto", QMessageBox.ButtonRole.DestructiveRole)
+            btn_cancel = box.addButton("Annulla", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is btn_cancel or clicked is None:
+                return
+            move_to_gen = (clicked is btn_move)
+        else:
+            res = QMessageBox.question(
+                self,
+                "Elimina Cartella",
+                "Eliminare questa cartella vuota?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if res != QMessageBox.StandardButton.Yes:
+                return
+            move_to_gen = True
+
+        if getattr(self, "_nk_current_filter_folder_id", None) == folder_id:
+            self._nk_current_filter_folder_id = None
+        db.delete_folder(folder_id, move_notes_to_generale=move_to_gen)
+        self._refresh_notekeeper()
+
+    def _on_nk_note_moved(self, note_id: int, target_folder_id: int):
+        if db.move_note_to_folder(note_id, target_folder_id):
+            self._refresh_notekeeper()
+
+    def _on_nk_folder_moved(self, folder_id: int, target_parent_id: object):
+        parent_val = int(target_parent_id) if target_parent_id is not None else None
+        if db.move_folder(folder_id, parent_val):
+            self._refresh_notekeeper()
+
+    def _on_nk_toggle_studied(self, note_id: int):
+        db.toggle_note_studied(note_id)
+        self._refresh_notekeeper()
+
+    # -----------------------------------------------------------------
+    # Command Palette Globale (Ctrl+K)
+    # -----------------------------------------------------------------
+    def _open_command_palette(self):
+        callbacks = {
+            "open_note": self._cp_open_note,
+            "open_folder": self._cp_open_folder,
+            "open_event": self._cp_open_event,
+            "use_dictation": self._cp_use_dictation,
+            "new_note": self._cp_new_note,
+            "new_sbobina": self._cp_new_sbobina,
+            "toggle_reading": self._cp_toggle_reading,
+            "set_theme": self._set_theme,
+            "navigate": self._on_nav_clicked,
+        }
+        dlg = GlobalCommandPalette(
+            parent=self,
+            palette=self._active_palette(),
+            themes_map=_THEME_PALETTES,
+            callbacks=callbacks,
+            reading_mode_active=bool(getattr(self, "_reading_mode", False)),
+        )
+        dlg.exec()
+
+    def _cp_open_note(self, note_id: Optional[int], match_line: int = 0, query: str = ""):
+        if not note_id:
+            return
+        self._on_nav_clicked(1)
+        self._load_note_into_nk_editor(note_id)
+        if hasattr(self, "nk_editor_body") and match_line > 0:
+            doc = self.nk_editor_body.document()
+            block = doc.findBlockByNumber(match_line)
+            if block.isValid():
+                cur = QTextCursor(block)
+                self.nk_editor_body.setTextCursor(cur)
+                self.nk_editor_body.ensureCursorVisible()
+            self.nk_editor_body.setFocus()
+
+    def _cp_open_folder(self, folder_id: Optional[int]):
+        self._on_nav_clicked(1)
+        if folder_id is not None:
+            self._nk_current_filter_folder_id = folder_id
+            self._nk_current_filter_subject = None
+            self._nk_current_filter_topic = None
+            self._refresh_notekeeper()
+
+    def _cp_open_event(self, event_date: str):
+        self._on_nav_clicked(7)
+        if event_date and hasattr(self, "ft_calendar"):
+            qd = QDate.fromString(event_date[:10], "yyyy-MM-dd")
+            if qd.isValid():
+                self.ft_calendar.setSelectedDate(qd)
+                if hasattr(self, "_refresh_flowtime_page"):
+                    self._refresh_flowtime_page()
+
+    def _cp_use_dictation(self, text: str):
+        if not text:
+            return
+        cb = QApplication.clipboard()
+        if cb is not None:
+            cb.setText(text)
+        if (
+            hasattr(self, "pages")
+            and self.pages.currentIndex() == 1
+            and hasattr(self, "nk_editor_body")
+        ):
+            self.nk_editor_body.insertPlainText(text)
+            self.nk_editor_body.setFocus()
+
+    def _cp_new_note(self):
+        self._on_nav_clicked(1)
+        if hasattr(self, "_on_nk_new_note_clicked"):
+            self._on_nk_new_note_clicked()
+
+    def _cp_new_sbobina(self):
+        self._on_nav_clicked(1)
+        if hasattr(self, "_on_sbobina_clicked"):
+            self._on_sbobina_clicked()
+
+    def _cp_toggle_reading(self):
+        new_state = not bool(getattr(self, "_reading_mode", False))
+        if hasattr(self, "reading_mode_btn"):
+            self.reading_mode_btn.setChecked(new_state)
+        self._toggle_reading_mode(new_state)
 
     def _make_nk_note_card(self, note: Dict) -> QFrame:
         card = QFrame()
@@ -10003,6 +10236,7 @@ class FlowLocalHub(QMainWindow):
         prof = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Alessandro"
         dlg = NewSubjectTopicDialog(self, default_profile=prof)
         if dlg.exec():
+            db.sync_folders_from_notes()
             self._refresh_notekeeper()
 
     def _on_nk_extract_flashcards_clicked(self):
@@ -12017,6 +12251,73 @@ class FlowLocalHub(QMainWindow):
         if ev.get("subject"):
             top.addWidget(_make_label(ev["subject"], "Badge"))
         top.addStretch(1)
+
+        if is_todo:
+            done_btn = _make_button("✅ Fatto" if ev.get("is_completed") else "☐ Completa")
+            done_btn.setStyleSheet("min-height: 24px; max-height: 24px; padding: 0 8px; font-size: 11px;")
+            done_btn.clicked.connect(lambda _c=False, eid=ev_id: self._on_ft_todo_toggled(eid))
+            top.addWidget(done_btn)
+
+        open_btn = _make_button("✏️ Modifica & Vai", "primary")
+        open_btn.setStyleSheet("min-height: 24px; max-height: 24px; padding: 0 10px; font-size: 11px;")
+        open_btn.clicked.connect(lambda _c=False, e=ev: self._on_ft_open_search_result(e))
+        top.addWidget(open_btn)
+        layout.addLayout(top)
+
+        t_lbl = _make_label(ev.get("summary") or "(Senza titolo)", "CardTitle", wrap=True)
+        layout.addWidget(t_lbl)
+        if ev.get("location"):
+            layout.addWidget(_make_label(f"📍 {ev['location']}", "CardMeta", wrap=True))
+        return card
+
+    def _on_ft_open_search_result(self, ev: Dict[str, Any]):
+        if hasattr(self, "ft_search_input"):
+            self.ft_search_input.blockSignals(True)
+            self.ft_search_input.clear()
+            self.ft_search_input.blockSignals(False)
+        if hasattr(self, "ft_view_day_btn"):
+            self.ft_view_day_btn.setChecked(True)
+        if hasattr(self, "ft_main_stack"):
+            self.ft_main_stack.setCurrentIndex(0)
+        self._on_ft_edit_event(ev)
+
+    def _reset_ft_form(self):
+        self._ft_editing_event_id = None
+        self._ft_form_linked_note_ids = []
+        self.ft_form_title_lbl.setText("➕ Nuovo Impegno")
+        self.ft_form_sync_lbl.setText("")
+        self.ft_save_btn.setText("💾 Salva in FlowTime")
+        self.ft_delete_btn.setVisible(False)
+        self.ft_cancel_edit_btn.setVisible(False)
+        self.ft_type_event_btn.setChecked(True)
+        self._set_ft_form_item_type("event")
+        self.ft_title_input.clear()
+        self.ft_start_input.setText("09:00")
+        self.ft_duration_combo.setCurrentIndex(1)
+        self.ft_allday_chk.setChecked(False)
+        self.ft_category_combo.setCurrentIndex(0)
+        self.ft_subject_input.clear()
+        self.ft_location_input.clear()
+        self.ft_recurrence_combo.setCurrentIndex(0)
+        self._set_ft_form_color(FLOWTIME_COLOR_PALETTE[0][0])
+        self._refresh_ft_form_notes_ui()
+        self._refresh_flowtime_lists()
+
+    def _on_ft_edit_event(self, ev: Dict[str, Any]):
+        ev_date = (ev.get("event_date") or "").strip()
+        if ev_date and hasattr(self, "ft_calendar"):
+            qd = QDate.fromString(ev_date, "yyyy-MM-dd")
+            if qd.isValid() and qd != self.ft_calendar.selectedDate():
+                self.ft_calendar.setSelectedDate(qd)
+        ev_id = int(ev.get("local_id") or ev.get("id"))
+        self._ft_editing_event_id = ev_id
+        is_todo = ev.get("item_type") == "todo"
+        self.ft_form_title_lbl.setText("✏️ Modifica To-Do" if is_todo else "✏️ Modifica Evento")
+        sync_st = ev.get("sync_status") or "local_only"
+        self.ft_form_sync_lbl.setText("☁️ Google" if sync_st == "synced" else "💻 Locale")
+        self.ft_save_btn.setText("💾 Aggiorna")
+        self.ft_delete_btn.setVisible(True)
+        self.ft_cancel_edit_btn.setVisible(True)
 
         if is_todo:
             done_btn = _make_button("✅ Fatto" if ev.get("is_completed") else "☐ Completa")

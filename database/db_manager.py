@@ -93,6 +93,8 @@ class DatabaseManager:
             ("subject", "TEXT DEFAULT 'Generale'"),
             ("topic", "TEXT DEFAULT 'Generale'"),
             ("audio_path", "TEXT DEFAULT ''"),
+            ("folder_id", "INTEGER DEFAULT NULL"),
+            ("is_studied", "INTEGER DEFAULT 0"),
         ]:
             try:
                 cursor.execute(f"ALTER TABLE study_notes ADD COLUMN {col_name} {col_sql};")
@@ -242,9 +244,24 @@ class DatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cal_note_links_event ON calendar_note_links(event_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cal_note_links_note ON calendar_note_links(note_id);")
 
+        # 11. Tabella Gerarchica Cartelle & Sottocartelle FlowNotes (stile Samsung Notes)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS note_folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                parent_id INTEGER DEFAULT NULL,
+                color TEXT DEFAULT '#6366F1',
+                profile TEXT DEFAULT 'Alessandro',
+                sort_order INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_note_folders_parent ON note_folders(parent_id);")
+
         conn.commit()
         self._seed_default_data()
         self._ensure_updated_defaults()
+        self.sync_folders_from_notes()
 
     def _ensure_updated_defaults(self):
         conn = self._get_connection()
@@ -799,8 +816,11 @@ class DatabaseManager:
             INSERT INTO study_notes (title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (t_clean, c_clean, note_type, tags, parent_note_id, profile, subject, topic))
+        new_id = cursor.lastrowid
         conn.commit()
-        return cursor.lastrowid
+        if parent_note_id is None and note_type != "Flashcard":
+            self.sync_folders_from_notes()
+        return new_id
 
     # Alias per retrocompatibilità e flessibilità
     add_note = add_study_note
@@ -926,26 +946,34 @@ class DatabaseManager:
         profile: Optional[str] = None,
         subject: Optional[str] = None,
         topic: Optional[str] = None,
-        search_query: str = ""
+        search_query: str = "",
+        folder_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Recupera le note filtrate per profilo, materia, argomento e testo di ricerca."""
+        """Recupera le note filtrate per profilo, materia, argomento, cartella e testo di ricerca."""
         conn = self._get_connection()
         cursor = conn.cursor()
         query = """
-            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id,
+                   profile, subject, topic, audio_path, folder_id, is_studied, created_at
             FROM study_notes
             WHERE (parent_note_id IS NULL AND note_type != 'Flashcard')
         """
-        params = []
+        params: List[Any] = []
         if profile and profile.strip().lower() not in ("tutti", "all", ""):
             query += " AND profile = ?"
             params.append(profile.strip())
-        if subject and subject.strip().lower() not in ("tutte", "tutti", "all", ""):
-            query += " AND subject = ?"
-            params.append(subject.strip())
-        if topic and topic.strip().lower() not in ("tutti", "tutte", "all", ""):
-            query += " AND topic = ?"
-            params.append(topic.strip())
+        if folder_id is not None:
+            desc_ids = self._get_folder_and_descendant_ids(folder_id)
+            placeholders = ",".join("?" for _ in desc_ids)
+            query += f" AND folder_id IN ({placeholders})"
+            params.extend(desc_ids)
+        else:
+            if subject and subject.strip().lower() not in ("tutte", "tutti", "all", ""):
+                query += " AND subject = ?"
+                params.append(subject.strip())
+            if topic and topic.strip().lower() not in ("tutti", "tutte", "all", ""):
+                query += " AND topic = ?"
+                params.append(topic.strip())
         if search_query and search_query.strip():
             sq = f"%{search_query.strip()}%"
             query += " AND (title LIKE ? OR content_markdown LIKE ? OR tags LIKE ?)"
@@ -953,6 +981,222 @@ class DatabaseManager:
         query += " ORDER BY id DESC"
         cursor.execute(query, tuple(params))
         return [dict(row) for row in cursor.fetchall()]
+
+    # -----------------------------------------------------------------
+    # GESTIONE CARTELLE GERARCHICHE FLOWNOTES (STILE SAMSUNG NOTES)
+    # -----------------------------------------------------------------
+    def _get_folder_and_descendant_ids(self, root_id: int) -> List[int]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, parent_id FROM note_folders")
+        children_map: Dict[Optional[int], List[int]] = {}
+        for row in cursor.fetchall():
+            children_map.setdefault(row["parent_id"], []).append(int(row["id"]))
+        res: List[int] = []
+        stack = [int(root_id)]
+        seen = set()
+        while stack:
+            cur = stack.pop(0)
+            if cur in seen:
+                continue
+            seen.add(cur)
+            res.append(cur)
+            stack.extend(children_map.get(cur, []))
+        return res
+
+    def sync_folders_from_notes(self):
+        """Sincronizza in modo idempotente le cartelle da (subject, topic) per note senza folder_id."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        palette = ["#6366F1", "#0EA5E9", "#10B981", "#F59E0B", "#EC4899", "#8B5CF6", "#14B8A6", "#F43F5E"]
+
+        # Assicura la cartella radice 'Generale'
+        cursor.execute("SELECT id FROM note_folders WHERE name = 'Generale' AND parent_id IS NULL LIMIT 1")
+        gen_row = cursor.fetchone()
+        if gen_row is None:
+            cursor.execute(
+                "INSERT INTO note_folders (name, parent_id, color, profile) VALUES ('Generale', NULL, '#6366F1', 'Alessandro')"
+            )
+            gen_id = cursor.lastrowid
+        else:
+            gen_id = gen_row["id"]
+
+        cursor.execute("""
+            SELECT id, COALESCE(NULLIF(TRIM(subject), ''), 'Generale') as subj,
+                   COALESCE(NULLIF(TRIM(topic), ''), 'Generale') as top,
+                   COALESCE(NULLIF(TRIM(profile), ''), 'Alessandro') as prof
+            FROM study_notes
+            WHERE folder_id IS NULL AND (parent_note_id IS NULL AND note_type != 'Flashcard')
+        """)
+        orphan_notes = cursor.fetchall()
+        if not orphan_notes:
+            conn.commit()
+            return
+
+        cursor.execute("SELECT id, name, parent_id FROM note_folders")
+        existing: Dict[tuple, int] = {(r["name"], r["parent_id"]): int(r["id"]) for r in cursor.fetchall()}
+        color_idx = 0
+
+        for n in orphan_notes:
+            subj = n["subj"]
+            top = n["top"]
+            prof = n["prof"]
+            if (subj, None) not in existing:
+                col = palette[color_idx % len(palette)]
+                color_idx += 1
+                cursor.execute(
+                    "INSERT INTO note_folders (name, parent_id, color, profile) VALUES (?, NULL, ?, ?)",
+                    (subj, col, prof),
+                )
+                existing[(subj, None)] = int(cursor.lastrowid)
+            subj_id = existing[(subj, None)]
+
+            target_fid = subj_id
+            if top and top != "Generale" and top != subj:
+                if (top, subj_id) not in existing:
+                    cursor.execute(
+                        "INSERT INTO note_folders (name, parent_id, color, profile) VALUES (?, ?, '#64748B', ?)",
+                        (top, subj_id, prof),
+                    )
+                    existing[(top, subj_id)] = int(cursor.lastrowid)
+                target_fid = existing[(top, subj_id)]
+
+            cursor.execute("UPDATE study_notes SET folder_id = ? WHERE id = ?", (target_fid or gen_id, n["id"]))
+        conn.commit()
+
+    def get_folders_tree(self, profile: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Restituisce tutte le cartelle gerarchiche ordinate per nome."""
+        self.sync_folders_from_notes()
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, name, parent_id, color, profile, sort_order FROM note_folders ORDER BY CASE WHEN name='Generale' AND parent_id IS NULL THEN 0 ELSE 1 END, name ASC"
+        )
+        return [dict(r) for r in cursor.fetchall()]
+
+    def create_folder(
+        self,
+        name: str,
+        parent_id: Optional[int] = None,
+        color: str = "#6366F1",
+        profile: str = "Alessandro",
+    ) -> int:
+        clean = (name or "").strip() or "Nuova Cartella"
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO note_folders (name, parent_id, color, profile) VALUES (?, ?, ?, ?)",
+            (clean, parent_id, color or "#6366F1", profile or "Alessandro"),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+    def rename_folder(self, folder_id: int, new_name: str) -> bool:
+        clean = (new_name or "").strip()
+        if not clean:
+            return False
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT parent_id FROM note_folders WHERE id = ?", (int(folder_id),))
+        row = cursor.fetchone()
+        if row is None:
+            return False
+        cursor.execute("UPDATE note_folders SET name = ? WHERE id = ?", (clean, int(folder_id)))
+        if row["parent_id"] is None:
+            cursor.execute("UPDATE study_notes SET subject = ? WHERE folder_id = ?", (clean, int(folder_id)))
+        else:
+            cursor.execute("UPDATE study_notes SET topic = ? WHERE folder_id = ?", (clean, int(folder_id)))
+        conn.commit()
+        return True
+
+    def set_folder_color(self, folder_id: int, color: str) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE note_folders SET color = ? WHERE id = ?", (color or "#6366F1", int(folder_id)))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def move_folder(self, folder_id: int, new_parent_id: Optional[int]) -> bool:
+        fid = int(folder_id)
+        pid = int(new_parent_id) if new_parent_id is not None else None
+        if pid == fid:
+            return False
+        if pid is not None and pid in self._get_folder_and_descendant_ids(fid):
+            return False  # Previene cicli gerarchici
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE note_folders SET parent_id = ? WHERE id = ?", (pid, fid))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def _resolve_folder_subject_topic(self, folder_id: int) -> tuple[str, str]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, parent_id FROM note_folders")
+        by_id = {int(r["id"]): dict(r) for r in cursor.fetchall()}
+        cur = by_id.get(int(folder_id))
+        if not cur:
+            return "Generale", "Generale"
+        chain = []
+        seen = set()
+        while cur and cur["id"] not in seen:
+            seen.add(cur["id"])
+            chain.append(cur["name"])
+            cur = by_id.get(cur["parent_id"]) if cur["parent_id"] is not None else None
+        chain.reverse()
+        if len(chain) == 1:
+            return chain[0], "Generale"
+        return chain[0], chain[-1]
+
+    def move_note_to_folder(self, note_id: int, target_folder_id: Optional[int]) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        if target_folder_id is None:
+            cursor.execute("SELECT id FROM note_folders WHERE name = 'Generale' AND parent_id IS NULL LIMIT 1")
+            r = cursor.fetchone()
+            target_folder_id = int(r["id"]) if r else None
+        if target_folder_id is None:
+            return False
+        subj, top = self._resolve_folder_subject_topic(int(target_folder_id))
+        cursor.execute(
+            "UPDATE study_notes SET folder_id = ?, subject = ?, topic = ? WHERE id = ?",
+            (int(target_folder_id), subj, top, int(note_id)),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def delete_folder(self, folder_id: int, move_notes_to_generale: bool = True) -> bool:
+        fid = int(folder_id)
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, parent_id FROM note_folders WHERE id = ?", (fid,))
+        row = cursor.fetchone()
+        if row is None or (row["name"] == "Generale" and row["parent_id"] is None):
+            return False
+
+        all_ids = self._get_folder_and_descendant_ids(fid)
+        placeholders = ",".join("?" for _ in all_ids)
+        if move_notes_to_generale:
+            cursor.execute("SELECT id FROM note_folders WHERE name = 'Generale' AND parent_id IS NULL LIMIT 1")
+            gen_row = cursor.fetchone()
+            gen_id = int(gen_row["id"]) if gen_row else None
+            cursor.execute(
+                f"UPDATE study_notes SET folder_id = ?, subject = 'Generale', topic = 'Generale' WHERE folder_id IN ({placeholders})",
+                (gen_id, *all_ids),
+            )
+        else:
+            cursor.execute(f"DELETE FROM study_notes WHERE folder_id IN ({placeholders})", tuple(all_ids))
+
+        cursor.execute(f"DELETE FROM note_folders WHERE id IN ({placeholders})", tuple(all_ids))
+        conn.commit()
+        return True
+
+    def toggle_note_studied(self, note_id: int) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE study_notes SET is_studied = CASE WHEN COALESCE(is_studied, 0) = 1 THEN 0 ELSE 1 END WHERE id = ?", (int(note_id),))
+        conn.commit()
+        return cursor.rowcount > 0
 
     def search_knowledge_base(
         self,

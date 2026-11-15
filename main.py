@@ -72,6 +72,7 @@ import keyboard
 
 from database import db
 from ui.voice_orb import VoiceOrbOverlay, render_orb_icon_pixmap
+from ui.welcome_splash import show_startup_welcome
 from ui.whis_hud import WhisHUD
 from core.ai_pipeline import FlowLocalEngine
 from core.wake_listener import WhisWakeListener
@@ -632,7 +633,7 @@ def main():
     tray.setContextMenu(menu)
     tray.activated.connect(lambda reason: toggle_hub() if reason == QSystemTrayIcon.ActivationReason.Trigger else None)
     tray.show()
-    QTimer.singleShot(250, orb.play_startup_splash)
+    QTimer.singleShot(150, lambda: show_startup_welcome(orb=orb))
 
     # 5. Dual Key Engine con Hook Globale soppressivo non-bloccante e recovery da standby
     start_key_action_worker(engine)
