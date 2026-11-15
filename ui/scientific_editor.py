@@ -2539,28 +2539,35 @@ class ScientificNoteEditor(QTextEdit):
 
             # 5b. Blocco Matematico $$ ... $$ con matrice o formula renderizzata inline
             if stripped.startswith("$$"):
+                closed = False
+                expr = ""
+                next_i = i + 1
                 if stripped.endswith("$$") and len(stripped) > 4:
                     expr = stripped[2:-2].strip()
-                    i += 1
+                    closed = True
                 else:
                     math_lines = [stripped[2:]]
-                    i += 1
-                    while i < len(lines):
-                        cur_l = lines[i].strip()
+                    j = i + 1
+                    while j < len(lines):
+                        cur_l = lines[j].strip()
                         if cur_l.endswith("$$"):
                             math_lines.append(cur_l[:-2])
-                            i += 1
+                            j += 1
+                            closed = True
                             break
-                        math_lines.append(lines[i])
-                        i += 1
-                    expr = "\n".join(math_lines).strip()
-                if expr and re.search(r"\\begin\{[bp]matrix\}", expr):
+                        math_lines.append(lines[j])
+                        j += 1
+                    if closed:
+                        expr = "\n".join(math_lines).strip()
+                        next_i = j
+                if closed and expr:
                     _ensure_new_block()
                     self._insert_latex_block_at_cursor(cursor, expr)
-                else:
-                    _ensure_new_block()
-                    cursor.insertText(f"$$\n{expr}\n$$")
-                continue
+                    i = next_i
+                    continue
+                if closed and not expr:
+                    i = next_i
+                    continue
 
             # 5c. Titoli WYSIWYG (#, ##, ###, #### senza simboli # visibili)
             h_match = re.match(r"^(#{1,4})\s+(.*)$", line)
