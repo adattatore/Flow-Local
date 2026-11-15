@@ -900,6 +900,235 @@ SLASH_COMMANDS: List[Dict[str, str]] = [
 ]
 
 
+class SlashPreviewPopup(QFrame):
+    """Pannello laterale di anteprima live per il comando selezionato nel menu Slash (/)."""
+
+    def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True):
+        super().__init__(parent)
+        self._dark_mode = dark_mode
+        self._current_cmd: str = ""
+        self._latex_pix_cache: Dict[Tuple[str, bool], QPixmap] = {}
+
+        self.setWindowFlags(
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setFixedWidth(238)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 10, 12, 12)
+        lay.setSpacing(6)
+
+        self._hdr_lbl = QLabel("ANTEPRIMA")
+        lay.addWidget(self._hdr_lbl)
+
+        self._title_lbl = QLabel("")
+        self._title_lbl.setWordWrap(True)
+        lay.addWidget(self._title_lbl)
+
+        self._preview_box = QFrame()
+        self._preview_box.setObjectName("SlashPreviewBox")
+        box_lay = QVBoxLayout(self._preview_box)
+        box_lay.setContentsMargins(10, 8, 10, 8)
+        box_lay.setSpacing(4)
+
+        self._rich_lbl = QLabel()
+        self._rich_lbl.setWordWrap(True)
+        self._rich_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._rich_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        box_lay.addWidget(self._rich_lbl)
+
+        self._img_lbl = QLabel()
+        self._img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._img_lbl.hide()
+        box_lay.addWidget(self._img_lbl)
+
+        lay.addWidget(self._preview_box)
+
+        self._hint_lbl = QLabel("")
+        self._hint_lbl.setWordWrap(True)
+        lay.addWidget(self._hint_lbl)
+
+        self.apply_theme(dark_mode)
+
+    def apply_theme(self, dark_mode: bool):
+        self._dark_mode = dark_mode
+        if dark_mode:
+            bg, bd, box_bg, box_bd = "#191919", "#2F2F2F", "#12141C", "#262B38"
+            fg, muted, hdr = "#F8FAFC", "#94A3B8", "#64748B"
+        else:
+            bg, bd, box_bg, box_bd = "#FFFFFF", "#E2E8F0", "#F8FAFC", "#CBD5E1"
+            fg, muted, hdr = "#0F172A", "#475569", "#64748B"
+
+        self.setStyleSheet(
+            f"SlashPreviewPopup {{ background-color: {bg}; border: 1px solid {bd}; border-radius: 8px; }}"
+            f"QFrame#SlashPreviewBox {{ background-color: {box_bg}; border: 1px solid {box_bd}; border-radius: 6px; }}"
+        )
+        self._hdr_lbl.setStyleSheet(f"color: {hdr}; font-size: 10px; font-weight: 700; letter-spacing: 0.6px;")
+        self._title_lbl.setStyleSheet(f"color: {fg}; font-size: 12px; font-weight: 600;")
+        self._rich_lbl.setStyleSheet(f"color: {fg}; font-size: 11px;")
+        self._hint_lbl.setStyleSheet(f"color: {muted}; font-size: 10px;")
+
+        if self._current_cmd:
+            self.set_command(self._current_cmd)
+
+    def _get_cached_latex_pixmap(self, kind: str) -> Optional[QPixmap]:
+        key = (kind, self._dark_mode)
+        if key in self._latex_pix_cache:
+            return self._latex_pix_cache[key]
+        ink = "#E2E8F0" if self._dark_mode else "#0F172A"
+        pix: Optional[QPixmap] = None
+        try:
+            if kind == "/matrice":
+                res = _render_matrix_png_b64(
+                    "\\begin{bmatrix} 1 & 0 \\\\ 0 & 1 \\end{bmatrix}",
+                    dark_mode=self._dark_mode,
+                    reading_mode=False,
+                )
+                if res is not None:
+                    qimg = QImage.fromData(base64.b64decode(res[0]), "PNG")
+                    if not qimg.isNull():
+                        pix = QPixmap.fromImage(qimg)
+            elif kind == "/formula":
+                qimg = _mathtext_to_transparent_qimage(r"\int_0^1 x^2\,dx = \frac{1}{3}", dpi=155, ink_hex=ink)
+                if qimg is not None and not qimg.isNull():
+                    pix = QPixmap.fromImage(qimg)
+        except Exception:
+            pix = None
+        if pix is not None and not pix.isNull():
+            if pix.width() > 188:
+                pix = pix.scaledToWidth(188, Qt.TransformationMode.SmoothTransformation)
+            self._latex_pix_cache[key] = pix
+        return pix
+
+    def set_command(self, cmd: str):
+        self._current_cmd = cmd or ""
+        fg = "#E2E8F0" if self._dark_mode else "#1E293B"
+        muted = "#94A3B8" if self._dark_mode else "#64748B"
+        bd = "#334155" if self._dark_mode else "#CBD5E1"
+        acc = "#818CF8" if self._dark_mode else "#4F46E5"
+
+        self._img_lbl.hide()
+        self._rich_lbl.show()
+
+        if cmd in ("/formula", "/matrice"):
+            pix = self._get_cached_latex_pixmap(cmd)
+            if pix is not None:
+                self._img_lbl.setPixmap(pix)
+                self._img_lbl.show()
+                self._rich_lbl.hide()
+
+        previews: Dict[str, Tuple[str, str, str]] = {
+            "/tabella": (
+                "Tabella Interattiva",
+                f"<table border='1' cellspacing='0' cellpadding='4' style='border-color:{bd}; width:100%; font-size:10px; color:{fg};'>"
+                f"<tr><th>Col 1</th><th>Col 2</th><th>Col 3</th></tr>"
+                f"<tr><td>Dato A</td><td>12.4</td><td>OK</td></tr>"
+                f"<tr><td>Dato B</td><td>8.1</td><td>…</td></tr></table>",
+                "Naviga tra le celle con Tab / Shift+Tab.",
+            ),
+            "/quote": (
+                "Citazione",
+                f"<div style='border-left: 3px solid {acc}; padding-left: 8px; color:{muted}; font-style: italic;'>"
+                f"“La matematica è il linguaggio della natura.”</div>",
+                "Premi Invio su riga vuota per uscire.",
+            ),
+            "/callout": (
+                "Nota in Evidenza",
+                f"<div style='background-color:rgba(245,158,11,0.14); border-left:3px solid #F59E0B; padding:6px 8px; color:{fg};'>"
+                f"💡 <b>Definizione chiave</b><br><span style='color:{muted};'>Concetto da ricordare per l'esame.</span></div>",
+                "Blocco evidenziato stile Notion.",
+            ),
+            "/todo": (
+                "Lista To-Do",
+                f"<div style='color:{fg}; line-height:1.5;'>"
+                f"☑ Ripassare derivate<br>☐ Risolvere esercizi Cap. 3</div>",
+                "Clicca su ☐/☑ per spuntare.",
+            ),
+            "/code": (
+                "Blocco Python Eseguibile",
+                f"<div style='font-family:Consolas,monospace; font-size:10px; color:{fg};'>"
+                f"<span style='color:#10B981; font-weight:bold;'>▶ Esegui</span><br>"
+                f"x = np.linspace(0, 6)<br>plt.plot(x, np.sin(x))</div>",
+                "Esegui con ▶ Esegui o Ctrl+Invio.",
+            ),
+            "/bibtex": (
+                "Citazione BibTeX",
+                f"<div style='font-family:Consolas,monospace; font-size:10px; color:{muted};'>"
+                f"@article{{rossi2026,<br>&nbsp;&nbsp;author = {{Rossi, M.}},<br>&nbsp;&nbsp;year = {{2026}}}}</div>",
+                "Card formattata per bibliografia.",
+            ),
+            "/file": (
+                "Allega File",
+                f"<div style='color:{fg};'>📄 <b>Dispense_Lez04.pdf</b><br>"
+                f"<span style='color:{muted}; font-size:10px;'>Clicca per aprire</span></div>",
+                "Incorpora PDF, immagini o documenti.",
+            ),
+            "/immagine": (
+                "Immagine Inline",
+                f"<div style='text-align:center; color:{muted}; padding:6px 0;'>"
+                f"🖼️ <b>Immagine da file</b><br><span style='font-size:10px;'>PNG, JPG, WEBP…</span></div>",
+                "Seleziona un file immagine dal PC.",
+            ),
+            "/formula": (
+                "Formula LaTeX",
+                f"<div style='text-align:center; color:{fg}; font-family:serif; font-size:13px;'>∫₀¹ x² dx = 1/3</div>",
+                "Doppio clic sulla formula per modificarla.",
+            ),
+            "/matrice": (
+                "Matrice Interattiva",
+                f"<div style='text-align:center; color:{fg}; font-family:Consolas,monospace;'>[ 1  0 ; 0  1 ]</div>",
+                "Modificabile con griglia interattiva.",
+            ),
+            "/ocr": (
+                "Vision OCR Istantaneo",
+                f"<div style='color:{fg};'>📷 <b>Screenshot → LaTeX / Tabella</b><br>"
+                f"<span style='color:{muted}; font-size:10px;'>Converte formule, matrici e tabelle dagli appunti.</span></div>",
+                "Scorciatoia rapida: Ctrl+Shift+V.",
+            ),
+            "/h1": (
+                "Titolo Grande (H1)",
+                f"<div style='font-size:16px; font-weight:700; color:{fg};'>Titolo di Sezione</div>",
+                "Intestazione principale.",
+            ),
+            "/h2": (
+                "Sottotitolo (H2)",
+                f"<div style='font-size:14px; font-weight:700; color:{fg};'>Sottotitolo</div>",
+                "Intestazione di secondo livello.",
+            ),
+            "/h3": (
+                "Titolo 3 (H3)",
+                f"<div style='font-size:12px; font-weight:600; color:{fg};'>Paragrafo evidenza</div>",
+                "Intestazione di terzo livello.",
+            ),
+            "/riassumi": (
+                "Riassunto AI (Qwen 3.5)",
+                f"<div style='color:{fg};'>✦ <b>Sintesi automatica</b><br>"
+                f"<span style='color:{muted}; font-size:10px;'>Genera punti chiave e formule principali della nota.</span></div>",
+                "Elaborazione locale tramite Qwen 3.5.",
+            ),
+            "/flashcard": (
+                "Flashcard d'Esame",
+                f"<div style='color:{fg};'>🃏 <b>Domanda → Risposta</b><br>"
+                f"<span style='color:{muted}; font-size:10px;'>Crea carte di ripasso dalla nota corrente.</span></div>",
+                "Salvate nella sezione Flashcard.",
+            ),
+        }
+
+        title, html_body, hint = previews.get(
+            cmd,
+            (cmd or "Comando", f"<div style='color:{muted};'>Anteprima non disponibile.</div>", ""),
+        )
+        self._title_lbl.setText(title)
+        if self._rich_lbl.isVisible():
+            self._rich_lbl.setText(html_body)
+        self._hint_lbl.setText(hint)
+        self.adjustSize()
+
+
 class SlashCommandPopup(QListWidget):
     """Menu fluttuante stile Notion per i comandi rapidi (/)."""
 
@@ -918,12 +1147,19 @@ class SlashCommandPopup(QListWidget):
         self.setFixedWidth(340)
         self.setMaximumHeight(280)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setMouseTracking(True)
+        self._last_mouse_pos: Optional[QPoint] = None
+        self._preview_popup = SlashPreviewPopup(parent, dark_mode=dark_mode)
+        self._preview_popup.hide()
         self.apply_theme(dark_mode)
         self.itemClicked.connect(self._on_item_clicked)
+        self.currentRowChanged.connect(self._on_current_row_changed)
         self.filter_commands("")
 
     def apply_theme(self, dark_mode: bool):
         self._dark_mode = dark_mode
+        if hasattr(self, "_preview_popup") and self._preview_popup is not None:
+            self._preview_popup.apply_theme(dark_mode)
         if dark_mode:
             self.setStyleSheet(
                 "QListWidget {"
@@ -1000,6 +1236,60 @@ class SlashCommandPopup(QListWidget):
         if item is not None:
             return item.data(Qt.ItemDataRole.UserRole)
         return None
+
+    def _update_preview_for_cmd(self, cmd: Optional[str]):
+        if not cmd or not self.isVisible():
+            self._preview_popup.hide()
+            return
+        self._preview_popup.set_command(cmd)
+        self._position_preview_popup()
+        self._preview_popup.show()
+
+    def _position_preview_popup(self):
+        p_pos = self.pos()
+        pw = self._preview_popup.width()
+        ph = self._preview_popup.height()
+        px = p_pos.x() + self.width() + 6
+        py = p_pos.y()
+        screen = QApplication.screenAt(p_pos) or QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            if px + pw > avail.right():
+                px = max(avail.left(), p_pos.x() - pw - 6)
+            if py + ph > avail.bottom():
+                py = max(avail.top(), avail.bottom() - ph - 6)
+        self._preview_popup.move(px, py)
+
+    def _on_current_row_changed(self, row: int):
+        item = self.item(row) if row >= 0 else None
+        cmd = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+        self._update_preview_for_cmd(cmd)
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        pos = event.pos()
+        if self._last_mouse_pos is None or pos != self._last_mouse_pos:
+            self._last_mouse_pos = pos
+            item = self.itemAt(pos)
+            if item is not None and item is not self.currentItem():
+                self.setCurrentItem(item)
+        super().mouseMoveEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        cmd = self.current_command()
+        if cmd:
+            self._preview_popup.set_command(cmd)
+            self._position_preview_popup()
+            self._preview_popup.show()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        if self.isVisible() and self._preview_popup.isVisible():
+            self._position_preview_popup()
+
+    def hideEvent(self, event):
+        self._preview_popup.hide()
+        super().hideEvent(event)
 
 
 class _GridPickerCanvas(QWidget):
