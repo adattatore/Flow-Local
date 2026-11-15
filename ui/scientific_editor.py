@@ -881,22 +881,22 @@ class MarkdownLatexHighlighter(QSyntaxHighlighter):
 
 
 SLASH_COMMANDS: List[Dict[str, str]] = [
-    {"cmd": "/tabella", "label": "▦  /tabella", "desc": "Tabella interattiva Notion (celle navigabili con Tab)"},
+    {"cmd": "/tabella", "label": "▦  /tabella", "desc": "Tabella interattiva (celle navigabili con Tab)"},
     {"cmd": "/quote", "label": "▎  /quote", "desc": "Blocco citazione con barra verticale"},
-    {"cmd": "/callout", "label": "💡 /callout", "desc": "Nota in evidenza stile Notion"},
+    {"cmd": "/callout", "label": "◈  /callout", "desc": "Nota in evidenza"},
     {"cmd": "/todo", "label": "☐  /todo", "desc": "To-Do list interattiva cliccabile"},
     {"cmd": "/code", "label": "⌘  /code", "desc": "Blocco codice a larghezza piena"},
     {"cmd": "/bibtex", "label": "❝  /bibtex", "desc": "Blocco citazione BibTeX accademico"},
-    {"cmd": "/file", "label": "📎 /file", "desc": "Upload or embed a file (PDF, Immagine, Doc)"},
-    {"cmd": "/immagine", "label": "🖼️ /immagine", "desc": "Incorpora immagine da file"},
+    {"cmd": "/file", "label": "⎘  /file", "desc": "Allega un file (PDF, Immagine, Doc)"},
+    {"cmd": "/immagine", "label": "▣  /immagine", "desc": "Incorpora immagine da file"},
     {"cmd": "/formula", "label": "∑  /formula", "desc": "Blocco equazione LaTeX ($$ ... $$)"},
-    {"cmd": "/matrice", "label": "⊞  /matrice", "desc": "Matrice interattiva modificabile (bmatrix)"},
-    {"cmd": "/ocr", "label": "📷 /ocr", "desc": "Estrai LaTeX/Tabella da Immagine (Ctrl+Shift+V)"},
+    {"cmd": "/matrice", "label": "⊞  /matrice", "desc": "Matrice interattiva (bmatrix)"},
+    {"cmd": "/ocr", "label": "⌖  /ocr", "desc": "Estrai LaTeX/Tabella da immagine (Ctrl+Shift+V)"},
     {"cmd": "/h1", "label": "H1 /h1", "desc": "Titolo grande di sezione"},
     {"cmd": "/h2", "label": "H2 /h2", "desc": "Sottotitolo di sezione"},
     {"cmd": "/h3", "label": "H3 /h3", "desc": "Titolo di terzo livello"},
-    {"cmd": "/riassumi", "label": "✦  /riassumi", "desc": "Riassumi nota con Qwen 3.5 AI"},
-    {"cmd": "/flashcard", "label": "🃏 /flashcard", "desc": "Genera flashcard d'esame"},
+    {"cmd": "/riassumi", "label": "✦  /riassumi", "desc": "Riassumi nota con AI locale"},
+    {"cmd": "/flashcard", "label": "❖  /flashcard", "desc": "Genera flashcard d'esame"},
 ]
 
 
@@ -2014,7 +2014,7 @@ def _get_rapid_ocr():
 
 
 class _VisionOcrWorker(QThread):
-    """Worker asincrono per Vision OCR: primario qwen3.5:4b su Ollama, fallback RapidOCR."""
+    """Worker asincrono per Vision OCR: Gemini Cloud (se attivo/ibrido) o Ollama locale, fallback RapidOCR."""
 
     ocrCompleted = pyqtSignal(str, str, bool, str)  # placeholder_id, result_text, used_fallback, error_msg
 
@@ -2024,7 +2024,12 @@ class _VisionOcrWorker(QThread):
         self.png_bytes = png_bytes
 
     def run(self):
-        b64_img = base64.b64encode(self.png_bytes).decode("ascii")
+        from core.gemini_client import (
+            generate_content as gemini_generate_content,
+            get_ai_routing_config,
+            should_use_gemini,
+        )
+
         prompt = (
             "Trascrivi fedelmente il contenuto di questa immagine restituendo SOLO il codice finale, "
             "senza introduzioni, commenti o spiegazioni:\n"
@@ -2035,37 +2040,62 @@ class _VisionOcrWorker(QThread):
             "- Se è una tabella di dati: restituisci una tabella Markdown formattata (| col | ... |).\n"
             "- Altrimenti restituisci il testo estratto pulito."
         )
-        payload = {
-            "model": VISION_OCR_MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                    "images": [b64_img],
-                }
-            ],
-            "stream": False,
-            "think": False,
-            "keep_alive": "30s",
-            "options": {
-                "temperature": 0.1,
-            },
-        }
-        try:
-            req = urllib.request.Request(
-                OLLAMA_CHAT_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=28.0) as resp:
-                raw_json = json.loads(resp.read().decode("utf-8", errors="replace"))
-            content = raw_json.get("message", {}).get("content", "") or ""
-            cleaned = _strip_think_blocks_safe(content)
-            if cleaned:
-                self.ocrCompleted.emit(self.placeholder_id, cleaned, False, "")
-                return
-        except Exception:
-            pass
+
+        routing_cfg = get_ai_routing_config()
+        use_gemini = should_use_gemini("vision_ocr")
+
+        # 1. Primario Gemini Cloud BYOK se attivo in modalità 'gemini' o 'hybrid'
+        if use_gemini:
+            try:
+                content = gemini_generate_content(
+                    prompt,
+                    image_bytes=self.png_bytes,
+                    image_mime="image/png",
+                    temperature=0.1,
+                    max_output_tokens=2048,
+                    timeout=25.0,
+                )
+                cleaned = _strip_think_blocks_safe(content)
+                if cleaned:
+                    self.ocrCompleted.emit(self.placeholder_id, cleaned, False, "")
+                    return
+            except Exception as gem_exc:
+                print(f"[VisionOCR] Gemini BYOK non raggiungibile ({gem_exc}).")
+
+        # 2. Ollama Vision locale (primario in modalità 'local', o fallback se 'hybrid_fallback' attivo)
+        if not use_gemini or routing_cfg.get("hybrid_fallback", True):
+            b64_img = base64.b64encode(self.png_bytes).decode("ascii")
+            payload = {
+                "model": VISION_OCR_MODEL,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt,
+                        "images": [b64_img],
+                    }
+                ],
+                "stream": False,
+                "think": False,
+                "keep_alive": "30s",
+                "options": {
+                    "temperature": 0.1,
+                },
+            }
+            try:
+                req = urllib.request.Request(
+                    routing_cfg.get("ollama_chat_url") or OLLAMA_CHAT_URL,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=28.0) as resp:
+                    raw_json = json.loads(resp.read().decode("utf-8", errors="replace"))
+                content = raw_json.get("message", {}).get("content", "") or ""
+                cleaned = _strip_think_blocks_safe(content)
+                if cleaned:
+                    self.ocrCompleted.emit(self.placeholder_id, cleaned, False, "")
+                    return
+            except Exception:
+                pass
 
         # Fallback istantaneo con rapidocr-onnxruntime
         try:

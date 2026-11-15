@@ -133,13 +133,15 @@ class AudioSyncBar(QFrame):
             self.time_label.setText("00:00 / 00:00")
             self._player.setSource(QUrl.fromLocalFile(audio_path))
             self._player.setPlaybackRate(self.SPEED_STEPS[self._speed_idx])
-        self.play_btn.setText(
-            "⏸" if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState else "▶"
-        )
+        from ui.icons import get_icon
+        is_playing = self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        self.play_btn.setText("")
+        self.play_btn.setIcon(get_icon("pause" if is_playing else "play", size=14))
         self.show()
 
     def unload(self):
         """Ferma la riproduzione, scollega la sorgente e nasconde la barra."""
+        from ui.icons import get_icon
         self._player.stop()
         self._player.setSource(QUrl())
         self._audio_path = ""
@@ -147,7 +149,8 @@ class AudioSyncBar(QFrame):
         self.slider.setRange(0, 0)
         self.slider.setValue(0)
         self.time_label.setText("00:00 / 00:00")
-        self.play_btn.setText("▶")
+        self.play_btn.setText("")
+        self.play_btn.setIcon(get_icon("play", size=14))
         self.hide()
 
     def is_active(self) -> bool:
@@ -213,8 +216,10 @@ class AudioSyncBar(QFrame):
             self.positionChangedMs.emit(pos_ms)
 
     def _on_player_state_changed(self, state):
+        from ui.icons import get_icon
         is_playing = (state == QMediaPlayer.PlaybackState.PlayingState)
-        self.play_btn.setText("⏸" if is_playing else "▶")
+        self.play_btn.setText("")
+        self.play_btn.setIcon(get_icon("pause" if is_playing else "play", size=14))
         self.playbackStateChanged.emit(is_playing)
 
     def _update_time_label(self, pos_ms: int, dur_ms: int):

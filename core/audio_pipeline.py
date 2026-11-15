@@ -205,12 +205,19 @@ class FlowLocalEngine:
     def __init__(self, orb: Optional[VoiceOrbOverlay] = None, hub: Optional[FlowLocalHub] = None):
         self.orb = orb
         self.hub = hub
-        self.model = WhisperModel(
-            MODEL_SIZE,
-            device=DEVICE,
-            compute_type=COMPUTE_TYPE,
-            download_root=None,
-        )
+        from core.hardware_profiler import get_active_profile
+        hw_prof = get_active_profile()
+        w_kwargs = {
+            "device": hw_prof.whisper_device,
+            "compute_type": hw_prof.whisper_compute_type,
+            "download_root": None,
+        }
+        if hw_prof.whisper_device == "cpu" and hw_prof.whisper_cpu_threads > 0:
+            w_kwargs["cpu_threads"] = hw_prof.whisper_cpu_threads
+        try:
+            self.model = WhisperModel(hw_prof.whisper_model, **w_kwargs)
+        except Exception:
+            self.model = WhisperModel("small", device="cpu", compute_type="int8", download_root=None)
 
         def warm_llm():
             try:

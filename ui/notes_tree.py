@@ -302,16 +302,17 @@ class SamsungNotesTreeWidget(QTreeWidget):
         data = item.data(0, ROLE_NODE_DATA)
         if not data:
             return
+        from ui.icons import get_icon
         menu = QMenu(self)
         menu.setStyleSheet(self._menu_stylesheet())
         if data[0] == "folder":
             folder_id = int(data[1])
             is_locked = bool(item.data(0, ROLE_LOCKED_FOLDER))
 
-            act_sub = menu.addAction("➕ Sottocartella")
+            act_sub = menu.addAction(get_icon("folder_plus", size=14), "Sottocartella")
             act_sub.triggered.connect(lambda: self.createSubfolderRequested.emit(folder_id))
 
-            color_menu = menu.addMenu("🎨 Colore Cartella")
+            color_menu = menu.addMenu(get_icon("palette", size=14), "Colore Cartella")
             color_menu.setStyleSheet(self._menu_stylesheet())
             for c_name, c_hex in FOLDER_PALETTE:
                 act_c = color_menu.addAction(make_vector_folder_icon(c_hex, 14), c_name)
@@ -321,14 +322,14 @@ class SamsungNotesTreeWidget(QTreeWidget):
 
             if not is_locked:
                 menu.addSeparator()
-                act_ren = menu.addAction("✎ Rinomina")
+                act_ren = menu.addAction(get_icon("edit", size=14), "Rinomina")
                 act_ren.triggered.connect(lambda: self.renameFolderRequested.emit(folder_id))
-                act_del = menu.addAction("🗑️ Elimina")
+                act_del = menu.addAction(get_icon("trash", role="danger", size=14), "Elimina")
                 act_del.triggered.connect(lambda: self.deleteFolderRequested.emit(folder_id))
             menu.exec(global_pos)
         elif data[0] == "note":
             note_id = int(data[1])
-            act_st = menu.addAction("✅ Segna / Rimuovi Studiata")
+            act_st = menu.addAction(get_icon("check", role="success", size=14), "Segna / Rimuovi Studiata")
             act_st.triggered.connect(lambda: self.toggleNoteStudiedRequested.emit(note_id))
             menu.exec(global_pos)
 

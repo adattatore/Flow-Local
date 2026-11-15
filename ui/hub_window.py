@@ -107,6 +107,8 @@ from ui.theme_widgets import (
     MorphologicalSlidingPill,
     ThemedPushButton,
     _make_button,
+    _make_divider,
+    _make_empty_state,
     _make_label,
     ScrollList,
     _make_card,
@@ -116,6 +118,7 @@ from ui.theme_widgets import (
     SlidingStackedWidget,
     AnimatedSegmentedBox,
 )
+from ui.icons import get_icon, get_pixmap, apply_win11_titlebar
 from ui.settings_dialog import HubSettingsDialog
 from ui.flowtime_widgets import (
     FLOWTIME_COLOR_PALETTE,
@@ -410,19 +413,21 @@ class FlowLocalHub(QMainWindow):
         self.top_world_group = QButtonGroup(self)
         self.top_world_group.setExclusive(True)
 
-        self.top_flowtype_btn = ThemedPushButton("🎙️ FlowType")
-        self.top_flownotes_btn = ThemedPushButton("📓 FlowNotes")
-        self.top_flowtime_btn = ThemedPushButton("🗓️ FlowTime")
-        self.top_whis_btn = ThemedPushButton("✨ Whis")
+        self.top_flowtype_btn = ThemedPushButton(" FlowType")
+        self.top_flownotes_btn = ThemedPushButton(" FlowNotes")
+        self.top_flowtime_btn = ThemedPushButton(" FlowTime")
+        self.top_whis_btn = ThemedPushButton(" Whis")
 
-        for idx, (btn, target_page) in enumerate([
-            (self.top_flowtype_btn, 0),
-            (self.top_flownotes_btn, 1),
-            (self.top_flowtime_btn, 7),
-            (self.top_whis_btn, 4),
+        for idx, (btn, target_page, icon_name) in enumerate([
+            (self.top_flowtype_btn, 0, "mic"),
+            (self.top_flownotes_btn, 1, "notes"),
+            (self.top_flowtime_btn, 7, "calendar"),
+            (self.top_whis_btn, 4, "sparkles"),
         ]):
             btn.setObjectName("TopSegmentBtn")
             btn.setCheckable(True)
+            btn.setIcon(get_icon(icon_name, theme_key=self._current_theme, role="text", size=14))
+            btn.setIconSize(QSize(14, 14))
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _c=False, p=target_page: self._on_nav_clicked(p))
             self.top_world_group.addButton(btn, idx)
@@ -433,8 +438,10 @@ class FlowLocalHub(QMainWindow):
         layout.addStretch(1)
 
         # Mini-pillola Pomodoro attiva in background (visibile solo quando in corso / in pausa)
-        self.pomo_top_pill = ThemedPushButton("⏱️ 25:00")
+        self.pomo_top_pill = ThemedPushButton(" 25:00")
         self.pomo_top_pill.setObjectName("FilterPill")
+        self.pomo_top_pill.setIcon(get_icon("clock", theme_key=self._current_theme, role="accent", size=13))
+        self.pomo_top_pill.setIconSize(QSize(13, 13))
         self.pomo_top_pill.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pomo_top_pill.setToolTip("Pomodoro attivo — Clicca per aprire Focus & Esami in FlowNotes")
         self.pomo_top_pill.setStyleSheet("padding: 0 10px; font-size: 11px; min-height: 26px; font-weight: 600;")
@@ -455,21 +462,25 @@ class FlowLocalHub(QMainWindow):
         self.spotify_bar.set_theme_mode(self._active_is_dark())
         right_row.addWidget(self.spotify_bar)
 
-        self.reading_mode_btn = ThemedPushButton("📖 Lettura")
+        self.reading_mode_btn = ThemedPushButton(" Lettura")
         self.reading_mode_btn.setObjectName("FilterPill")
         self.reading_mode_btn.setCheckable(True)
         self.reading_mode_btn.setChecked(self._reading_mode)
-        self.reading_mode_btn.setFixedWidth(84)
+        self.reading_mode_btn.setIcon(get_icon("book", theme_key=self._current_theme, role="subtitle", size=13))
+        self.reading_mode_btn.setIconSize(QSize(13, 13))
+        self.reading_mode_btn.setFixedWidth(88)
         self.reading_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.reading_mode_btn.setToolTip("Modalità Lettura: toni caldi riposanti per la vista")
+        self.reading_mode_btn.setToolTip("Modalità Lettura: toni caldi per la vista")
         self.reading_mode_btn.setStyleSheet("padding: 0 8px; font-size: 11px; min-height: 26px;")
         self.reading_mode_btn.toggled.connect(self._toggle_reading_mode)
         right_row.addWidget(self.reading_mode_btn)
 
-        self.settings_btn = ThemedPushButton("⚙️")
+        self.settings_btn = ThemedPushButton("")
         self.settings_btn.setObjectName("SettingsGearBtn")
+        self.settings_btn.setIcon(get_icon("settings", theme_key=self._current_theme, role="subtitle", size=15))
+        self.settings_btn.setIconSize(QSize(15, 15))
         self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.settings_btn.setToolTip("Impostazioni FlowLocal (Temi, Google Calendar, Sistema)")
+        self.settings_btn.setToolTip("Impostazioni FlowLocal")
         self.settings_btn.clicked.connect(self._on_open_settings_clicked)
         right_row.addWidget(self.settings_btn)
 
@@ -638,6 +649,7 @@ class FlowLocalHub(QMainWindow):
         )
         self._sync_editor_typography()
         self._apply_windows_titlebar_theme(self._current_theme, self._reading_mode)
+        self._refresh_hub_icons()
         if hasattr(self, "nk_tree") and hasattr(self.nk_tree, "set_theme_palette"):
             self.nk_tree.set_theme_palette(self._active_palette())
         if hasattr(self, "spotify_bar"):
@@ -670,6 +682,36 @@ class FlowLocalHub(QMainWindow):
         self.update()
         if overlay is not None:
             overlay.raise_()
+
+    def _refresh_hub_icons(self):
+        """Aggiorna le icone vettoriali della UI in base al tema QSS attivo."""
+        tkey = getattr(self, "_current_theme", "obsidian")
+        pairs = [
+            ("top_flowtype_btn", "mic", "text", 14),
+            ("top_flownotes_btn", "notes", "text", 14),
+            ("top_flowtime_btn", "calendar", "text", 14),
+            ("top_whis_btn", "sparkles", "text", 14),
+            ("pomo_top_pill", "clock", "accent", 13),
+            ("reading_mode_btn", "book", "subtitle", 13),
+            ("settings_btn", "settings", "subtitle", 15),
+            ("import_slide_btn", "download", "text", 14),
+            ("sbobina_btn", "mic", "text", 14),
+            ("cloud_sync_btn", "cloud", "text", 14),
+            ("nk_copy_btn", "copy", "subtitle", 14),
+            ("nk_del_btn", "trash", "danger", 14),
+            ("nk_history_btn", "clock", "subtitle", 14),
+            ("nk_ask_whis_btn", "sparkles", "accent", 14),
+            ("ft_today_btn", "calendar", "text", 14),
+            ("ft_save_btn", "save", "on_accent", 14),
+            ("ft_delete_btn", "trash", "danger", 14),
+            ("ft_link_note_btn", "link", "text", 14),
+            ("whis_send_btn", "sparkles", "on_accent", 14),
+        ]
+        for attr, icon_name, role, size in pairs:
+            w = getattr(self, attr, None)
+            if w is not None:
+                w.setIcon(get_icon(icon_name, theme_key=tkey, role=role, size=size))
+                w.setIconSize(QSize(size, size))
 
     def _on_nav_clicked(self, page_idx: int):
         self.pages.setCurrentIndex(page_idx)
@@ -721,7 +763,7 @@ class FlowLocalHub(QMainWindow):
     # 1. PILASTRO: FLOWTYPE (SCRITTURA VOCALE & DETTATURA LIVE)
     # -----------------------------------------------------------------
     def _build_flowtype_page(self) -> QWidget:
-        page, layout = self._make_page("🎙️ FlowType", "Scrittura vocale in tempo reale, telemetria e gestione degli stili di dettatura.")
+        page, layout = self._make_page("FlowType", "Dettatura vocale in tempo reale e stili contestuali.")
 
         # --- 4 MINI-CARD STATISTICHE FLOWTYPE (IN ALTO) ---
         stats_box = QFrame()
@@ -838,12 +880,13 @@ class FlowLocalHub(QMainWindow):
         toolbar = QHBoxLayout()
         toolbar.setSpacing(10)
         self.history_search = QLineEdit()
-        self.history_search.setPlaceholderText("🔍 Cerca nelle trascrizioni recenti…")
+        self.history_search.setPlaceholderText("Cerca nelle trascrizioni...")
         self.history_search.setMinimumHeight(36)
         self.history_search.textChanged.connect(self._refresh_history)
         toolbar.addWidget(self.history_search, 1)
 
-        clear_btn = _make_button("🗑️ Svuota cronologia", "danger")
+        clear_btn = _make_button("Svuota cronologia", "danger")
+        clear_btn.setIcon(get_icon("trash", theme_key=self._current_theme, role="danger", size=14))
         clear_btn.clicked.connect(self._clear_history)
         toolbar.addWidget(clear_btn)
         layout.addLayout(toolbar)
@@ -993,7 +1036,7 @@ class FlowLocalHub(QMainWindow):
                     self.whis_model_combo.setCurrentIndex(idx)
 
     def _build_whis_page(self) -> QWidget:
-        page, layout = self._make_page("✨ Whis", "Assistente virtuale ingegneristico, cronologia interazioni e monitoraggio live.")
+        page, layout = self._make_page("Whis", "Assistente locale e cronologia interazioni.")
 
         # 1. Header & Live Status Panel (Obsidian Glass)
         status_frame = QFrame()
@@ -1545,7 +1588,8 @@ class FlowLocalHub(QMainWindow):
         )
         p_layout.addWidget(self.sbobina_progress_bar, 2)
 
-        self.sbobina_cancel_btn = _make_button("✕ Annulla", "danger")
+        self.sbobina_cancel_btn = _make_button("Annulla", "danger")
+        self.sbobina_cancel_btn.setIcon(get_icon("close", theme_key=self._current_theme, role="danger", size=13))
         self.sbobina_cancel_btn.setMinimumHeight(28)
         self.sbobina_cancel_btn.clicked.connect(self._on_cancel_sbobina_clicked)
         p_layout.addWidget(self.sbobina_cancel_btn)
@@ -1590,7 +1634,7 @@ class FlowLocalHub(QMainWindow):
 
         # Barra di ricerca + Profilo compatto
         self.nk_search_input = QLineEdit()
-        self.nk_search_input.setPlaceholderText("🔍 Cerca note, materie...")
+        self.nk_search_input.setPlaceholderText("Cerca note, materie...")
         self.nk_search_input.setMinimumHeight(32)
         self.nk_search_input.textChanged.connect(self._on_nk_search_changed)
         col1_layout.addWidget(self.nk_search_input)
@@ -1646,16 +1690,18 @@ class FlowLocalHub(QMainWindow):
 
         footer_row2 = QHBoxLayout()
         footer_row2.setSpacing(5)
-        self.import_slide_btn = _make_button("📥 Importa")
+        self.import_slide_btn = _make_button(" Importa", "ghost")
         self.import_slide_btn.setObjectName("NKCol1Btn")
-        self.import_slide_btn.setToolTip("Importa PDF / Slide / Immagini")
+        self.import_slide_btn.setIcon(get_icon("download", theme_key=self._current_theme, role="text", size=14))
+        self.import_slide_btn.setToolTip("Importa PDF, Slide o Immagini")
         self.import_slide_btn.setFixedHeight(30)
         self.import_slide_btn.clicked.connect(self._on_import_slide_clicked)
         footer_row2.addWidget(self.import_slide_btn, 1)
 
-        self.sbobina_btn = _make_button("🎙️ Sbobina")
+        self.sbobina_btn = _make_button(" Sbobina", "ghost")
         self.sbobina_btn.setObjectName("NKCol1Btn")
-        self.sbobina_btn.setToolTip("Sbobina Audio / Lezione")
+        self.sbobina_btn.setIcon(get_icon("mic", theme_key=self._current_theme, role="text", size=14))
+        self.sbobina_btn.setToolTip("Sbobina Audio o Lezione")
         self.sbobina_btn.setFixedHeight(30)
         self.sbobina_btn.clicked.connect(self._on_sbobina_clicked)
         footer_row2.addWidget(self.sbobina_btn, 1)
@@ -1738,7 +1784,7 @@ class FlowLocalHub(QMainWindow):
 
         editor_top_bar.addStretch(1)
 
-        self.cloud_badge = QLabel("☁️ (0)")
+        self.cloud_badge = QLabel("Cloud (0)")
         self.cloud_badge.setObjectName("CloudBadge")
         self.cloud_badge.setProperty("pending", False)
         self.cloud_badge.setFixedHeight(28)
@@ -1753,9 +1799,10 @@ class FlowLocalHub(QMainWindow):
         self.cloud_process_btn.clicked.connect(self._on_process_cloud_queue_clicked)
         editor_top_bar.addWidget(self.cloud_process_btn)
 
-        self.cloud_sync_btn = _make_button("☁️ Cloud")
+        self.cloud_sync_btn = _make_button(" Cloud", "ghost")
         self.cloud_sync_btn.setObjectName("NKActionBtn")
-        self.cloud_sync_btn.setToolTip("Rigenera outbox_study/library.json con note e flashcard del PC")
+        self.cloud_sync_btn.setIcon(get_icon("cloud", theme_key=self._current_theme, role="text", size=14))
+        self.cloud_sync_btn.setToolTip("Sincronizza note e flashcard con Google Drive")
         self.cloud_sync_btn.clicked.connect(self._on_sync_cloud_clicked)
         editor_top_bar.addWidget(self.cloud_sync_btn)
 
@@ -1764,40 +1811,46 @@ class FlowLocalHub(QMainWindow):
         self.export_all_btn.clicked.connect(self._show_export_all_menu)
         editor_top_bar.addWidget(self.export_all_btn)
 
-        self.nk_fc_btn = _make_button("🃏 Flashcard")
+        self.nk_fc_btn = _make_button(" Flashcard", "ghost")
         self.nk_fc_btn.setObjectName("NKActionBtn")
-        self.nk_fc_btn.setToolTip("Genera flashcard d'esame da questa nota")
+        self.nk_fc_btn.setIcon(get_icon("cards", theme_key=self._current_theme, role="text", size=14))
+        self.nk_fc_btn.setToolTip("Genera flashcard da questa nota")
         self.nk_fc_btn.clicked.connect(self._on_nk_extract_flashcards_clicked)
         editor_top_bar.addWidget(self.nk_fc_btn)
 
-        self.nk_copy_btn = _make_button("📋")
+        self.nk_copy_btn = _make_button("", "ghost")
         self.nk_copy_btn.setObjectName("NKActionBtn")
-        self.nk_copy_btn.setToolTip("Copia Markdown negli appunti")
+        self.nk_copy_btn.setIcon(get_icon("copy", theme_key=self._current_theme, role="subtitle", size=14))
+        self.nk_copy_btn.setToolTip("Copia Markdown")
         self.nk_copy_btn.clicked.connect(lambda: self._copy_to_clipboard(self.nk_editor_body.get_markdown_text()))
         editor_top_bar.addWidget(self.nk_copy_btn)
 
-        self.nk_del_btn = _make_button("🗑️", "danger")
+        self.nk_del_btn = _make_button("", "danger")
         self.nk_del_btn.setObjectName("NKActionBtn")
-        self.nk_del_btn.setToolTip("Elimina nota corrente")
+        self.nk_del_btn.setIcon(get_icon("trash", theme_key=self._current_theme, role="danger", size=14))
+        self.nk_del_btn.setToolTip("Elimina nota")
         self.nk_del_btn.clicked.connect(self._on_nk_delete_clicked)
         editor_top_bar.addWidget(self.nk_del_btn)
 
-        self.nk_history_btn = _make_button("🕒")
+        self.nk_history_btn = _make_button("", "ghost")
         self.nk_history_btn.setObjectName("NKActionBtn")
-        self.nk_history_btn.setToolTip("Time Machine: Cronologia versioni della nota")
+        self.nk_history_btn.setIcon(get_icon("clock", theme_key=self._current_theme, role="subtitle", size=14))
+        self.nk_history_btn.setToolTip("Cronologia versioni")
         self.nk_history_btn.clicked.connect(self._on_nk_history_clicked)
         editor_top_bar.addWidget(self.nk_history_btn)
 
-        self.nk_ask_whis_btn = _make_button("✨ Whis", "accent")
+        self.nk_ask_whis_btn = _make_button(" Whis", "accent")
         self.nk_ask_whis_btn.setObjectName("NKActionBtn")
-        self.nk_ask_whis_btn.setToolTip("Chiedi a Whis di spiegare questo appunto")
+        self.nk_ask_whis_btn.setIcon(get_icon("sparkles", theme_key=self._current_theme, role="accent", size=14))
+        self.nk_ask_whis_btn.setToolTip("Chiedi a Whis")
         self.nk_ask_whis_btn.clicked.connect(self._on_nk_ask_whis_clicked)
         editor_top_bar.addWidget(self.nk_ask_whis_btn)
 
-        self.nk_studio_btn = _make_button("✦ Vista Studio")
+        self.nk_studio_btn = _make_button(" Vista Studio")
         self.nk_studio_btn.setObjectName("NKRestorePill")
+        self.nk_studio_btn.setIcon(get_icon("book", theme_key=self._current_theme, role="text", size=14))
         self.nk_studio_btn.setCheckable(True)
-        self.nk_studio_btn.setToolTip("Alterna tra Modifica WYSIWYG e Vista Studio impaginata con formule LaTeX (Ctrl+E)")
+        self.nk_studio_btn.setToolTip("Alterna Modifica e Vista Studio (Ctrl+E)")
         self.nk_studio_btn.clicked.connect(self._on_nk_studio_btn_clicked)
         editor_top_bar.addWidget(self.nk_studio_btn)
 
@@ -2211,7 +2264,13 @@ class FlowLocalHub(QMainWindow):
 
         self.nk_notes_list.clear()
         if not notes:
-            self.nk_notes_list.show_empty("Nessuna nota per la cartella selezionata.")
+            self.nk_notes_list.show_empty(
+                "Cartella vuota",
+                icon_name="notes",
+                subtitle="Crea una nuova nota o sbobina una lezione.",
+                shortcut_hint="Ctrl+N",
+                theme_key=self._current_theme,
+            )
             return
 
         for n in notes:
@@ -4192,12 +4251,12 @@ class FlowLocalHub(QMainWindow):
         top_ctrl.setContentsMargins(0, 0, 0, 0)
         top_ctrl.setSpacing(8)
 
-        self.ft_page_title_lbl = _make_label("🗓️ FlowTime", "PageTitle")
+        self.ft_page_title_lbl = _make_label("FlowTime", "PageTitle")
         top_ctrl.addWidget(self.ft_page_title_lbl)
         top_ctrl.addStretch(1)
 
         self.ft_search_input = QLineEdit()
-        self.ft_search_input.setPlaceholderText("🔍 Cerca eventi, To-Do o aule…")
+        self.ft_search_input.setPlaceholderText("Cerca eventi, To-Do o aule...")
         self.ft_search_input.setFixedWidth(260)
         self.ft_search_input.setMinimumHeight(36)
         self.ft_search_input.textChanged.connect(self._on_ft_search_changed)
@@ -4206,13 +4265,13 @@ class FlowLocalHub(QMainWindow):
         # Selettore Vista Giorno / Vista Settimana
         self.ft_view_group = QButtonGroup(self)
         self.ft_view_group.setExclusive(True)
-        self.ft_view_day_btn = QPushButton("📅 Giorno")
+        self.ft_view_day_btn = QPushButton("Giorno")
         self.ft_view_day_btn.setObjectName("FilterPill")
         self.ft_view_day_btn.setCheckable(True)
         self.ft_view_day_btn.setChecked(True)
         self.ft_view_day_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self.ft_view_week_btn = QPushButton("🗓️ Settimana")
+        self.ft_view_week_btn = QPushButton("Settimana")
         self.ft_view_week_btn.setObjectName("FilterPill")
         self.ft_view_week_btn.setCheckable(True)
         self.ft_view_week_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -4223,9 +4282,10 @@ class FlowLocalHub(QMainWindow):
         top_ctrl.addWidget(self.ft_view_day_btn)
         top_ctrl.addWidget(self.ft_view_week_btn)
 
-        ft_today_btn = _make_button("📅 Oggi")
-        ft_today_btn.clicked.connect(self._on_ft_today_clicked)
-        top_ctrl.addWidget(ft_today_btn)
+        self.ft_today_btn = _make_button(" Oggi", "ghost")
+        self.ft_today_btn.setIcon(get_icon("calendar", theme_key=self._current_theme, role="text", size=14))
+        self.ft_today_btn.clicked.connect(self._on_ft_today_clicked)
+        top_ctrl.addWidget(self.ft_today_btn)
         layout.addLayout(top_ctrl)
 
         # Corpo principale: Calendario/Card Modifica a sinistra + Stack (Giorno | Settimana | Ricerca) + Sidebar To-Do a destra
@@ -4369,25 +4429,28 @@ class FlowLocalHub(QMainWindow):
         self.ft_form_notes_box.setVisible(False)
         fc_layout.addWidget(self.ft_form_notes_box)
 
-        self.ft_link_note_btn = _make_button("🔗 Collega Nota...")
+        self.ft_link_note_btn = _make_button(" Collega Nota...", "ghost")
+        self.ft_link_note_btn.setIcon(get_icon("link", theme_key=self._current_theme, role="text", size=14))
         self.ft_link_note_btn.setStyleSheet("min-height: 28px; max-height: 28px; padding: 0 10px; font-size: 11.5px;")
-        self.ft_link_note_btn.setToolTip("Apri l'HUD di ricerca note per collegare appunti o sbobine a questo impegno")
+        self.ft_link_note_btn.setToolTip("Collega appunti o sbobine a questo impegno")
         self.ft_link_note_btn.clicked.connect(self._on_ft_form_link_note_clicked)
         fc_layout.addWidget(self.ft_link_note_btn)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
-        self.ft_save_btn = _make_button("💾 Salva in FlowTime", "primary")
+        self.ft_save_btn = _make_button(" Salva", "primary")
+        self.ft_save_btn.setIcon(get_icon("save", theme_key=self._current_theme, role="on_accent", size=14))
         self.ft_save_btn.clicked.connect(self._on_ft_save_event)
         btn_row.addWidget(self.ft_save_btn, 1)
 
-        self.ft_delete_btn = _make_button("🗑️", "danger")
-        self.ft_delete_btn.setToolTip("Elimina impegno selezionato")
+        self.ft_delete_btn = _make_button("", "danger")
+        self.ft_delete_btn.setIcon(get_icon("trash", theme_key=self._current_theme, role="danger", size=14))
+        self.ft_delete_btn.setToolTip("Elimina impegno")
         self.ft_delete_btn.clicked.connect(self._on_ft_delete_active_event)
         self.ft_delete_btn.setVisible(False)
         btn_row.addWidget(self.ft_delete_btn)
 
-        self.ft_cancel_edit_btn = _make_button("Annulla")
+        self.ft_cancel_edit_btn = _make_button("Annulla", "ghost")
         self.ft_cancel_edit_btn.clicked.connect(self._reset_ft_form)
         self.ft_cancel_edit_btn.setVisible(False)
         btn_row.addWidget(self.ft_cancel_edit_btn)
@@ -5416,11 +5479,13 @@ class FlowLocalHub(QMainWindow):
             exams = []
 
         if not exams:
-            empty = _make_label(
-                "Nessun esame in programma. Clicca '+ Aggiungi Esame' per collegare un appello alle tue note di FlowNotes.",
-                "Muted",
+            empty = _make_empty_state(
+                "graduation",
+                "Nessun esame in programma",
+                "Aggiungi un appello per collegarlo alle tue note.",
+                shortcut_hint="+ Aggiungi Esame",
+                theme_key=self._current_theme,
             )
-            empty.setWordWrap(True)
             self.ft_exams_vbox.addWidget(empty)
             self.ft_exams_vbox.addStretch(1)
             return

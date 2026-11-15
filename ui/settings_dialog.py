@@ -1,38 +1,33 @@
 """Finestra Impostazioni FlowLocal (2 colonne: Aspetto, Motore AI & Hardware, Audio, Google & Gruppi)."""
 
-from datetime import datetime, date as dt_date, timedelta
-from typing import Callable, Dict, List, Optional, Any
-import math
+from typing import Any, Dict, List, Optional, Tuple
 import os
-import random
-import re
-import tempfile
 import threading
-import time
 
 from PyQt6.QtCore import (
-    Qt, QTimer, QThread, pyqtSignal, QPoint, QPointF, QRect, QRectF, QLineF,
-    QSettings, QByteArray, QSize, QDate, QLocale,
-    QPropertyAnimation, QParallelAnimationGroup, QEasingCurve,
+    Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, QThread, pyqtSignal,
 )
-from PyQt6.QtGui import (
-    QPainter, QPen, QBrush, QColor, QFont, QFontDatabase, QFontMetrics, QPainterPath, QRadialGradient,
-    QLinearGradient, QCursor, QPolygonF, QIcon, QPixmap, QKeySequence, QShortcut, QTextCharFormat, QTextCursor
-)
-from PyQt6.QtSvg import QSvgRenderer
+from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QCalendarWidget, QCheckBox, QDateEdit, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
-    QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QGraphicsView, QGraphicsScene, QGraphicsItem,
-    QComboBox, QFontComboBox, QSlider, QSpinBox, QTreeWidget, QTreeWidgetItem, QSplitter
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
+    QSizePolicy, QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from database import db
 from core.audio_ducker import audio_ducker
 from core.audio_feedback import audio_feedback, MODE_VOICE, MODE_SOFT_CHIME, MODE_MUTE
 from core.cloud_sync import cloud_sync
+from core.hardware_profiler import (
+    HardwareTier,
+    build_profile,
+    detect_hardware,
+    ensure_first_run_hardware_tier,
+)
+from core.gemini_client import verify_api_key
 from ui.themes import FONT_PRESETS, GPU_AVAILABLE
-from ui.theme_widgets import _make_button, _make_card, _make_label
+from ui.theme_widgets import _make_button, _make_divider, _make_label
+from ui.icons import apply_win11_titlebar, get_icon, get_pixmap
 
 
 _SYMBOLIC_FONT_EXACT = {
@@ -79,41 +74,31 @@ def _is_symbolic_font(family: str) -> bool:
 
 
 def _detect_hardware_summary() -> Dict[str, Any]:
-    """Rileva GPU/CPU disponibile e suggerisce il profilo hardware consigliato."""
-    if GPU_AVAILABLE:
-        try:
-            import pynvml
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            raw_name = pynvml.nvmlDeviceGetName(handle)
-            gpu_name = raw_name.decode("utf-8", errors="ignore") if isinstance(raw_name, bytes) else str(raw_name)
-            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            vram_gb = round(mem.total / (1024 ** 3), 1)
-            if vram_gb >= 12.0:
-                rec_tier = "pro"
-            elif vram_gb >= 6.0:
-                rec_tier = "standard"
-            else:
-                rec_tier = "eco"
-            return {
-                "has_gpu": True,
-                "badge_text": f"🟢 GPU Rilevata: {gpu_name} ({vram_gb} GB VRAM)",
-                "detail_text": "Accelerazione CUDA attiva: Whisper float16 + LLM locale ad alta velocità.",
-                "recommended_tier": rec_tier,
-            }
-        except Exception:
-            return {
-                "has_gpu": True,
-                "badge_text": "🟢 GPU CUDA Attiva",
-                "detail_text": "Accelerazione GPU rilevata per Whisper float16 e Ollama.",
-                "recommended_tier": "standard",
-            }
-    cores = os.cpu_count() or 4
+    """Rileva GPU/CPU disponibile tramite hardware_profiler e suggerisce il profilo hardware consigliato."""
+    hw = detect_hardware()
+    rec_profile = build_profile(hw.recommended_tier, hw)
     return {
-        "has_gpu": False,
-        "badge_text": f"🟡 Modalità CPU ({cores} core · Whisper int8)",
-        "detail_text": "Nessuna GPU NVIDIA rilevata: profilo leggero consigliato per evitare rallentamenti.",
-        "recommended_tier": "eco",
+        "has_gpu": hw.has_cuda,
+        "status_role": "success" if hw.has_cuda else "warning",
+        "badge_text": rec_profile.badge_text,
+        "detail_text": rec_profile.detail_text,
+        "recommended_tier": hw.recommended_tier.value,
     }
+
+
+class _GeminiVerifyWorker(QThread):
+    """Worker QThread per verificare in background la validità della chiave API Gemini."""
+
+    verifyFinished = pyqtSignal(bool, str)
+
+    def __init__(self, api_key: str, model: str, parent=None):
+        super().__init__(parent)
+        self._api_key = api_key
+        self._model = model
+
+    def run(self):
+        ok, msg = verify_api_key(self._api_key, model=self._model, timeout=6.0)
+        self.verifyFinished.emit(ok, msg)
 
 
 class HubSettingsDialog(QDialog):
@@ -122,10 +107,14 @@ class HubSettingsDialog(QDialog):
     def __init__(self, hub: "FlowLocalHub"):
         super().__init__(hub)
         self.hub = hub
-        self.setWindowTitle("⚙️ Impostazioni FlowLocal")
-        self.setMinimumSize(780, 540)
-        self.resize(840, 610)
+        self.setWindowTitle("Impostazioni FlowLocal")
+        self.setMinimumSize(820, 560)
+        self.resize(880, 620)
         self.setModal(True)
+
+        self._nav_buttons: List[Tuple[QPushButton, str]] = []
+        self._adv_anim: Optional[QPropertyAnimation] = None
+        self._gemini_verify_worker: Optional[_GeminiVerifyWorker] = None
 
         root_layout = QHBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -136,34 +125,36 @@ class HubSettingsDialog(QDialog):
         sidebar.setObjectName("SettingsSidebar")
         sidebar.setFixedWidth(180)
         sb_layout = QVBoxLayout(sidebar)
-        sb_layout.setContentsMargins(10, 16, 10, 14)
-        sb_layout.setSpacing(6)
+        sb_layout.setContentsMargins(10, 18, 10, 14)
+        sb_layout.setSpacing(4)
 
         sb_title = _make_label("Impostazioni", "CardTitle")
-        sb_title.setContentsMargins(6, 0, 6, 6)
+        sb_title.setContentsMargins(8, 0, 8, 8)
         sb_layout.addWidget(sb_title)
 
         self._nav_grp = QButtonGroup(self)
         self._nav_grp.setExclusive(True)
         categories = [
-            ("🎨 Aspetto & Testo", 0),
-            ("⚡ Motore AI & Hardware", 1),
-            ("🎙️ Audio & Scorciatoie", 2),
-            ("☁️ Google & Gruppi", 3),
+            ("Aspetto & Testo", "palette", 0),
+            ("Motore AI & Hardware", "lightning", 1),
+            ("Audio & Scorciatoie", "mic", 2),
+            ("Google & Gruppi", "cloud", 3),
         ]
-        for label, idx in categories:
-            btn = QPushButton(label)
+        for label, icon_name, idx in categories:
+            btn = QPushButton(f"  {label}")
             btn.setObjectName("SettingsNavBtn")
             btn.setCheckable(True)
             btn.setChecked(idx == 0)
+            btn.setIconSize(QSize(15, 15))
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _c=False, i=idx: self._switch_category(i))
             self._nav_grp.addButton(btn, idx)
+            self._nav_buttons.append((btn, icon_name))
             sb_layout.addWidget(btn)
 
         sb_layout.addStretch(1)
         ver_lbl = _make_label("FlowLocal Hub", "PageSubtitle")
-        ver_lbl.setContentsMargins(6, 0, 6, 0)
+        ver_lbl.setContentsMargins(8, 0, 8, 0)
         sb_layout.addWidget(ver_lbl)
         root_layout.addWidget(sidebar)
 
@@ -171,8 +162,8 @@ class HubSettingsDialog(QDialog):
         right_panel = QWidget()
         right_panel.setObjectName("Page")
         right_layout = QVBoxLayout(right_panel)
-        right_layout.setContentsMargins(18, 16, 18, 14)
-        right_layout.setSpacing(12)
+        right_layout.setContentsMargins(24, 20, 24, 16)
+        right_layout.setSpacing(14)
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self._wrap_scroll(self._build_appearance_page()))
@@ -181,14 +172,19 @@ class HubSettingsDialog(QDialog):
         self.stack.addWidget(self._wrap_scroll(self._build_google_groups_page()))
         right_layout.addWidget(self.stack, 1)
 
+        right_layout.addWidget(_make_divider())
+
         close_row = QHBoxLayout()
         close_row.addStretch(1)
-        close_btn = _make_button("Chiudi", "primary")
+        close_btn = _make_button("Chiudi", "ghost")
         close_btn.clicked.connect(self.accept)
         close_row.addWidget(close_btn)
         right_layout.addLayout(close_row)
 
         root_layout.addWidget(right_panel, 1)
+
+        self._refresh_icons()
+        apply_win11_titlebar(self, self.hub._current_theme, self.hub._reading_mode)
 
     def _wrap_scroll(self, inner: QWidget) -> QScrollArea:
         scroll = QScrollArea()
@@ -205,23 +201,54 @@ class HubSettingsDialog(QDialog):
             self._refresh_gcal_status()
             self._refresh_drive_status()
 
+    def _refresh_icons(self):
+        """Aggiorna tutte le icone vettoriali e la titlebar in base al tema attivo."""
+        tkey = getattr(self.hub, "_current_theme", "obsidian")
+        self.setWindowIcon(get_icon("settings", theme_key=tkey))
+
+        for btn, icon_name in self._nav_buttons:
+            role = "accent" if btn.isChecked() else "subtitle"
+            btn.setIcon(get_icon(icon_name, theme_key=tkey, role=role, size=15))
+
+        if hasattr(self, "hw_dot_lbl"):
+            self.hw_dot_lbl.setPixmap(
+                get_pixmap("dot", theme_key=tkey, role=self._hw_status_role, size=10)
+            )
+        if hasattr(self, "gemini_eye_btn"):
+            eye_icon = "eye_off" if self.gemini_eye_btn.isChecked() else "eye"
+            self.gemini_eye_btn.setIcon(get_icon(eye_icon, theme_key=tkey, role="subtitle", size=15))
+        if hasattr(self, "adv_toggle_btn"):
+            caret = "caret_down" if self.adv_toggle_btn.isChecked() else "caret_right"
+            self.adv_toggle_btn.setIcon(get_icon(caret, theme_key=tkey, role="subtitle", size=13))
+        if hasattr(self, "gcal_sync_btn"):
+            self.gcal_sync_btn.setIcon(get_icon("refresh", theme_key=tkey, role="on_accent", size=14))
+        if hasattr(self, "gcal_connect_btn"):
+            self.gcal_connect_btn.setIcon(get_icon("calendar", theme_key=tkey, role="text", size=14))
+        if hasattr(self, "drive_sync_btn"):
+            self.drive_sync_btn.setIcon(get_icon("refresh", theme_key=tkey, role="on_accent", size=14))
+        if hasattr(self, "drive_folder_btn"):
+            self.drive_folder_btn.setIcon(get_icon("folder", theme_key=tkey, role="text", size=14))
+
+        apply_win11_titlebar(self, tkey, getattr(self.hub, "_reading_mode", False))
+
     # -----------------------------------------------------------------
     # SEZIONE 0: ASPETTO & TESTO
     # -----------------------------------------------------------------
     def _build_appearance_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 6, 6)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 8, 8)
+        layout.setSpacing(20)
 
-        layout.addWidget(_make_label("🎨 Aspetto & Testo", "PageTitle"))
+        layout.addWidget(_make_label("Aspetto & Testo", "PageTitle"))
 
-        # 1. Griglia Temi (3 colonne x 4 righe, zero troncamenti)
-        theme_card, tc_layout = _make_card()
-        tc_layout.addWidget(_make_label("Tema Interfaccia", "CardTitle"))
-        tc_layout.addWidget(
+        # 1. Sezione Temi (3 colonne, larghezza sufficiente per Starfield Alabaster / Industrial Mecha)
+        theme_sec = QVBoxLayout()
+        theme_sec.setSpacing(10)
+        theme_sec.addWidget(_make_label("Tema Interfaccia", "CardTitle"))
+        theme_sec.addWidget(
             _make_label(
-                "Scegli lo stile visivo della dashboard (Modalità Lettura resta accessibile in alto).",
+                "Scegli lo stile visivo della dashboard.",
                 "PageSubtitle",
                 wrap=True,
             )
@@ -234,14 +261,14 @@ class HubSettingsDialog(QDialog):
             ("Chiaro", "light"),
             ("Orb", "orb"),
             ("Dark Orb", "dark_orb"),
-            ("🌸 Ghibli Spring", "ghibli_spring"),
-            ("👾 Pixel Chill", "pixel_chill"),
-            ("⚔️ Crimson Katana", "katana"),
-            ("🎯 Tactical HUD", "tactical_hud"),
-            ("🤖 Industrial Mecha", "industrial_mecha"),
-            ("🖥️ Amber CRT", "amber_crt"),
-            ("🚀 Starfield Alabaster", "starfield_alabaster"),
-            ("🌆 Cyber Synthwave", "cyber_synthwave"),
+            ("Ghibli Spring", "ghibli_spring"),
+            ("Pixel Chill", "pixel_chill"),
+            ("Crimson Katana", "katana"),
+            ("Tactical HUD", "tactical_hud"),
+            ("Industrial Mecha", "industrial_mecha"),
+            ("Amber CRT", "amber_crt"),
+            ("Starfield Alabaster", "starfield_alabaster"),
+            ("Cyber Synthwave", "cyber_synthwave"),
         ]
         theme_grid = QGridLayout()
         theme_grid.setSpacing(8)
@@ -250,71 +277,79 @@ class HubSettingsDialog(QDialog):
             btn.setObjectName("FilterPill")
             btn.setCheckable(True)
             btn.setChecked(self.hub._current_theme == t_key)
-            btn.setMinimumWidth(170)
+            btn.setMinimumWidth(185)
+            btn.setMinimumHeight(32)
             btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _c=False, k=t_key: self._on_theme_pill_clicked(k))
             self._theme_grp.addButton(btn, idx)
             theme_grid.addWidget(btn, idx // 3, idx % 3)
-        tc_layout.addLayout(theme_grid)
-        layout.addWidget(theme_card)
+        theme_sec.addLayout(theme_grid)
+        layout.addLayout(theme_sec)
+
+        layout.addWidget(_make_divider())
 
         # 2. Tipografia & Scala Dimensione Testo
-        font_card, fc_layout = _make_card()
-        fc_layout.addWidget(_make_label("🔤 Tipografia & Dimensione Testo", "CardTitle"))
+        font_sec = QVBoxLayout()
+        font_sec.setSpacing(10)
+        font_sec.addWidget(_make_label("Tipografia & Dimensione Testo", "CardTitle"))
         self.font_subtitle_lbl = _make_label(
-            "Personalizza il font della UI e dell'Editor (i blocchi codice mantengono sempre il font monospace).",
+            "Personalizza il font della UI e dell'Editor.",
             "PageSubtitle",
             wrap=True,
         )
-        fc_layout.addWidget(self.font_subtitle_lbl)
+        font_sec.addWidget(self.font_subtitle_lbl)
 
         self._font_preset_grp = QButtonGroup(self)
         self._font_preset_grp.setExclusive(True)
         self._font_preset_btns: Dict[str, QPushButton] = {}
         preset_items = [
-            ("auto", "✨ Auto (Tema)", FONT_PRESETS["auto"]["subtitle"]),
+            ("auto", "Automatico", FONT_PRESETS["auto"]["subtitle"]),
             ("modern_sans", "Modern Sans", FONT_PRESETS["modern_sans"]["subtitle"]),
-            ("geometric", "Geometric & Clean", FONT_PRESETS["geometric"]["subtitle"]),
-            ("academic_serif", "📖 Academic / Serif", FONT_PRESETS["academic_serif"]["subtitle"]),
-            ("dev_mono", "💻 Developer / Mono", FONT_PRESETS["dev_mono"]["subtitle"]),
-            ("custom", "🪟 Font di Sistema", FONT_PRESETS["custom"]["subtitle"]),
+            ("geometric", "Geometric", FONT_PRESETS["geometric"]["subtitle"]),
+            ("academic_serif", "Academic Serif", FONT_PRESETS["academic_serif"]["subtitle"]),
+            ("dev_mono", "Developer Mono", FONT_PRESETS["dev_mono"]["subtitle"]),
+            ("custom", "Font di Sistema", FONT_PRESETS["custom"]["subtitle"]),
         ]
         preset_grid = QGridLayout()
-        preset_grid.setSpacing(6)
+        preset_grid.setSpacing(8)
         for idx, (p_key, p_lbl, p_tip) in enumerate(preset_items):
             btn = QPushButton(p_lbl)
             btn.setObjectName("FilterPill")
             btn.setCheckable(True)
             btn.setToolTip(p_tip)
             btn.setChecked(self.hub._font_preset == p_key)
+            btn.setMinimumHeight(30)
             btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _c=False, k=p_key: self._on_font_preset_selected(k))
             self._font_preset_grp.addButton(btn, idx)
             self._font_preset_btns[p_key] = btn
             preset_grid.addWidget(btn, idx // 3, idx % 3)
-        fc_layout.addLayout(preset_grid)
+        font_sec.addLayout(preset_grid)
 
         # Selettore Font Windows filtrato (esclusi font simbolici/icone)
         sys_font_row = QHBoxLayout()
-        sys_font_row.setSpacing(8)
-        sys_lbl = QLabel("Font Windows:")
+        sys_font_row.setSpacing(10)
+        sys_lbl = QLabel("Font Windows")
         sys_lbl.setObjectName("CardBody")
+        sys_lbl.setMinimumWidth(115)
         sys_font_row.addWidget(sys_lbl)
 
         self.system_font_combo = QComboBox()
         self.system_font_combo.setMinimumHeight(34)
+        self.system_font_combo.setCursor(Qt.CursorShape.PointingHandCursor)
         self._populate_system_fonts()
         self.system_font_combo.currentIndexChanged.connect(self._on_system_font_changed)
         sys_font_row.addWidget(self.system_font_combo, 1)
-        fc_layout.addLayout(sys_font_row)
+        font_sec.addLayout(sys_font_row)
 
-        # Controllo Scala Dimensione compatto: 4 pulsanti rapidi + 1 spinbox compatto
+        # Controllo Scala Dimensione compatto: etichetta + 4 pulsanti rapidi + 1 spinbox compatto
         scale_row = QHBoxLayout()
         scale_row.setSpacing(6)
-        scale_lbl = QLabel("Scala Dimensione:")
+        scale_lbl = QLabel("Scala Dimensione")
         scale_lbl.setObjectName("CardBody")
+        scale_lbl.setMinimumWidth(115)
         scale_row.addWidget(scale_lbl)
 
         self._scale_grp = QButtonGroup(self)
@@ -324,6 +359,7 @@ class HubSettingsDialog(QDialog):
             s_btn = QPushButton(f"{pct}%")
             s_btn.setObjectName("FilterPill")
             s_btn.setCheckable(True)
+            s_btn.setMinimumWidth(56)
             s_btn.setChecked(self.hub._font_scale == pct)
             s_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             s_btn.clicked.connect(lambda _c=False, p=pct: self._on_font_scale_changed(p))
@@ -341,9 +377,9 @@ class HubSettingsDialog(QDialog):
         self.font_scale_spin.setValue(self.hub._font_scale)
         self.font_scale_spin.valueChanged.connect(self._on_font_scale_changed)
         scale_row.addWidget(self.font_scale_spin)
-        fc_layout.addLayout(scale_row)
+        font_sec.addLayout(scale_row)
 
-        layout.addWidget(font_card)
+        layout.addLayout(font_sec)
         layout.addStretch(1)
         return page
 
@@ -373,46 +409,56 @@ class HubSettingsDialog(QDialog):
         self.system_font_combo.blockSignals(False)
 
     # -----------------------------------------------------------------
-    # SEZIONE 1: MOTORE AI & HARDWARE (BLOCCO 5)
+    # SEZIONE 1: MOTORE AI & HARDWARE
     # -----------------------------------------------------------------
     def _build_ai_hardware_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 6, 6)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 8, 8)
+        layout.setSpacing(20)
 
-        layout.addWidget(_make_label("⚡ Motore AI & Hardware", "PageTitle"))
+        layout.addWidget(_make_label("Motore AI & Hardware", "PageTitle"))
 
-        # 1. Card Riepilogo Hardware
+        # 1. Riepilogo Hardware
         hw_info = _detect_hardware_summary()
-        hw_card, hw_layout = _make_card()
+        self._hw_status_role = hw_info["status_role"]
+        hw_sec = QVBoxLayout()
+        hw_sec.setSpacing(10)
+
         hw_top = QHBoxLayout()
         hw_top.setSpacing(8)
         hw_top.addWidget(_make_label("Riepilogo Hardware", "CardTitle"))
         hw_top.addStretch(1)
 
-        saved_tier = db.get_setting("hardware_tier", "auto") or "auto"
-        tier_labels = {"auto": "Auto", "pro": "Pro", "standard": "Standard", "eco": "Eco"}
+        saved_tier = ensure_first_run_hardware_tier(db) or "auto"
+        tier_labels = {"auto": "Automatico", "pro": "Pro", "standard": "Standard", "eco": "Eco"}
         rec_label = tier_labels.get(hw_info["recommended_tier"], "Standard")
         self.hw_tier_badge = _make_label(
-            f"Profilo: {tier_labels.get(saved_tier, 'Auto')}"
-            + (f" ({rec_label})" if saved_tier == "auto" else ""),
+            f"Profilo: {tier_labels.get(saved_tier, 'Automatico')}"
+            + (f" · {rec_label}" if saved_tier == "auto" else ""),
             "BadgeAccent",
         )
         hw_top.addWidget(self.hw_tier_badge)
-        hw_layout.addLayout(hw_top)
+        hw_sec.addLayout(hw_top)
 
-        hw_badge = _make_label(hw_info["badge_text"], "Badge")
-        hw_layout.addWidget(hw_badge)
-        hw_layout.addWidget(_make_label(hw_info["detail_text"], "PageSubtitle", wrap=True))
+        hw_status_row = QHBoxLayout()
+        hw_status_row.setSpacing(8)
+        self.hw_dot_lbl = QLabel()
+        self.hw_dot_lbl.setFixedSize(12, 12)
+        hw_status_row.addWidget(self.hw_dot_lbl)
+        self.hw_badge_lbl = _make_label(hw_info["badge_text"], "CardBody")
+        hw_status_row.addWidget(self.hw_badge_lbl, 1)
+        hw_sec.addLayout(hw_status_row)
+        self.hw_detail_lbl = _make_label(hw_info["detail_text"], "PageSubtitle", wrap=True)
+        hw_sec.addWidget(self.hw_detail_lbl)
 
         tier_row = QHBoxLayout()
         tier_row.setSpacing(6)
-        tier_row.addWidget(_make_label("Profilo Attivo:", "CardBody"))
+        tier_row.addWidget(_make_label("Profilo Attivo", "CardBody"))
         self._tier_grp = QButtonGroup(self)
         self._tier_grp.setExclusive(True)
         for idx, (t_key, t_lbl) in enumerate([
-            ("auto", "Auto"),
+            ("auto", "Automatico"),
             ("pro", "Pro"),
             ("standard", "Standard"),
             ("eco", "Eco"),
@@ -426,24 +472,24 @@ class HubSettingsDialog(QDialog):
             self._tier_grp.addButton(btn, idx)
             tier_row.addWidget(btn)
         tier_row.addStretch(1)
-        hw_layout.addLayout(tier_row)
-        layout.addWidget(hw_card)
+        hw_sec.addLayout(tier_row)
+        layout.addLayout(hw_sec)
 
-        # 2. Card Provider AI, Modello Locale & Gemini BYOK
-        ai_card, ai_layout = _make_card()
-        ai_layout.addWidget(_make_label("Configurazione Motore AI", "CardTitle"))
+        layout.addWidget(_make_divider())
 
-        # Provider AI
-        prov_lbl = _make_label("Provider AI:", "CardBody")
-        ai_layout.addWidget(prov_lbl)
+        # 2. Configurazione Motore AI
+        ai_sec = QVBoxLayout()
+        ai_sec.setSpacing(12)
+        ai_sec.addWidget(_make_label("Configurazione Motore AI", "CardTitle"))
+
         saved_provider = db.get_setting("ai_provider", "local") or "local"
         self._provider_grp = QButtonGroup(self)
         self._provider_grp.setExclusive(True)
         prov_row = QHBoxLayout()
-        prov_row.setSpacing(6)
+        prov_row.setSpacing(8)
         for idx, (p_key, p_lbl) in enumerate([
-            ("local", "Locale (Ollama)"),
-            ("gemini", "Cloud (Google Gemini BYOK)"),
+            ("local", "Locale"),
+            ("gemini", "Cloud Gemini"),
             ("hybrid", "Ibrido"),
         ]):
             btn = QPushButton(p_lbl)
@@ -455,69 +501,86 @@ class HubSettingsDialog(QDialog):
             btn.clicked.connect(lambda _c=False, k=p_key: self._on_ai_provider_changed(k))
             self._provider_grp.addButton(btn, idx)
             prov_row.addWidget(btn)
-        ai_layout.addLayout(prov_row)
+        ai_sec.addLayout(prov_row)
 
-        # Modello Locale
         mod_row = QHBoxLayout()
-        mod_row.setSpacing(8)
-        mod_row.addWidget(_make_label("Modello Locale:", "CardBody"))
+        mod_row.setSpacing(10)
+        mod_lbl = _make_label("Modello Locale", "CardBody")
+        mod_lbl.setMinimumWidth(115)
+        mod_row.addWidget(mod_lbl)
         self.local_model_combo = QComboBox()
         self.local_model_combo.setMinimumHeight(34)
-        self.local_model_combo.addItem("qwen3.5:4b (Consigliato)", "qwen3.5:4b")
-        self.local_model_combo.addItem("qwen3.5:9b (Alta Precisione)", "qwen3.5:9b")
-        self.local_model_combo.addItem("qwen3.5:2b (Leggero)", "qwen3.5:2b")
+        self.local_model_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.local_model_combo.addItem("qwen3.5:4b · Consigliato", "qwen3.5:4b")
+        self.local_model_combo.addItem("qwen3.5:9b · Alta Precisione", "qwen3.5:9b")
+        self.local_model_combo.addItem("qwen3.5:2b · Leggero", "qwen3.5:2b")
         saved_model = db.get_setting("whis_model_mode", "qwen3.5:4b") or "qwen3.5:4b"
         m_idx = self.local_model_combo.findData(saved_model)
         if m_idx >= 0:
             self.local_model_combo.setCurrentIndex(m_idx)
         self.local_model_combo.currentIndexChanged.connect(self._on_local_model_changed)
         mod_row.addWidget(self.local_model_combo, 1)
-        ai_layout.addLayout(mod_row)
+        ai_sec.addLayout(mod_row)
 
-        # Chiave API Gemini (Opzionale)
-        ai_layout.addWidget(_make_label("Chiave API Gemini (Opzionale):", "CardBody"))
         key_row = QHBoxLayout()
         key_row.setSpacing(6)
+        key_lbl = _make_label("Chiave Gemini", "CardBody")
+        key_lbl.setMinimumWidth(115)
+        key_row.addWidget(key_lbl)
         self.gemini_key_edit = QLineEdit()
         self.gemini_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.gemini_key_edit.setPlaceholderText("AIza... (chiave personale Google AI Studio)")
+        self.gemini_key_edit.setPlaceholderText("AIza... (opzionale)")
         self.gemini_key_edit.setText(db.get_setting("gemini_api_key", "") or "")
         self.gemini_key_edit.editingFinished.connect(self._on_gemini_key_saved)
         key_row.addWidget(self.gemini_key_edit, 1)
 
-        self.gemini_eye_btn = _make_button("👁️")
+        self.gemini_eye_btn = _make_button("", "ghost")
         self.gemini_eye_btn.setCheckable(True)
-        self.gemini_eye_btn.setToolTip("Mostra / nascondi chiave API")
+        self.gemini_eye_btn.setFixedWidth(36)
+        self.gemini_eye_btn.setToolTip("Mostra o nascondi chiave API")
         self.gemini_eye_btn.toggled.connect(self._on_toggle_gemini_eye)
         key_row.addWidget(self.gemini_eye_btn)
 
         self.gemini_verify_btn = _make_button("Verifica", "primary")
         self.gemini_verify_btn.clicked.connect(self._on_verify_gemini_key)
         key_row.addWidget(self.gemini_verify_btn)
-        ai_layout.addLayout(key_row)
+        ai_sec.addLayout(key_row)
 
+        self.gemini_status_row = QWidget()
+        gs_layout = QHBoxLayout(self.gemini_status_row)
+        gs_layout.setContentsMargins(0, 2, 0, 0)
+        gs_layout.setSpacing(6)
+        self.gemini_status_icon = QLabel()
+        self.gemini_status_icon.setFixedSize(16, 16)
+        self.gemini_status_icon.setVisible(False)
+        gs_layout.addWidget(self.gemini_status_icon)
         self.gemini_status_lbl = _make_label("", "PageSubtitle", wrap=True)
-        self.gemini_status_lbl.setVisible(False)
-        ai_layout.addWidget(self.gemini_status_lbl)
+        gs_layout.addWidget(self.gemini_status_lbl, 1)
+        self.gemini_status_row.setVisible(False)
+        ai_sec.addWidget(self.gemini_status_row)
 
-        # Sezione collassabile: Impostazioni Avanzate
-        self.adv_toggle_btn = QPushButton("▸ Impostazioni Avanzate")
+        # Sezione collassabile animata: Impostazioni Avanzate
+        self.adv_toggle_btn = QPushButton(" Impostazioni Avanzate")
         self.adv_toggle_btn.setObjectName("CollapseToggle")
         self.adv_toggle_btn.setCheckable(True)
         self.adv_toggle_btn.setChecked(False)
+        self.adv_toggle_btn.setIconSize(QSize(13, 13))
         self.adv_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.adv_toggle_btn.toggled.connect(self._on_toggle_advanced_ai)
-        ai_layout.addWidget(self.adv_toggle_btn)
+        ai_sec.addWidget(self.adv_toggle_btn)
 
         self.adv_container = QWidget()
+        self.adv_container.setMaximumHeight(0)
         self.adv_container.setVisible(False)
         adv_layout = QVBoxLayout(self.adv_container)
-        adv_layout.setContentsMargins(8, 4, 0, 2)
-        adv_layout.setSpacing(8)
+        adv_layout.setContentsMargins(12, 6, 0, 4)
+        adv_layout.setSpacing(10)
 
         ep_row = QHBoxLayout()
         ep_row.setSpacing(8)
-        ep_row.addWidget(_make_label("Endpoint Ollama:", "PageSubtitle"))
+        ep_lbl = _make_label("Endpoint Ollama", "PageSubtitle")
+        ep_lbl.setMinimumWidth(115)
+        ep_row.addWidget(ep_lbl)
         self.ollama_url_edit = QLineEdit()
         self.ollama_url_edit.setText(db.get_setting("ollama_base_url", "http://localhost:11434") or "http://localhost:11434")
         self.ollama_url_edit.editingFinished.connect(
@@ -528,11 +591,14 @@ class HubSettingsDialog(QDialog):
 
         gm_row = QHBoxLayout()
         gm_row.setSpacing(8)
-        gm_row.addWidget(_make_label("Modello Gemini:", "PageSubtitle"))
+        gm_lbl = _make_label("Modello Gemini", "PageSubtitle")
+        gm_lbl.setMinimumWidth(115)
+        gm_row.addWidget(gm_lbl)
         self.gemini_model_combo = QComboBox()
         self.gemini_model_combo.setMinimumHeight(32)
-        self.gemini_model_combo.addItem("gemini-2.5-flash (Consigliato)", "gemini-2.5-flash")
-        self.gemini_model_combo.addItem("gemini-2.5-pro (Ragionamento Avanzato)", "gemini-2.5-pro")
+        self.gemini_model_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.gemini_model_combo.addItem("gemini-2.5-flash · Consigliato", "gemini-2.5-flash")
+        self.gemini_model_combo.addItem("gemini-2.5-pro · Ragionamento", "gemini-2.5-pro")
         saved_gm = db.get_setting("gemini_model", "gemini-2.5-flash") or "gemini-2.5-flash"
         gm_idx = self.gemini_model_combo.findData(saved_gm)
         if gm_idx >= 0:
@@ -543,15 +609,16 @@ class HubSettingsDialog(QDialog):
         gm_row.addWidget(self.gemini_model_combo, 1)
         adv_layout.addLayout(gm_row)
 
-        self.hybrid_fallback_chk = QCheckBox("Fallback automatico su Ollama locale se Gemini Cloud è offline")
+        self.hybrid_fallback_chk = QCheckBox("Fallback su Ollama locale quando Cloud non è raggiungibile")
+        self.hybrid_fallback_chk.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hybrid_fallback_chk.setChecked((db.get_setting("ai_hybrid_fallback", "1") or "1") == "1")
         self.hybrid_fallback_chk.toggled.connect(
             lambda chk: db.set_setting("ai_hybrid_fallback", "1" if chk else "0")
         )
         adv_layout.addWidget(self.hybrid_fallback_chk)
 
-        ai_layout.addWidget(self.adv_container)
-        layout.addWidget(ai_card)
+        ai_sec.addWidget(self.adv_container)
+        layout.addLayout(ai_sec)
         layout.addStretch(1)
         return page
 
@@ -561,123 +628,134 @@ class HubSettingsDialog(QDialog):
     def _build_audio_shortcuts_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 6, 6)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 8, 8)
+        layout.setSpacing(20)
 
-        layout.addWidget(_make_label("🎙️ Audio & Scorciatoie", "PageTitle"))
+        layout.addWidget(_make_label("Audio & Scorciatoie", "PageTitle"))
 
         # 1. Audio & Feedback
-        audio_card, ac_layout = _make_card()
-        ac_layout.addWidget(_make_label("Audio & Dettatura", "CardTitle"))
+        audio_sec = QVBoxLayout()
+        audio_sec.setSpacing(10)
+        audio_sec.addWidget(_make_label("Audio & Dettatura", "CardTitle"))
 
-        self.auto_duck_checkbox = QCheckBox("Abbassa automaticamente la musica durante la dettatura (Auto-Ducking)")
+        self.auto_duck_checkbox = QCheckBox("Abbassa automaticamente i volumi di sistema durante la dettatura")
         self.auto_duck_checkbox.setChecked(audio_ducker.is_enabled())
         self.auto_duck_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
         self.auto_duck_checkbox.toggled.connect(self._on_auto_duck_toggled)
-        ac_layout.addWidget(self.auto_duck_checkbox)
+        audio_sec.addWidget(self.auto_duck_checkbox)
 
         fb_row = QHBoxLayout()
-        fb_row.setSpacing(8)
-        fb_row.addWidget(_make_label("Feedback Audio Whis:", "CardBody"))
+        fb_row.setSpacing(10)
+        fb_lbl = _make_label("Feedback Whis", "CardBody")
+        fb_lbl.setMinimumWidth(115)
+        fb_row.addWidget(fb_lbl)
         self.settings_audio_combo = QComboBox()
         self.settings_audio_combo.setMinimumHeight(32)
-        self.settings_audio_combo.addItem("Muto (Default)", MODE_MUTE)
+        self.settings_audio_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_audio_combo.addItem("Muto", MODE_MUTE)
         self.settings_audio_combo.addItem("Suono Morbido", MODE_SOFT_CHIME)
-        self.settings_audio_combo.addItem("Voce (TTS)", MODE_VOICE)
+        self.settings_audio_combo.addItem("Voce TTS", MODE_VOICE)
         cur_fb_idx = self.settings_audio_combo.findData(audio_feedback.get_mode())
         if cur_fb_idx >= 0:
             self.settings_audio_combo.setCurrentIndex(cur_fb_idx)
         self.settings_audio_combo.currentIndexChanged.connect(self._on_settings_audio_mode_changed)
         fb_row.addWidget(self.settings_audio_combo, 1)
-        ac_layout.addLayout(fb_row)
-        layout.addWidget(audio_card)
+        audio_sec.addLayout(fb_row)
+        layout.addLayout(audio_sec)
+
+        layout.addWidget(_make_divider())
 
         # 2. Scorciatoie Tastiera & Comandi Vocali
-        sc_card, sc_layout = _make_card()
-        sc_layout.addWidget(_make_label("Scorciatoie & Comandi Vocali", "CardTitle"))
+        sc_sec = QVBoxLayout()
+        sc_sec.setSpacing(10)
+        sc_sec.addWidget(_make_label("Scorciatoie & Comandi Vocali", "CardTitle"))
 
         shortcuts = [
-            ("Shift Destro", "Push-to-Talk principale (tieni premuto per dettare)"),
-            ("2× Shift Destro", "Attiva / disattiva modalità Mani Libere (Hands-Free)"),
+            ("Shift Destro", "Push-to-Talk principale"),
+            ("2× Shift Destro", "Attiva / disattiva Mani Libere"),
             ("F8", "Scorciatoia secondaria Push-to-Talk"),
-            ("\"Whis...\"", "Pronuncia all'inizio della dettatura per interrogare l'assistente"),
+            ("«Whis...»", "Avvia una richiesta all'assistente vocale"),
         ]
         for key_txt, desc_txt in shortcuts:
             row = QHBoxLayout()
-            row.setSpacing(10)
+            row.setSpacing(12)
             key_lbl = _make_label(key_txt, "ShortcutKey")
-            key_lbl.setMinimumWidth(120)
+            key_lbl.setMinimumWidth(124)
             key_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             row.addWidget(key_lbl)
             row.addWidget(_make_label(desc_txt, "CardBody", wrap=True), 1)
-            sc_layout.addLayout(row)
+            sc_sec.addLayout(row)
 
-        layout.addWidget(sc_card)
+        layout.addLayout(sc_sec)
         layout.addStretch(1)
         return page
 
     # -----------------------------------------------------------------
-    # SEZIONE 3: GOOGLE & GRUPPI (BLOCCO 6)
+    # SEZIONE 3: GOOGLE & GRUPPI
     # -----------------------------------------------------------------
     def _build_google_groups_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 0, 6, 6)
-        layout.setSpacing(12)
+        layout.setContentsMargins(0, 0, 8, 8)
+        layout.setSpacing(20)
 
-        layout.addWidget(_make_label("☁️ Google & Gruppi", "PageTitle"))
+        layout.addWidget(_make_label("Google & Gruppi", "PageTitle"))
 
-        # 1. Stato Connessione Google & Calendar FlowTime
-        gcal_card, gc_layout = _make_card()
+        # 1. Account Google & Calendar FlowTime
+        gcal_sec = QVBoxLayout()
+        gcal_sec.setSpacing(10)
         gc_top = QHBoxLayout()
         gc_top.setSpacing(8)
-        gc_top.addWidget(_make_label("🗓️ Account Google & Calendar FlowTime", "CardTitle"))
+        gc_top.addWidget(_make_label("Google Calendar", "CardTitle"))
         gc_top.addStretch(1)
         self.gcal_account_badge = _make_label("Verifica...", "Badge")
         gc_top.addWidget(self.gcal_account_badge)
-        gc_layout.addLayout(gc_top)
+        gcal_sec.addLayout(gc_top)
 
-        self.gcal_status_lbl = _make_label("", "CardBody", wrap=True)
-        gc_layout.addWidget(self.gcal_status_lbl)
+        self.gcal_status_lbl = _make_label("", "PageSubtitle", wrap=True)
+        gcal_sec.addWidget(self.gcal_status_lbl)
 
         gc_btns = QHBoxLayout()
         gc_btns.setSpacing(8)
-        self.gcal_sync_btn = _make_button("🔄 Sincronizza Ora", "primary")
+        self.gcal_sync_btn = _make_button("Sincronizza", "primary")
         self.gcal_sync_btn.clicked.connect(self._on_sync_gcal)
         gc_btns.addWidget(self.gcal_sync_btn)
 
-        self.gcal_connect_btn = _make_button("📅 Riconnetti / Cambia Account")
+        self.gcal_connect_btn = _make_button("Cambia Account", "ghost")
         self.gcal_connect_btn.clicked.connect(self._on_connect_gcal)
         gc_btns.addWidget(self.gcal_connect_btn)
         gc_btns.addStretch(1)
-        gc_layout.addLayout(gc_btns)
-        layout.addWidget(gcal_card)
+        gcal_sec.addLayout(gc_btns)
+        layout.addLayout(gcal_sec)
 
-        # 2. Stato Google Drive (FlowGroups / PWA)
-        drive_card, dc_layout = _make_card()
+        layout.addWidget(_make_divider())
+
+        # 2. Google Drive & Gruppi
+        drive_sec = QVBoxLayout()
+        drive_sec.setSpacing(10)
         dc_top = QHBoxLayout()
         dc_top.setSpacing(8)
-        dc_top.addWidget(_make_label("📁 Google Drive & Gruppi (FlowGroups / PWA)", "CardTitle"))
+        dc_top.addWidget(_make_label("Google Drive & FlowGroups", "CardTitle"))
         dc_top.addStretch(1)
-        self.drive_status_badge = _make_label("Attivo", "BadgeAccent")
+        self.drive_status_badge = _make_label("Pronto", "BadgeAccent")
         dc_top.addWidget(self.drive_status_badge)
-        dc_layout.addLayout(dc_top)
+        drive_sec.addLayout(dc_top)
 
-        self.drive_status_lbl = _make_label("", "CardBody", wrap=True)
-        dc_layout.addWidget(self.drive_status_lbl)
+        self.drive_status_lbl = _make_label("", "PageSubtitle", wrap=True)
+        drive_sec.addWidget(self.drive_status_lbl)
 
         dc_btns = QHBoxLayout()
         dc_btns.setSpacing(8)
-        self.drive_sync_btn = _make_button("🔄 Sincronizza Ora", "primary")
+        self.drive_sync_btn = _make_button("Sincronizza", "primary")
         self.drive_sync_btn.clicked.connect(self._on_sync_drive_now)
         dc_btns.addWidget(self.drive_sync_btn)
 
-        self.drive_folder_btn = _make_button("📁 Cambia Cartella Drive")
+        self.drive_folder_btn = _make_button("Cambia Cartella", "ghost")
         self.drive_folder_btn.clicked.connect(self._on_change_drive_folder)
         dc_btns.addWidget(self.drive_folder_btn)
         dc_btns.addStretch(1)
-        dc_layout.addLayout(dc_btns)
-        layout.addWidget(drive_card)
+        drive_sec.addLayout(dc_btns)
+        layout.addLayout(drive_sec)
 
         layout.addStretch(1)
         self._refresh_gcal_status()
@@ -702,6 +780,7 @@ class HubSettingsDialog(QDialog):
     def _on_theme_pill_clicked(self, theme_key: str):
         self.hub._set_theme(theme_key)
         self.setStyleSheet(self.hub.styleSheet())
+        self._refresh_icons()
 
     def _on_font_preset_selected(self, preset_key: str):
         if preset_key == "custom":
@@ -740,9 +819,14 @@ class HubSettingsDialog(QDialog):
 
     def _on_hardware_tier_changed(self, tier_key: str, rec_label: str):
         db.set_setting("hardware_tier", tier_key)
-        tier_labels = {"auto": "Auto", "pro": "Pro", "standard": "Standard", "eco": "Eco"}
-        suffix = f" ({rec_label})" if tier_key == "auto" else ""
-        self.hw_tier_badge.setText(f"Profilo: {tier_labels.get(tier_key, 'Auto')}{suffix}")
+        tier_labels = {"auto": "Automatico", "pro": "Pro", "standard": "Standard", "eco": "Eco"}
+        suffix = f" · {rec_label}" if tier_key == "auto" else ""
+        self.hw_tier_badge.setText(f"Profilo: {tier_labels.get(tier_key, 'Automatico')}{suffix}")
+        hw = detect_hardware()
+        resolved = hw.recommended_tier if tier_key == "auto" else HardwareTier(tier_key)
+        prof = build_profile(resolved, hw)
+        self.hw_badge_lbl.setText(prof.badge_text)
+        self.hw_detail_lbl.setText(prof.detail_text)
 
     def _on_ai_provider_changed(self, provider_key: str):
         db.set_setting("ai_provider", provider_key)
@@ -765,6 +849,10 @@ class HubSettingsDialog(QDialog):
         self.gemini_key_edit.setEchoMode(
             QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password
         )
+        tkey = getattr(self.hub, "_current_theme", "obsidian")
+        self.gemini_eye_btn.setIcon(
+            get_icon("eye_off" if checked else "eye", theme_key=tkey, role="subtitle", size=15)
+        )
 
     def _on_gemini_key_saved(self):
         db.set_setting("gemini_api_key", self.gemini_key_edit.text().strip())
@@ -772,64 +860,79 @@ class HubSettingsDialog(QDialog):
     def _on_verify_gemini_key(self):
         key = self.gemini_key_edit.text().strip()
         db.set_setting("gemini_api_key", key)
-        self.gemini_status_lbl.setVisible(True)
+        self.gemini_status_row.setVisible(True)
+        self.gemini_status_icon.setVisible(False)
         if not key:
-            self.gemini_status_lbl.setText("⚠️ Inserisci una chiave API Gemini prima di verificare.")
+            tkey = getattr(self.hub, "_current_theme", "obsidian")
+            self.gemini_status_icon.setPixmap(get_pixmap("close", theme_key=tkey, role="danger", size=14))
+            self.gemini_status_icon.setVisible(True)
+            self.gemini_status_lbl.setText("Inserisci una chiave API Gemini prima di verificare.")
+            return
+
+        if self._gemini_verify_worker is not None and self._gemini_verify_worker.isRunning():
             return
 
         self.gemini_verify_btn.setEnabled(False)
-        self.gemini_status_lbl.setText("⏳ Verifica chiave Gemini in corso...")
+        self.gemini_status_lbl.setText("Verifica in corso...")
+        model = (self.gemini_model_combo.currentData() or "gemini-2.5-flash") if hasattr(self, "gemini_model_combo") else "gemini-2.5-flash"
 
-        def _check():
-            import urllib.request
-            import urllib.error
-            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
-            try:
-                req = urllib.request.Request(url, method="GET")
-                with urllib.request.urlopen(req, timeout=6) as resp:
-                    ok = resp.status == 200
-                msg = "🟢 Chiave API Gemini valida e verificata!" if ok else f"⚠️ Risposta inattesa ({resp.status})."
-            except urllib.error.HTTPError as he:
-                msg = f"🔴 Chiave non valida o non autorizzata (HTTP {he.code})."
-            except Exception as exc:
-                msg = f"🟡 Impossibile raggiungere Google AI Studio (rete offline?): {exc}"
-            QTimer.singleShot(0, lambda: self._on_verify_gemini_done(msg))
+        worker = _GeminiVerifyWorker(key, str(model), parent=self)
+        worker.verifyFinished.connect(self._on_verify_gemini_done, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(worker.deleteLater)
+        self._gemini_verify_worker = worker
+        worker.start()
 
-        threading.Thread(target=_check, daemon=True, name="VerifyGeminiKeyThread").start()
-
-    def _on_verify_gemini_done(self, msg: str):
+    def _on_verify_gemini_done(self, ok: bool, msg: str):
         self.gemini_verify_btn.setEnabled(True)
-        self.gemini_status_lbl.setVisible(True)
+        self.gemini_status_row.setVisible(True)
+        tkey = getattr(self.hub, "_current_theme", "obsidian")
+        icon_name = "check" if ok else "close"
+        role = "success" if ok else "danger"
+        self.gemini_status_icon.setPixmap(get_pixmap(icon_name, theme_key=tkey, role=role, size=14))
+        self.gemini_status_icon.setVisible(True)
         self.gemini_status_lbl.setText(msg)
+        self._gemini_verify_worker = None
 
     def _on_toggle_advanced_ai(self, checked: bool):
-        self.adv_toggle_btn.setText("▾ Impostazioni Avanzate" if checked else "▸ Impostazioni Avanzate")
-        self.adv_container.setVisible(bool(checked))
+        tkey = getattr(self.hub, "_current_theme", "obsidian")
+        self.adv_toggle_btn.setIcon(
+            get_icon("caret_down" if checked else "caret_right", theme_key=tkey, role="subtitle", size=13)
+        )
+        if self._adv_anim is not None:
+            self._adv_anim.stop()
+
+        target_h = self.adv_container.sizeHint().height() + 12 if checked else 0
+        if checked:
+            self.adv_container.setVisible(True)
+
+        anim = QPropertyAnimation(self.adv_container, b"maximumHeight", self)
+        anim.setDuration(140)
+        anim.setStartValue(self.adv_container.maximumHeight())
+        anim.setEndValue(target_h)
+        anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        if not checked:
+            anim.finished.connect(lambda: self.adv_container.setVisible(False))
+        else:
+            anim.finished.connect(lambda: self.adv_container.setMaximumHeight(16777215))
+        self._adv_anim = anim
+        anim.start()
 
     def _refresh_gcal_status(self):
         from core.calendar_sync import calendar_manager
         if calendar_manager.has_token_file():
-            self.gcal_account_badge.setText("🟢 Connesso")
-            self.gcal_status_lbl.setText(
-                "Account Google collegato: la sincronizzazione bidirezionale con FlowTime avviene in background, "
-                "mentre Whis legge istantaneamente da SQLite."
-            )
-            self.gcal_connect_btn.setText("📅 Riconnetti / Cambia Account")
+            self.gcal_account_badge.setText("Connesso")
+            self.gcal_status_lbl.setText("Connesso • Calendario FlowTime sincronizzato.")
+            self.gcal_connect_btn.setText("Cambia Account")
             self.gcal_sync_btn.setEnabled(True)
         elif calendar_manager.has_credentials_file():
-            self.gcal_account_badge.setText("🟡 Da Autorizzare")
-            self.gcal_status_lbl.setText(
-                "File credentials.json rilevato: clicca su 'Riconnetti / Cambia Account' per autorizzare l'accesso Google."
-            )
-            self.gcal_connect_btn.setText("📅 Connetti Google")
+            self.gcal_account_badge.setText("Da autorizzare")
+            self.gcal_status_lbl.setText("Autorizza l'account Google per attivare la sincronizzazione.")
+            self.gcal_connect_btn.setText("Connetti Google")
             self.gcal_sync_btn.setEnabled(False)
         else:
-            self.gcal_account_badge.setText("⚪ Solo Locale")
-            self.gcal_status_lbl.setText(
-                "Modalità 100% Locale attiva: FlowTime e Whis funzionano istantaneamente offline. "
-                "Aggiungi credentials.json per abilitare Google Calendar."
-            )
-            self.gcal_connect_btn.setText("📅 Configura Google")
+            self.gcal_account_badge.setText("Solo Locale")
+            self.gcal_status_lbl.setText("Modalità offline attiva. Aggiungi credentials.json per collegare Google.")
+            self.gcal_connect_btn.setText("Configura Google")
             self.gcal_sync_btn.setEnabled(False)
 
     def _on_connect_gcal(self):
@@ -838,7 +941,7 @@ class HubSettingsDialog(QDialog):
 
     def _on_sync_gcal(self):
         self.hub._on_ft_sync_google_clicked()
-        self.gcal_status_lbl.setText("⏳ Sincronizzazione con Google Calendar avviata in background...")
+        self.gcal_status_lbl.setText("Sincronizzazione in corso...")
 
     def _refresh_drive_status(self):
         sync_dir = cloud_sync.get_sync_base_dir()
@@ -846,32 +949,27 @@ class HubSettingsDialog(QDialog):
         outbox_lib = os.path.join(cloud_sync.get_outbox_study_dir(), "library.json")
         lib_ok = os.path.exists(outbox_lib)
         self.drive_status_badge.setText(
-            f"🟢 {pending} in coda" if pending > 0 else ("🟢 Sincronizzato" if lib_ok else "🟡 Pronto")
+            f"{pending} in coda" if pending > 0 else ("Sincronizzato" if lib_ok else "Pronto")
         )
-        self.drive_status_lbl.setText(
-            f"Cartella Drive: {sync_dir}\n"
-            f"Coda audio in attesa: {pending} · Indice PWA (library.json): "
-            f"{'Presente' if lib_ok else 'Da generare'}"
-        )
+        self.drive_status_lbl.setText(f"Cartella: {sync_dir}")
 
     def _on_sync_drive_now(self):
         try:
             cloud_sync.generate_library_json()
             self._refresh_drive_status()
             self.drive_status_lbl.setText(
-                self.drive_status_lbl.text() + "\n✅ Indice library.json aggiornato per Google Drive / PWA."
+                f"{self.drive_status_lbl.text()} • Indice aggiornato."
             )
         except Exception as exc:
-            self.drive_status_lbl.setText(f"⚠️ Errore sincronizzazione Drive: {exc}")
+            self.drive_status_lbl.setText(f"Errore sincronizzazione: {exc}")
 
     def _on_change_drive_folder(self):
         current_dir = cloud_sync.get_sync_base_dir()
         chosen = QFileDialog.getExistingDirectory(
             self,
-            "Seleziona cartella sincronizzata Google Drive (FlowLocal_Sync)",
+            "Seleziona cartella Google Drive",
             current_dir,
         )
         if chosen:
             cloud_sync.set_sync_base_dir(chosen)
             self._refresh_drive_status()
-

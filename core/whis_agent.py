@@ -25,6 +25,12 @@ import pyperclip
 from typing import Callable, Optional, List, Dict, Tuple, Any
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from core.gemini_client import (
+    get_ai_routing_config,
+    should_use_gemini,
+    stream_generate_content as gemini_stream_generate,
+)
+
 # Import per Screen OCR e Visione Schermo
 try:
     import mss
@@ -1315,7 +1321,6 @@ class WhisAgent(QObject):
             on_metadata(metadata)
 
         selected_model = self.select_model(user_prompt)
-        self.set_status(f"Elaborazione con {selected_model}...", user_prompt)
 
         system_content = WHIS_SYSTEM_PROMPT
         if metadata.get("screen_ocr"):
@@ -1331,84 +1336,130 @@ class WhisAgent(QObject):
         # Inietta gli ultimi scambi della sessione (fino a 10 messaggi = 5 scambi)
         messages.extend(self.history[-10:])
         user_msg: Dict[str, Any] = {"role": "user", "content": prompt_with_context}
-        if screen_attached and getattr(self, "_last_screen_b64", ""):
-            user_msg["images"] = [self._last_screen_b64]
+        screen_b64 = getattr(self, "_last_screen_b64", "") if screen_attached else ""
+        if screen_b64:
+            user_msg["images"] = [screen_b64]
             metadata["vision_image"] = True
         messages.append(user_msg)
 
-        payload = {
-            "model": selected_model,
-            "messages": messages,
-            "stream": True,
-            "think": False,
-            "keep_alive": "30m",
-            "options": {
-                "temperature": 0.45,
-                "top_p": 0.9,
-            }
-        }
+        routing_cfg = get_ai_routing_config()
+        if screen_b64:
+            task_type = "whis_screen"
+        elif DEEP_ANALYSIS_KEYWORDS.search(user_prompt or ""):
+            task_type = "whis_deep"
+        else:
+            task_type = "whis_chat"
+        use_gemini = should_use_gemini(task_type)
 
         full_response: List[str] = []
         actual_model = selected_model
+        gemini_succeeded = False
 
-        try:
-            req = urllib.request.Request(
-                OLLAMA_API_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=30.0) as resp:
-                for line in resp:
-                    if not line:
-                        continue
-                    try:
-                        chunk_obj = json.loads(line.decode("utf-8"))
-                        delta = chunk_obj.get("message", {}).get("content", "")
-                        if delta:
-                            full_response.append(delta)
-                            on_chunk(delta)
-                        if chunk_obj.get("done", False):
-                            break
-                    except Exception:
-                        pass
-        except Exception as e:
-            # Se il modello profondo fallisce o non risponde, fallback immediato su qwen3.5:4b
-            if selected_model != self.default_model and self.model_mode != "qwen3.5:9b":
-                try:
-                    payload["model"] = self.default_model
-                    actual_model = self.default_model
-                    self.set_status(f"Fallback su {self.default_model}...", user_prompt)
-                    req = urllib.request.Request(
-                        OLLAMA_API_URL,
-                        data=json.dumps(payload).encode("utf-8"),
-                        headers={"Content-Type": "application/json"}
-                    )
-                    with urllib.request.urlopen(req, timeout=20.0) as resp:
-                        for line in resp:
-                            if not line:
-                                continue
-                            try:
-                                chunk_obj = json.loads(line.decode("utf-8"))
-                                delta = chunk_obj.get("message", {}).get("content", "")
-                                if delta:
-                                    full_response.append(delta)
-                                    on_chunk(delta)
-                                if chunk_obj.get("done", False):
-                                    break
-                            except Exception:
-                                pass
-                except Exception as fallback_err:
-                    err_text = f"Errore di comunicazione con Ollama ({self.default_model}): {fallback_err}"
+        if use_gemini:
+            gem_model = routing_cfg.get("gemini_model") or "gemini-2.5-flash"
+            actual_model = gem_model
+            self.set_status(f"Elaborazione con {gem_model}...", user_prompt)
+            try:
+                img_bytes = base64.b64decode(screen_b64) if screen_b64 else None
+                gem_messages = list(self.history[-10:]) + [{"role": "user", "content": prompt_with_context}]
+                for delta in gemini_stream_generate(
+                    gem_messages,
+                    system_instruction=system_content,
+                    image_bytes=img_bytes,
+                    image_mime="image/png",
+                    temperature=0.45,
+                    max_output_tokens=2048,
+                    model=gem_model,
+                    timeout=30.0,
+                ):
+                    full_response.append(delta)
+                    on_chunk(delta)
+                if full_response:
+                    gemini_succeeded = True
+            except Exception as gem_err:
+                print(f"[WhisAgent] Gemini BYOK non raggiungibile ({gem_err}).")
+                if not routing_cfg.get("hybrid_fallback", True):
+                    err_text = f"Errore di comunicazione con Gemini ({gem_model}): {gem_err}"
                     self.set_status("Errore", user_prompt)
                     if on_error:
                         on_error(err_text)
                     return ""
-            else:
-                err_text = f"Errore di comunicazione con Ollama ({selected_model}): {e}"
-                self.set_status("Errore", user_prompt)
-                if on_error:
-                    on_error(err_text)
-                return ""
+                full_response.clear()
+                actual_model = selected_model
+
+        if not gemini_succeeded:
+            self.set_status(f"Elaborazione con {selected_model}...", user_prompt)
+            ollama_url = routing_cfg.get("ollama_chat_url") or OLLAMA_API_URL
+            payload = {
+                "model": selected_model,
+                "messages": messages,
+                "stream": True,
+                "think": False,
+                "keep_alive": "30m",
+                "options": {
+                    "temperature": 0.45,
+                    "top_p": 0.9,
+                }
+            }
+
+            try:
+                req = urllib.request.Request(
+                    ollama_url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=30.0) as resp:
+                    for line in resp:
+                        if not line:
+                            continue
+                        try:
+                            chunk_obj = json.loads(line.decode("utf-8"))
+                            delta = chunk_obj.get("message", {}).get("content", "")
+                            if delta:
+                                full_response.append(delta)
+                                on_chunk(delta)
+                            if chunk_obj.get("done", False):
+                                break
+                        except Exception:
+                            pass
+            except Exception as e:
+                # Se il modello profondo fallisce o non risponde, fallback immediato su qwen3.5:4b
+                if selected_model != self.default_model and self.model_mode != "qwen3.5:9b":
+                    try:
+                        payload["model"] = self.default_model
+                        actual_model = self.default_model
+                        self.set_status(f"Fallback su {self.default_model}...", user_prompt)
+                        req = urllib.request.Request(
+                            ollama_url,
+                            data=json.dumps(payload).encode("utf-8"),
+                            headers={"Content-Type": "application/json"}
+                        )
+                        with urllib.request.urlopen(req, timeout=20.0) as resp:
+                            for line in resp:
+                                if not line:
+                                    continue
+                                try:
+                                    chunk_obj = json.loads(line.decode("utf-8"))
+                                    delta = chunk_obj.get("message", {}).get("content", "")
+                                    if delta:
+                                        full_response.append(delta)
+                                        on_chunk(delta)
+                                    if chunk_obj.get("done", False):
+                                        break
+                                except Exception:
+                                    pass
+                    except Exception as fallback_err:
+                        err_text = f"Errore di comunicazione con Ollama ({self.default_model}): {fallback_err}"
+                        self.set_status("Errore", user_prompt)
+                        if on_error:
+                            on_error(err_text)
+                        return ""
+                else:
+                    err_text = f"Errore di comunicazione con Ollama ({selected_model}): {e}"
+                    self.set_status("Errore", user_prompt)
+                    if on_error:
+                        on_error(err_text)
+                    return ""
 
         complete_text = "".join(full_response).strip()
 

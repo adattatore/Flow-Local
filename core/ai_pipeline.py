@@ -51,6 +51,12 @@ from core.audio_analyzer import AudioAnalyzer
 from core.context_detector import detect_active_context
 from core.audio_ducker import audio_ducker, AudioDucker
 from core.clipboard_tracker import dictation_tracker
+from core.hardware_profiler import get_active_profile
+from core.gemini_client import (
+    generate_content as gemini_generate_content,
+    get_ai_routing_config,
+    should_use_gemini,
+)
 
 RECORD_SAMPLE_RATE = 48000
 WHISPER_SAMPLE_RATE = 16000
@@ -720,34 +726,62 @@ class LLMRefiner:
         clean_prompt_text = strip_vocal_fillers(raw_text, capitalize_first=should_cap)
         user_content = f"Testo pronunciato da elaborare:\n<trascrizione>\n{clean_prompt_text}\n</trascrizione>"
 
-        payload = {
-            "model": LLM_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ],
-            "stream": False,
-            "think": False,
-            "keep_alive": "30m",
-            "options": {
-                "repeat_penalty": 1.15,
-                "temperature": 0.0,
-                "num_predict": max(100, len(raw_text.split()) * 3),
-                "stop": ["</trascrizione>"]
-            }
-        }
+        routing_cfg = get_ai_routing_config()
+        hw_profile = get_active_profile()
+        local_model = hw_profile.llm_default_model or LLM_MODEL
+        ollama_url = routing_cfg.get("ollama_chat_url") or OLLAMA_API_URL
+        use_gemini = should_use_gemini("dictation")
 
         qwen_ms = 0
         req_timeout = max(6.0, min(14.0, 6.0 + len(raw_text) / 80.0))
-        try:
-            req = urllib.request.Request(
-                OLLAMA_API_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=req_timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                content = strip_think_blocks(data.get("message", {}).get("content", ""))
+        raw_llm_content = ""
+
+        if use_gemini:
+            try:
+                raw_llm_content = gemini_generate_content(
+                    user_content,
+                    system_instruction=system_prompt,
+                    temperature=0.0,
+                    max_output_tokens=max(120, len(raw_text.split()) * 3),
+                    stop_sequences=["</trascrizione>"],
+                    timeout=req_timeout,
+                )
+            except Exception as gem_exc:
+                print(f"[FlowLocal] Gemini BYOK non raggiungibile in dettatura ({gem_exc}). Fallback su Ollama locale.")
+                raw_llm_content = ""
+
+        if not raw_llm_content and (not use_gemini or routing_cfg.get("hybrid_fallback", True)):
+            payload = {
+                "model": local_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                "stream": False,
+                "think": False,
+                "keep_alive": "30m",
+                "options": {
+                    "repeat_penalty": 1.15,
+                    "temperature": 0.0,
+                    "num_predict": max(100, len(raw_text.split()) * 3),
+                    "stop": ["</trascrizione>"]
+                }
+            }
+            try:
+                req = urllib.request.Request(
+                    ollama_url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=req_timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    raw_llm_content = data.get("message", {}).get("content", "") or ""
+            except Exception:
+                raw_llm_content = ""
+
+        if raw_llm_content:
+            try:
+                content = strip_think_blocks(raw_llm_content)
                 qwen_ms = int((time.time() - t0) * 1000)
 
                 # Rimozione preliminare di qualsiasi tag residuo simile a <trascrizione> (inclusi refusi come </trascrizizione>)
@@ -792,7 +826,7 @@ class LLMRefiner:
                     refined = refined[:-1].rstrip()
 
                 # Guardrail sulla lunghezza anti-allucinazione:
-                # Se Qwen genera spiegazioni, risponde alla domanda o allucina:
+                # Se il modello genera spiegazioni, risponde alla domanda o allucina:
                 # scarta la risposta se supera max(len(raw_text) * 1.45, len(raw_text) + 40)
                 max_allowed_len = max(len(raw_text) * 1.45, len(raw_text) + 40)
                 if len(refined) > max_allowed_len:
@@ -826,8 +860,8 @@ class LLMRefiner:
 
                 if refined:
                     return refined, qwen_ms
-        except Exception:
-            pass
+            except Exception:
+                pass
 
         qwen_ms = int((time.time() - t0) * 1000)
         clean = normalize_phonetic_variants(raw_text)
@@ -992,36 +1026,59 @@ class LLMRefiner:
 
         user_content = f"<trascrizione_lezione>\n{clean_chunk}\n</trascrizione_lezione>"
 
-        # Selezione modello: preferisci qwen3.5:9b per qualità della sbobina, fallback su LLM_MODEL (4B)
+        routing_cfg = get_ai_routing_config()
+        use_gemini = should_use_gemini("lecture_heavy")
         lecture_model = cls.detect_lecture_model()
-        print(f"[FlowLocal Sbobina] Riformattazione blocco con modello: {lecture_model}")
+        raw_content = ""
 
-        payload = {
-            "model": lecture_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ],
-            "stream": False,
-            "think": False,
-            "keep_alive": "30m",
-            "options": {
-                "repeat_penalty": 1.15,
-                "temperature": 0.15,
-                "num_predict": 2048,
-                "stop": ["</trascrizione_lezione>", "</sbobina>", "</trascrizione>"]
+        if use_gemini:
+            try:
+                raw_content = gemini_generate_content(
+                    user_content,
+                    system_instruction=system_prompt,
+                    temperature=0.15,
+                    max_output_tokens=2048,
+                    stop_sequences=["</trascrizione_lezione>", "</sbobina>", "</trascrizione>"],
+                    timeout=50.0,
+                )
+            except Exception as gem_exc:
+                print(f"[FlowLocal Sbobina] Gemini BYOK non raggiungibile ({gem_exc}). Fallback su Ollama locale.")
+                raw_content = ""
+
+        if not raw_content and (not use_gemini or routing_cfg.get("hybrid_fallback", True)):
+            print(f"[FlowLocal Sbobina] Riformattazione blocco con modello: {lecture_model}")
+            payload = {
+                "model": lecture_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                "stream": False,
+                "think": False,
+                "keep_alive": "30m",
+                "options": {
+                    "repeat_penalty": 1.15,
+                    "temperature": 0.15,
+                    "num_predict": 2048,
+                    "stop": ["</trascrizione_lezione>", "</sbobina>", "</trascrizione>"]
+                }
             }
-        }
+            try:
+                req = urllib.request.Request(
+                    routing_cfg.get("ollama_chat_url") or OLLAMA_API_URL,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=50.0) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    raw_content = data.get("message", {}).get("content", "") or ""
+            except Exception as e:
+                print(f"[FlowLocal] Errore riformattazione blocco sbobina LLM ({lecture_model}): {e}")
+                raw_content = ""
 
-        try:
-            req = urllib.request.Request(
-                OLLAMA_API_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=50.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                content = strip_think_blocks(data.get("message", {}).get("content", "") or "")
+        if raw_content:
+            try:
+                content = strip_think_blocks(raw_content)
                 refined = re.sub(r"</?(?:trascrizione_lezione|sbobina|output|result)>\s*", "", content, flags=re.IGNORECASE).strip()
                 refined = refined.rstrip()
                 while refined.endswith('\\'):
@@ -1076,8 +1133,8 @@ class LLMRefiner:
 
                 if refined:
                     return refined
-        except Exception as e:
-            print(f"[FlowLocal] Errore riformattazione blocco sbobina LLM ({lecture_model}): {e}")
+            except Exception as e:
+                print(f"[FlowLocal] Errore post-processing sbobina: {e}")
 
         return clean_chunk
 
@@ -1109,34 +1166,56 @@ class LLMRefiner:
         if len(sample_text) > 8000:
             sample_text = sample_text[:8000] + "\n...(continua)"
 
-        payload = {
-            "model": lecture_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"<testo_lezione>\n{sample_text}\n</testo_lezione>"}
-            ],
-            "stream": False,
-            "think": False,
-            "options": {
-                "temperature": 0.2,
-                "num_predict": 600
-            }
-        }
+        routing_cfg = get_ai_routing_config()
+        use_gemini = should_use_gemini("lecture_heavy")
+        user_msg_text = f"<testo_lezione>\n{sample_text}\n</testo_lezione>"
+        raw_summary = ""
 
-        try:
-            req = urllib.request.Request(
-                OLLAMA_API_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=30.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                summary = strip_think_blocks(data.get("message", {}).get("content") or "")
-                summary = re.sub(r"</?(?:testo_lezione|output|result)>\s*", "", summary, flags=re.IGNORECASE).strip()
-                if summary:
-                    return summary
-        except Exception as e:
-            print(f"[FlowLocal] Errore generazione sommario esecutivo ({lecture_model}): {e}")
+        if use_gemini:
+            try:
+                raw_summary = gemini_generate_content(
+                    user_msg_text,
+                    system_instruction=system_prompt,
+                    temperature=0.2,
+                    max_output_tokens=600,
+                    timeout=30.0,
+                )
+            except Exception as gem_exc:
+                print(f"[FlowLocal] Gemini BYOK non raggiungibile per sommario ({gem_exc}). Fallback su Ollama.")
+                raw_summary = ""
+
+        if not raw_summary and (not use_gemini or routing_cfg.get("hybrid_fallback", True)):
+            payload = {
+                "model": lecture_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg_text}
+                ],
+                "stream": False,
+                "think": False,
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": 600
+                }
+            }
+            try:
+                req = urllib.request.Request(
+                    routing_cfg.get("ollama_chat_url") or OLLAMA_API_URL,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=30.0) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    raw_summary = data.get("message", {}).get("content") or ""
+            except Exception as e:
+                print(f"[FlowLocal] Errore generazione sommario esecutivo ({lecture_model}): {e}")
+                raw_summary = ""
+
+        if raw_summary:
+            summary = strip_think_blocks(raw_summary)
+            summary = re.sub(r"</?(?:testo_lezione|output|result)>\s*", "", summary, flags=re.IGNORECASE).strip()
+            if summary:
+                return summary
 
         return ""
 
@@ -1163,30 +1242,54 @@ class LLMRefiner:
         if len(sample_text) > 9000:
             sample_text = sample_text[:9000]
 
-        payload = {
-            "model": lecture_model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"<testo_lezione>\n{sample_text}\n</testo_lezione>"}
-            ],
-            "stream": False,
-            "think": False,
-            "options": {
-                "temperature": 0.25,
-                "num_predict": 1200
+        routing_cfg = get_ai_routing_config()
+        use_gemini = should_use_gemini("lecture_heavy")
+        user_msg_text = f"<testo_lezione>\n{sample_text}\n</testo_lezione>"
+        raw_cards_content = ""
+
+        if use_gemini:
+            try:
+                raw_cards_content = gemini_generate_content(
+                    user_msg_text,
+                    system_instruction=system_prompt,
+                    temperature=0.25,
+                    max_output_tokens=1200,
+                    timeout=45.0,
+                )
+            except Exception as gem_exc:
+                print(f"[FlowLocal] Gemini BYOK non raggiungibile per flashcard ({gem_exc}). Fallback su Ollama.")
+                raw_cards_content = ""
+
+        if not raw_cards_content and (not use_gemini or routing_cfg.get("hybrid_fallback", True)):
+            payload = {
+                "model": lecture_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg_text}
+                ],
+                "stream": False,
+                "think": False,
+                "options": {
+                    "temperature": 0.25,
+                    "num_predict": 1200
+                }
             }
-        }
+            try:
+                req = urllib.request.Request(
+                    routing_cfg.get("ollama_chat_url") or OLLAMA_API_URL,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"}
+                )
+                with urllib.request.urlopen(req, timeout=45.0) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    raw_cards_content = data.get("message", {}).get("content") or ""
+            except Exception as e:
+                print(f"[FlowLocal] Errore estrazione flashcard ({lecture_model}): {e}")
+                raw_cards_content = ""
 
-        try:
-            req = urllib.request.Request(
-                OLLAMA_API_URL,
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"}
-            )
-            with urllib.request.urlopen(req, timeout=45.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                content = strip_think_blocks(data.get("message", {}).get("content") or "")
-
+        if raw_cards_content:
+            try:
+                content = strip_think_blocks(raw_cards_content)
                 json_match = re.search(r'\[[\s\S]*\]', content)
                 if json_match:
                     parsed = json.loads(json_match.group(0))
@@ -1200,8 +1303,8 @@ class LLMRefiner:
                                     cards.append({"question": q_val, "answer": a_val})
                         if cards:
                             return cards
-        except Exception as e:
-            print(f"[FlowLocal] Errore estrazione flashcard ({lecture_model}): {e}")
+            except Exception as e:
+                print(f"[FlowLocal] Errore parsing flashcard: {e}")
 
         return []
 
@@ -1509,24 +1612,48 @@ class FlowLocalEngine:
 
         def _load_whisper_and_warm():
             t_load = time.time()
+            hw_prof = get_active_profile()
+            w_model = hw_prof.whisper_model
+            w_dev = hw_prof.whisper_device
+            w_comp = hw_prof.whisper_compute_type
             try:
-                model = WhisperModel(
-                    MODEL_SIZE,
-                    device=DEVICE,
-                    compute_type=COMPUTE_TYPE,
-                    download_root=None,
-                )
+                kwargs = {
+                    "device": w_dev,
+                    "compute_type": w_comp,
+                    "download_root": None,
+                }
+                if w_dev == "cpu" and hw_prof.whisper_cpu_threads > 0:
+                    kwargs["cpu_threads"] = hw_prof.whisper_cpu_threads
+                model = WhisperModel(w_model, **kwargs)
                 self.model = model
                 load_ms = int((time.time() - t_load) * 1000)
-                print(f"[FlowLocal] Faster-Whisper '{MODEL_SIZE}' ({DEVICE}/{COMPUTE_TYPE}) pronto in {load_ms}ms.")
+                print(f"[FlowLocal] Faster-Whisper '{w_model}' ({w_dev}/{w_comp}, Tier {hw_prof.tier.value.upper()}) pronto in {load_ms}ms.")
             except Exception as e:
-                self._model_error = str(e)
-                print(f"[FlowLocal] Errore caricamento WhisperModel: {e}")
+                print(f"[FlowLocal] Errore caricamento WhisperModel ({w_model} su {w_dev}/{w_comp}): {e}")
+                if w_dev != "cpu":
+                    try:
+                        print("[FlowLocal] Tentativo fallback automatico Whisper su CPU (small/int8)...")
+                        model = WhisperModel(
+                            "small",
+                            device="cpu",
+                            compute_type="int8",
+                            cpu_threads=hw_prof.whisper_cpu_threads or 4,
+                            download_root=None,
+                        )
+                        self.model = model
+                        load_ms = int((time.time() - t_load) * 1000)
+                        print(f"[FlowLocal] Faster-Whisper fallback 'small' (cpu/int8) pronto in {load_ms}ms.")
+                    except Exception as cpu_err:
+                        self._model_error = str(cpu_err)
+                        print(f"[FlowLocal] Errore fallback CPU WhisperModel: {cpu_err}")
+                else:
+                    self._model_error = str(e)
             finally:
                 self._model_ready.set()
 
             detected_lecture = LLMRefiner.detect_lecture_model()
-            print(f"[FlowLocal] Dettatura live: {LLM_MODEL} | Sbobinatura d'aula: {detected_lecture}")
+            local_llm = hw_prof.llm_default_model or LLM_MODEL
+            print(f"[FlowLocal] Dettatura live: {local_llm} | Sbobinatura d'aula: {detected_lecture} | Profilo: {hw_prof.tier.value.upper()}")
 
             # Attende brevemente che Ollama (avviato in background) risponda prima del warm-up
             for attempt in range(4):

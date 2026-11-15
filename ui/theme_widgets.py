@@ -677,7 +677,24 @@ class ScrollList(QScrollArea):
         self.vbox.insertWidget(self.vbox.count() - 1, widget)
         widget.show()
 
-    def show_empty(self, text: Optional[str] = None):
+    def show_empty(
+        self,
+        text: Optional[str] = None,
+        icon_name: Optional[str] = None,
+        subtitle: str = "",
+        shortcut_hint: str = "",
+        theme_key: str = "obsidian",
+    ):
+        if icon_name:
+            w = _make_empty_state(
+                icon_name=icon_name,
+                title=text or self.empty_text,
+                subtitle=subtitle,
+                shortcut_hint=shortcut_hint,
+                theme_key=theme_key,
+            )
+            self.add_card(w)
+            return
         lbl = _make_label(text or self.empty_text, "EmptyState", wrap=True)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.add_card(lbl)
@@ -688,9 +705,71 @@ def _make_card() -> (QFrame, QVBoxLayout):
     card.setObjectName("Card")
     card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
     layout = QVBoxLayout(card)
-    layout.setContentsMargins(12, 12, 12, 12)
-    layout.setSpacing(8)
+    layout.setContentsMargins(14, 14, 14, 14)
+    layout.setSpacing(10)
     return card, layout
+
+
+def _make_divider() -> QFrame:
+    """Separatore orizzontale sottile da 1px a bassa opacità per sostituire bordi pesanti."""
+    line = QFrame()
+    line.setObjectName("HairlineDivider")
+    line.setFrameShape(QFrame.Shape.NoFrame)
+    line.setFixedHeight(1)
+    line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    return line
+
+
+def _make_empty_state(
+    icon_name: str,
+    title: str,
+    subtitle: str = "",
+    shortcut_hint: str = "",
+    theme_key: str = "obsidian",
+    action_text: str = "",
+    action_callback: Optional[Callable] = None,
+) -> QWidget:
+    """Empty state curato con icona vettoriale discreta, frase breve e scorciatoia."""
+    from ui.icons import get_pixmap
+
+    box = QWidget()
+    box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+    vbox = QVBoxLayout(box)
+    vbox.setContentsMargins(24, 36, 24, 36)
+    vbox.setSpacing(10)
+    vbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+    icon_lbl = QLabel()
+    icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    icon_lbl.setPixmap(get_pixmap(icon_name, theme_key=theme_key, role="muted", size=40, opacity=0.45))
+    icon_lbl.setStyleSheet("background: transparent;")
+    vbox.addWidget(icon_lbl)
+
+    title_lbl = _make_label(title, "CardTitle", wrap=True)
+    title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    vbox.addWidget(title_lbl)
+
+    if subtitle:
+        sub_lbl = _make_label(subtitle, "PageSubtitle", wrap=True)
+        sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        vbox.addWidget(sub_lbl)
+
+    if shortcut_hint:
+        hint_row = QHBoxLayout()
+        hint_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint_lbl = _make_label(shortcut_hint, "ShortcutKey")
+        hint_row.addWidget(hint_lbl)
+        vbox.addLayout(hint_row)
+
+    if action_text and action_callback is not None:
+        btn_row = QHBoxLayout()
+        btn_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn = _make_button(action_text, "ghost")
+        btn.clicked.connect(action_callback)
+        btn_row.addWidget(btn)
+        vbox.addLayout(btn_row)
+
+    return box
 
 
 from ui.voice_orb import create_smooth_closed_path

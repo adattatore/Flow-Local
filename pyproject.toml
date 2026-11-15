@@ -23,6 +23,7 @@ dependencies = [
     "pystray>=0.19.5",
     "python-docx>=1.2.0",
     "pyttsx3>=2.99",
+    "qtawesome>=1.4.2",
     "rapidocr-onnxruntime>=1.4.4",
     "scipy>=1.18.1",
     "sounddevice>=0.5.6",

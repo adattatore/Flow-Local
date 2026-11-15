@@ -2457,6 +2457,26 @@ QPushButton[variant="danger"]:hover {{
     background-color: rgba(244, 63, 94, 0.12);
     border: 1px solid rgba(244, 63, 94, 0.55);
 }}
+QPushButton[variant="ghost"] {{
+    background-color: transparent;
+    border: 1px solid transparent;
+    color: {p['subtitle']};
+    font-weight: 500;
+}}
+QPushButton[variant="ghost"]:hover {{
+    background-color: {p['nav_hover']};
+    border: 1px solid {p['card_border']};
+    color: {p['text']};
+}}
+QPushButton[variant="ghost"]:pressed {{
+    background-color: {p['btn_pressed_bg']};
+}}
+QFrame#HairlineDivider {{
+    background-color: {p['sidebar_border']};
+    border: none;
+    min-height: 1px;
+    max-height: 1px;
+}}
 QPushButton#ModeTab {{
     background-color: {p['pill_bg']};
     {p['pill_border_qss']}
