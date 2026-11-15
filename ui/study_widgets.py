@@ -6,6 +6,7 @@ import math
 import os
 import random
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -1293,8 +1294,8 @@ class SpotifyMiniBar(QFrame):
             except Exception:
                 pass
 
-        if not spotify_pids:
-            return False, None, ""
+        if not spotify_pids or sys.platform != "win32":
+            return bool(spotify_pids), None, ("Spotify" if spotify_pids else "")
 
         found_windows = []
         try:

@@ -5,9 +5,9 @@ import os
 import threading
 
 from PyQt6.QtCore import (
-    Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, QThread, pyqtSignal,
+    Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, QThread, QUrl, pyqtSignal,
 )
-from PyQt6.QtGui import QFont, QFontDatabase
+from PyQt6.QtGui import QDesktopServices, QFont, QFontDatabase, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
@@ -24,9 +24,17 @@ from core.hardware_profiler import (
     detect_hardware,
     ensure_first_run_hardware_tier,
 )
-from core.gemini_client import verify_api_key
+from core.gemini_client import (
+    add_runtime_engine_listener,
+    get_active_runtime_engine,
+    normalize_provider,
+    remove_runtime_engine_listener,
+    set_active_runtime_engine,
+    verify_api_key,
+)
+from core.paths import get_resource_path
 from ui.themes import FONT_PRESETS, GPU_AVAILABLE
-from ui.theme_widgets import _make_button, _make_divider, _make_label
+from ui.theme_widgets import ThemePreviewButton, _make_button, _make_divider, _make_label
 from ui.icons import apply_win11_titlebar, get_icon, get_pixmap
 
 
@@ -101,10 +109,168 @@ class _GeminiVerifyWorker(QThread):
         self.verifyFinished.emit(ok, msg)
 
 
+GEMINI_AISTUDIO_URL = "https://aistudio.google.com/apikey"
+
+
+class _ImageZoomDialog(QDialog):
+    """Finestra modale leggera per visualizzare uno screenshot della guida ingrandito."""
+
+    def __init__(self, pixmap: QPixmap, title: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(860, 560)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        lbl = QLabel()
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        scaled = pixmap.scaled(
+            820, 480, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+        )
+        lbl.setPixmap(scaled)
+        layout.addWidget(lbl, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        close_btn = _make_button("Chiudi", "ghost")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+
+class _ClickableScreenshot(QLabel):
+    """Anteprima screenshot cliccabile per aprire la vista ingrandita."""
+
+    def __init__(self, pixmap: QPixmap, title: str, parent=None):
+        super().__init__(parent)
+        self._full_pixmap = pixmap
+        self._zoom_title = title
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Clicca per ingrandire lo screenshot")
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        thumb = pixmap.scaledToWidth(
+            min(520, pixmap.width()), Qt.TransformationMode.SmoothTransformation
+        )
+        self.setPixmap(thumb)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            dlg = _ImageZoomDialog(self._full_pixmap, self._zoom_title, parent=self)
+            dlg.exec()
+        super().mousePressEvent(event)
+
+
+class GeminiKeyGuideDialog(QDialog):
+    """Guida visiva passo-passo (4 step) per ottenere gratuitamente una chiave Google AI Studio."""
+
+    def __init__(self, parent=None, theme_key: str = "obsidian", reading_mode: bool = False):
+        super().__init__(parent)
+        self.setWindowTitle("Come ottenere la chiave gratuita Google Gemini (4 Step)")
+        self.setMinimumSize(620, 520)
+        self.resize(680, 620)
+        self.setModal(True)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 16)
+        root.setSpacing(12)
+
+        title_lbl = _make_label("Ottieni la tua chiave gratuita in 30 secondi", "PageTitle")
+        root.addWidget(title_lbl)
+
+        note_card = QFrame()
+        note_card.setObjectName("Card")
+        note_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        nc_layout = QVBoxLayout(note_card)
+        nc_layout.setContentsMargins(14, 10, 14, 10)
+        note_lbl = _make_label(
+            "La chiave gratuita non richiede carta di credito ed è più che sufficiente per l'uso universitario quotidiano.",
+            "CardBody",
+            wrap=True,
+        )
+        nc_layout.addWidget(note_lbl)
+        root.addWidget(note_card)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        content = QWidget()
+        content.setObjectName("ScrollContent")
+        c_layout = QVBoxLayout(content)
+        c_layout.setContentsMargins(0, 4, 8, 4)
+        c_layout.setSpacing(10)
+
+        steps = [
+            (
+                1,
+                "Accedi a Google AI Studio",
+                "Clicca su Ottieni chiave gratuita e accedi con il tuo normale account Google (Gmail).",
+            ),
+            (
+                2,
+                "Crea una nuova API Key",
+                "Nella pagina di Google AI Studio, clicca sul pulsante Create API key.",
+            ),
+            (
+                3,
+                "Seleziona un nuovo progetto",
+                "Se richiesto, seleziona Create API key in new project e attendi qualche secondo.",
+            ),
+            (
+                4,
+                "Copia, incolla e verifica",
+                "Copia il codice che inizia con AIza..., incollalo nel campo delle Impostazioni di FlowLocal e premi Verifica.",
+            ),
+        ]
+
+        for step_num, step_title, step_desc in steps:
+            card = QFrame()
+            card.setObjectName("Card")
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(14, 12, 14, 12)
+            cl.setSpacing(6)
+
+            hdr = _make_label(f"Step {step_num} · {step_title}", "CardTitle", wrap=True)
+            desc = _make_label(step_desc, "CardBody", wrap=True)
+            cl.addWidget(hdr)
+            cl.addWidget(desc)
+
+            img_path = get_resource_path(os.path.join("assets", "guides", "gemini_key", f"step{step_num}.png"))
+            if img_path.is_file():
+                pm = QPixmap(str(img_path))
+                if not pm.isNull():
+                    preview = _ClickableScreenshot(pm, f"Step {step_num} · {step_title}", parent=self)
+                    cl.addWidget(preview)
+
+            c_layout.addWidget(card)
+
+        c_layout.addStretch(1)
+        scroll.setWidget(content)
+        root.addWidget(scroll, 1)
+
+        footer = QHBoxLayout()
+        footer.setSpacing(8)
+        open_btn = _make_button("Ottieni chiave gratuita", "primary")
+        open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(GEMINI_AISTUDIO_URL)))
+        footer.addWidget(open_btn)
+        footer.addStretch(1)
+        close_btn = _make_button("Chiudi", "ghost")
+        close_btn.clicked.connect(self.accept)
+        footer.addWidget(close_btn)
+        root.addLayout(footer)
+
+        apply_win11_titlebar(self, theme_key, reading_mode)
+
+
 class HubSettingsDialog(QDialog):
     """Finestra Impostazioni di FlowLocal Hub a 2 colonne (Sidebar Categorie + Pannello Contenuto)."""
 
-    def __init__(self, hub: "FlowLocalHub"):
+    _runtimeEngineSignal = pyqtSignal(str)
+
+    def __init__(self, hub: "FlowLocalHub", initial_tab: int = 0):
         super().__init__(hub)
         self.hub = hub
         self.setWindowTitle("Impostazioni FlowLocal")
@@ -185,6 +351,18 @@ class HubSettingsDialog(QDialog):
 
         self._refresh_icons()
         apply_win11_titlebar(self, self.hub._current_theme, self.hub._reading_mode)
+
+        self._runtimeEngineSignal.connect(self._on_runtime_engine_updated, Qt.ConnectionType.QueuedConnection)
+        self._runtime_cb = lambda label: self._runtimeEngineSignal.emit(label)
+        add_runtime_engine_listener(self._runtime_cb)
+        self.finished.connect(lambda _r=0: remove_runtime_engine_listener(self._runtime_cb))
+
+        if 0 <= initial_tab < self.stack.count():
+            nav_btn = self._nav_grp.button(initial_tab)
+            if nav_btn is not None:
+                nav_btn.setChecked(True)
+            self._switch_category(initial_tab)
+            self._refresh_icons()
 
     def _wrap_scroll(self, inner: QWidget) -> QScrollArea:
         scroll = QScrollArea()
@@ -273,14 +451,11 @@ class HubSettingsDialog(QDialog):
         theme_grid = QGridLayout()
         theme_grid.setSpacing(8)
         for idx, (t_label, t_key) in enumerate(themes):
-            btn = QPushButton(t_label)
-            btn.setObjectName("FilterPill")
-            btn.setCheckable(True)
+            btn = ThemePreviewButton(t_label, t_key)
             btn.setChecked(self.hub._current_theme == t_key)
             btn.setMinimumWidth(185)
-            btn.setMinimumHeight(32)
+            btn.setMinimumHeight(34)
             btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _c=False, k=t_key: self._on_theme_pill_clicked(k))
             self._theme_grp.addButton(btn, idx)
             theme_grid.addWidget(btn, idx // 3, idx % 3)
@@ -480,26 +655,39 @@ class HubSettingsDialog(QDialog):
         # 2. Configurazione Motore AI
         ai_sec = QVBoxLayout()
         ai_sec.setSpacing(12)
-        ai_sec.addWidget(_make_label("Configurazione Motore AI", "CardTitle"))
+        ai_hdr = QHBoxLayout()
+        ai_hdr.setSpacing(8)
+        ai_hdr.addWidget(_make_label("Configurazione Motore AI", "CardTitle"))
+        ai_hdr.addStretch(1)
+        self.ai_runtime_lbl = _make_label(get_active_runtime_engine(), "PageSubtitle")
+        self.ai_runtime_lbl.setObjectName("Badge")
+        ai_hdr.addWidget(self.ai_runtime_lbl)
+        ai_sec.addLayout(ai_hdr)
 
-        saved_provider = db.get_setting("ai_provider", "local") or "local"
+        saved_key = (db.get_setting("gemini_api_key", "") or "").strip()
+        raw_prov = db.get_setting("ai_provider", "")
+        saved_provider = "adaptive" if (not raw_prov and saved_key) else normalize_provider(raw_prov or "local")
         self._provider_grp = QButtonGroup(self)
         self._provider_grp.setExclusive(True)
+        self._provider_buttons: Dict[str, QPushButton] = {}
         prov_row = QHBoxLayout()
         prov_row.setSpacing(8)
-        for idx, (p_key, p_lbl) in enumerate([
-            ("local", "Locale"),
-            ("gemini", "Cloud Gemini"),
-            ("hybrid", "Ibrido"),
+        for idx, (p_key, p_lbl, p_tip) in enumerate([
+            ("adaptive", "Adattivo", "Gemini Online quando disponibile, Qwen 3.5 / Deterministico Offline (timeout 3s)."),
+            ("local", "Locale", "Usa esclusivamente Ollama Qwen 3.5 / elaborazione locale."),
+            ("gemini", "Cloud Gemini", "Usa Google Gemini API per tutte le attività."),
+            ("hybrid", "Ibrido", "Dettatura locale + Vision/Whis/Studio su Gemini."),
         ]):
             btn = QPushButton(p_lbl)
             btn.setObjectName("FilterPill")
             btn.setCheckable(True)
             btn.setChecked(saved_provider == p_key)
+            btn.setToolTip(p_tip)
             btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _c=False, k=p_key: self._on_ai_provider_changed(k))
             self._provider_grp.addButton(btn, idx)
+            self._provider_buttons[p_key] = btn
             prov_row.addWidget(btn)
         ai_sec.addLayout(prov_row)
 
@@ -528,9 +716,10 @@ class HubSettingsDialog(QDialog):
         key_lbl.setMinimumWidth(115)
         key_row.addWidget(key_lbl)
         self.gemini_key_edit = QLineEdit()
+        self.gemini_key_edit.setMinimumHeight(36)
         self.gemini_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.gemini_key_edit.setPlaceholderText("AIza... (opzionale)")
-        self.gemini_key_edit.setText(db.get_setting("gemini_api_key", "") or "")
+        self.gemini_key_edit.setText(saved_key)
         self.gemini_key_edit.editingFinished.connect(self._on_gemini_key_saved)
         key_row.addWidget(self.gemini_key_edit, 1)
 
@@ -545,6 +734,24 @@ class HubSettingsDialog(QDialog):
         self.gemini_verify_btn.clicked.connect(self._on_verify_gemini_key)
         key_row.addWidget(self.gemini_verify_btn)
         ai_sec.addLayout(key_row)
+
+        key_help_row = QHBoxLayout()
+        key_help_row.setSpacing(8)
+        key_help_spacer = QWidget()
+        key_help_spacer.setFixedWidth(115)
+        key_help_row.addWidget(key_help_spacer)
+
+        self.gemini_get_key_btn = _make_button("Ottieni chiave gratuita", "ghost")
+        self.gemini_get_key_btn.setToolTip("Apre Google AI Studio nel browser per generare una chiave API gratuita")
+        self.gemini_get_key_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(GEMINI_AISTUDIO_URL)))
+        key_help_row.addWidget(self.gemini_get_key_btn)
+
+        self.gemini_guide_btn = _make_button("Come fare? (Guida 4 Step)", "ghost")
+        self.gemini_guide_btn.setToolTip("Apri la guida visiva passo-passo per ottenere la chiave gratuita")
+        self.gemini_guide_btn.clicked.connect(self._on_open_gemini_guide)
+        key_help_row.addWidget(self.gemini_guide_btn)
+        key_help_row.addStretch(1)
+        ai_sec.addLayout(key_help_row)
 
         self.gemini_status_row = QWidget()
         gs_layout = QHBoxLayout(self.gemini_status_row)
@@ -830,6 +1037,30 @@ class HubSettingsDialog(QDialog):
 
     def _on_ai_provider_changed(self, provider_key: str):
         db.set_setting("ai_provider", provider_key)
+        has_key = bool(self.gemini_key_edit.text().strip())
+        if provider_key == "adaptive":
+            set_active_runtime_engine("Adattivo • Gemini Online" if has_key else "Adattivo • Qwen 3.5 Offline")
+        elif provider_key == "gemini":
+            set_active_runtime_engine("Cloud • Gemini Online")
+        elif provider_key == "hybrid":
+            set_active_runtime_engine("Ibrido • Gemini + Qwen 3.5")
+        else:
+            set_active_runtime_engine("Locale • Qwen 3.5")
+        if hasattr(self, "ai_runtime_lbl"):
+            self.ai_runtime_lbl.setText(get_active_runtime_engine())
+
+    def _on_runtime_engine_updated(self, label: str):
+        if hasattr(self, "ai_runtime_lbl"):
+            self.ai_runtime_lbl.setText(label)
+
+    def _on_open_gemini_guide(self):
+        dlg = GeminiKeyGuideDialog(
+            parent=self,
+            theme_key=getattr(self.hub, "_current_theme", "obsidian"),
+            reading_mode=getattr(self.hub, "_reading_mode", False),
+        )
+        dlg.setStyleSheet(self.styleSheet())
+        dlg.exec()
 
     def _on_local_model_changed(self):
         mode = self.local_model_combo.currentData()
@@ -892,6 +1123,15 @@ class HubSettingsDialog(QDialog):
         self.gemini_status_icon.setVisible(True)
         self.gemini_status_lbl.setText(msg)
         self._gemini_verify_worker = None
+        if ok:
+            db.set_setting("ai_provider", "adaptive")
+            if hasattr(self, "_provider_buttons") and "adaptive" in self._provider_buttons:
+                self._provider_buttons["adaptive"].setChecked(True)
+            set_active_runtime_engine("Adattivo • Gemini Online")
+            if hasattr(self, "ai_runtime_lbl"):
+                self.ai_runtime_lbl.setText(get_active_runtime_engine())
+            if hasattr(self.hub, "_refresh_ai_onboarding_and_badge"):
+                self.hub._refresh_ai_onboarding_and_badge()
 
     def _on_toggle_advanced_ai(self, checked: bool):
         tkey = getattr(self.hub, "_current_theme", "obsidian")

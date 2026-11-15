@@ -11,6 +11,22 @@ import os
 import sys
 import ctypes
 
+if len(sys.argv) >= 3 and sys.argv[1] == "--exec-python":
+    import runpy
+    import traceback
+    _script_path = sys.argv[2]
+    sys.argv = [_script_path] + sys.argv[3:]
+    try:
+        runpy.run_path(_script_path, run_name="__main__")
+        sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception:
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+
+from core.paths import get_resource_path
+
 # Compatibilità PyAV >= 13/14 con Faster-Whisper:
 # Le versioni recenti di PyAV hanno rimosso il parametro metadata_errors da av.open()
 try:
@@ -68,7 +84,10 @@ from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QAction
 from PyQt6.QtCore import Qt, QTimer, QAbstractNativeEventFilter, QByteArray
 from PyQt6.QtSvg import QSvgRenderer
-import keyboard
+if sys.platform == "win32":
+    import keyboard
+else:
+    keyboard = None
 
 from database import db
 from ui.voice_orb import VoiceOrbOverlay, render_orb_icon_pixmap
@@ -149,6 +168,8 @@ class KeyboardHookManager:
     @staticmethod
     def _clear_internal_state():
         """Pulisce eventuali stati tasti/modificatori rimasti incastrati in `keyboard`."""
+        if keyboard is None:
+            return
         try:
             lock = getattr(keyboard, "_pressed_events_lock", None)
             if lock is not None:
@@ -165,26 +186,70 @@ class KeyboardHookManager:
         except Exception:
             pass
 
+    def _install_linux_pynput(self):
+        """Avvia listener globale pynput su Linux (X11/XWayland) senza richiedere privilegi root."""
+        from types import SimpleNamespace
+        from pynput import keyboard as pynput_kb
+
+        pressed_keys = set()
+
+        def _map_key_name(key) -> str:
+            if key == pynput_kb.Key.shift_r:
+                return "right shift"
+            if key == pynput_kb.Key.f8:
+                return "f8"
+            if key == pynput_kb.Key.ctrl_r:
+                return "right ctrl"
+            if key in (pynput_kb.Key.alt_r, getattr(pynput_kb, "Key.alt_gr", None)) or str(key) == "Key.alt_gr":
+                return "alt gr"
+            return ""
+
+        def _on_press(key):
+            name = _map_key_name(key)
+            if not name or name in pressed_keys:
+                return
+            pressed_keys.add(name)
+            self._callback(SimpleNamespace(name=name, event_type="down", scan_code=None, is_extended=False))
+
+        def _on_release(key):
+            name = _map_key_name(key)
+            if not name:
+                return
+            pressed_keys.discard(name)
+            self._callback(SimpleNamespace(name=name, event_type="up", scan_code=None, is_extended=False))
+
+        listener = pynput_kb.Listener(on_press=_on_press, on_release=_on_release)
+        listener.daemon = True
+        listener.start()
+        return listener
+
     def install(self):
         with self._lock:
             self._unhook_locked()
             self._clear_internal_state()
             try:
-                self._handler = keyboard.hook(self._callback, suppress=True)
+                if keyboard is not None:
+                    self._handler = keyboard.hook(self._callback, suppress=True)
+                else:
+                    self._handler = self._install_linux_pynput()
             except Exception as e:
-                print(f"[FlowLocal] Errore registrazione keyboard.hook: {e}")
+                print(f"[FlowLocal] Errore registrazione hook tastiera: {e}")
 
     def _unhook_locked(self):
         if self._handler is not None:
             try:
-                keyboard.unhook(self._handler)
+                if keyboard is not None:
+                    keyboard.unhook(self._handler)
+                elif hasattr(self._handler, "stop"):
+                    self._handler.stop()
             except Exception:
                 pass
             self._handler = None
-        try:
-            keyboard.unhook_all()
-        except Exception:
-            pass
+        if keyboard is not None:
+            try:
+                keyboard.unhook_all()
+            except Exception:
+                pass
 
     def unhook(self):
         with self._lock:
@@ -196,9 +261,12 @@ class KeyboardHookManager:
             self._unhook_locked()
             self._clear_internal_state()
             try:
-                self._handler = keyboard.hook(self._callback, suppress=True)
+                if keyboard is not None:
+                    self._handler = keyboard.hook(self._callback, suppress=True)
+                else:
+                    self._handler = self._install_linux_pynput()
             except Exception as e:
-                print(f"[FlowLocal] Errore re-hook keyboard: {e}")
+                print(f"[FlowLocal] Errore re-hook tastiera: {e}")
 
 
 class PowerEventFilter(QAbstractNativeEventFilter):
@@ -226,7 +294,7 @@ class PowerEventFilter(QAbstractNativeEventFilter):
         QTimer.singleShot(350, _do_recover)
 
     def nativeEventFilter(self, eventType, message):
-        if eventType != b"windows_generic_MSG" or not message:
+        if sys.platform != "win32" or eventType != b"windows_generic_MSG" or not message:
             return False, 0
         try:
             msg = ctypes.wintypes.MSG.from_address(int(message))
@@ -255,17 +323,18 @@ def ensure_ollama_running():
         urllib.request.urlopen("http://localhost:11434/api/version", timeout=0.8)
     except Exception:
         try:
-            subprocess.Popen(
-                ["ollama", "serve"],
-                creationflags=0x08000000 | 0x00000200,
-                close_fds=True
-            )
+            popen_kwargs = {"close_fds": True}
+            if sys.platform == "win32":
+                popen_kwargs["creationflags"] = 0x08000000 | 0x00000200
+            subprocess.Popen(["ollama", "serve"], **popen_kwargs)
         except Exception:
             pass
 
 
 def run_keyboard_poller(engine: FlowLocalEngine, hook_manager: Optional[KeyboardHookManager] = None):
     """Poller hardware nativo Win32 (Livello 1) per Shift Destro, F8 e Ctrl Destro/AltGr (Push-to-Lock)."""
+    if sys.platform != "win32":
+        return
     user32 = ctypes.windll.user32
     was_down = False
     was_lock_down = False
@@ -325,7 +394,7 @@ def create_tray_icon(active=True) -> QIcon:
 
 def create_app_icon() -> QIcon:
     """Restituisce l'icona principale dell'app (app.ico o fallback Orb 3 fuochi)."""
-    ico_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.ico")
+    ico_path = str(get_resource_path("app.ico"))
     if os.path.exists(ico_path):
         ico = QIcon(ico_path)
         if not ico.isNull():
@@ -669,23 +738,24 @@ def main():
     hook_manager = KeyboardHookManager(on_key_event)
     hook_manager.install()
 
-    power_filter = PowerEventFilter(hook_manager, engine)
-    app.installNativeEventFilter(power_filter)
-
     wts_registered_hwnd = None
-    try:
-        orb_hwnd = int(orb.winId())
-        if ctypes.windll.wtsapi32.WTSRegisterSessionNotification(orb_hwnd, 0):
-            wts_registered_hwnd = orb_hwnd
-    except Exception:
-        pass
+    if sys.platform == "win32":
+        power_filter = PowerEventFilter(hook_manager, engine)
+        app.installNativeEventFilter(power_filter)
 
-    poller_thread = threading.Thread(target=run_keyboard_poller, args=(engine, hook_manager), daemon=True)
-    poller_thread.start()
+        try:
+            orb_hwnd = int(orb.winId())
+            if ctypes.windll.wtsapi32.WTSRegisterSessionNotification(orb_hwnd, 0):
+                wts_registered_hwnd = orb_hwnd
+        except Exception:
+            pass
+
+        poller_thread = threading.Thread(target=run_keyboard_poller, args=(engine, hook_manager), daemon=True)
+        poller_thread.start()
 
     def cleanup_keyboard():
         hook_manager.unhook()
-        if wts_registered_hwnd is not None:
+        if wts_registered_hwnd is not None and sys.platform == "win32":
             try:
                 ctypes.windll.wtsapi32.WTSUnRegisterSessionNotification(wts_registered_hwnd)
             except Exception:

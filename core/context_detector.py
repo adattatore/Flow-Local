@@ -6,12 +6,18 @@ la finestra attiva in primo piano e mappare la modalità di dettatura ottimale.
 
 import os
 import re
+import subprocess
+import sys
 import ctypes
 from ctypes import wintypes
 from typing import Tuple
 
-user32 = ctypes.windll.user32
-kernel32 = ctypes.windll.kernel32
+if sys.platform == "win32":
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+else:
+    user32 = None
+    kernel32 = None
 
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 PROCESS_QUERY_INFORMATION = 0x0400
@@ -49,11 +55,44 @@ def clean_app_name(title: str, exe_name: str) -> str:
     return "Desktop"
 
 
+def _get_linux_foreground_window_info() -> Tuple[str, str]:
+    """Rileva titolo e processo della finestra attiva su Linux X11 tramite xdotool (se disponibile)."""
+    title = ""
+    exe_name = ""
+    try:
+        res_title = subprocess.run(
+            ["xdotool", "getactivewindow", "getwindowname"],
+            capture_output=True,
+            text=True,
+            timeout=0.3,
+        )
+        if res_title.returncode == 0:
+            title = res_title.stdout.strip()
+        res_pid = subprocess.run(
+            ["xdotool", "getactivewindow", "getwindowpid"],
+            capture_output=True,
+            text=True,
+            timeout=0.3,
+        )
+        if res_pid.returncode == 0 and res_pid.stdout.strip().isdigit():
+            pid_str = res_pid.stdout.strip()
+            comm_path = f"/proc/{pid_str}/comm"
+            if os.path.exists(comm_path):
+                with open(comm_path, "r", encoding="utf-8", errors="ignore") as f:
+                    exe_name = f.read().strip()
+    except Exception:
+        pass
+    return title, exe_name
+
+
 def get_foreground_window_info() -> Tuple[str, str]:
     """
     Legge il titolo della finestra in primo piano (GetForegroundWindow + GetWindowTextW)
     e il nome del file eseguibile del relativo processo.
     """
+    if sys.platform != "win32" or user32 is None or kernel32 is None:
+        return _get_linux_foreground_window_info()
+
     hwnd = user32.GetForegroundWindow()
     if not hwnd:
         return "", ""

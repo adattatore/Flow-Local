@@ -9,13 +9,76 @@ from __future__ import annotations
 
 import base64
 import json
+import threading
 import urllib.error
 import urllib.request
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_TIMEOUT = 3.0
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+_runtime_lock = threading.Lock()
+_active_runtime_engine: str = ""
+_runtime_listeners: List[Callable[[str], None]] = []
+
+
+def set_active_runtime_engine(label: str):
+    """Aggiorna lo stato del motore AI attivo in tempo reale e notifica i listener UI."""
+    global _active_runtime_engine
+    clean = (label or "").strip()
+    if not clean:
+        return
+    with _runtime_lock:
+        if _active_runtime_engine == clean:
+            return
+        _active_runtime_engine = clean
+        listeners = list(_runtime_listeners)
+    for cb in listeners:
+        try:
+            cb(clean)
+        except Exception:
+            pass
+
+
+def get_active_runtime_engine(db_manager=None) -> str:
+    """Restituisce l'etichetta discreta del motore AI attualmente in uso."""
+    with _runtime_lock:
+        if _active_runtime_engine:
+            return _active_runtime_engine
+    cfg = get_ai_routing_config(db_manager)
+    prov = cfg["provider"]
+    if prov == "adaptive":
+        return "Adattivo • Gemini Online" if cfg["has_key"] else "Adattivo • Qwen 3.5 Offline"
+    if prov == "gemini":
+        return "Cloud • Gemini Online"
+    if prov == "hybrid":
+        return "Ibrido • Gemini + Qwen 3.5"
+    return "Locale • Qwen 3.5"
+
+
+def add_runtime_engine_listener(callback: Callable[[str], None]):
+    with _runtime_lock:
+        if callback not in _runtime_listeners:
+            _runtime_listeners.append(callback)
+
+
+def remove_runtime_engine_listener(callback: Callable[[str], None]):
+    with _runtime_lock:
+        if callback in _runtime_listeners:
+            _runtime_listeners.remove(callback)
+
+
+def is_ollama_available(base_url: str = "http://localhost:11434", timeout: float = 0.8) -> bool:
+    """Verifica rapida e non bloccante se il daemon Ollama è attivo localmente."""
+    url = f"{(base_url or 'http://localhost:11434').rstrip('/')}/api/tags"
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
 
 
 class GeminiClientError(RuntimeError):
@@ -24,6 +87,8 @@ class GeminiClientError(RuntimeError):
 
 def normalize_provider(raw_provider: Optional[str]) -> str:
     val = (raw_provider or "local").strip().lower()
+    if val in ("adaptive", "adattivo", "auto"):
+        return "adaptive"
     if val in ("ollama", "local", ""):
         return "local"
     if val in ("gemini", "cloud"):
@@ -38,10 +103,14 @@ def get_ai_routing_config(db_manager=None) -> Dict[str, Any]:
     if db_manager is None:
         from database import db as db_manager
 
-    provider = normalize_provider(db_manager.get_setting("ai_provider", "local"))
+    raw_prov = db_manager.get_setting("ai_provider", "")
     api_key = (db_manager.get_setting("gemini_api_key", "") or "").strip()
+    if not raw_prov and api_key:
+        provider = "adaptive"
+    else:
+        provider = normalize_provider(raw_prov or "local")
     gemini_model = (db_manager.get_setting("gemini_model", DEFAULT_GEMINI_MODEL) or DEFAULT_GEMINI_MODEL).strip()
-    hybrid_fallback = (db_manager.get_setting("ai_hybrid_fallback", "1") or "1").strip() == "1"
+    hybrid_fallback = True if provider == "adaptive" else (db_manager.get_setting("ai_hybrid_fallback", "1") or "1").strip() == "1"
     ollama_base = (db_manager.get_setting("ollama_base_url", "http://localhost:11434") or "http://localhost:11434").rstrip("/")
 
     return {
@@ -59,19 +128,19 @@ def should_use_gemini(task_type: str, db_manager=None) -> bool:
     """
     Determina se il task corrente deve essere instradato a Google Gemini Cloud BYOK.
     task_type supportati:
-      - 'dictation': post-processing rapido dettatura (in 'hybrid' resta su Ollama locale)
-      - 'whis_chat': chat rapida Whis (in 'hybrid' resta su Ollama locale)
-      - 'whis_screen': analisi schermo/immagini Whis (in 'hybrid' -> Gemini)
-      - 'whis_deep': analisi profonda/codice complesso Whis (in 'hybrid' -> Gemini)
-      - 'vision_ocr': Vision OCR /ocr / Ctrl+Shift+V (in 'hybrid' -> Gemini)
-      - 'lecture_heavy': sbobine lunghe, sommari, flashcard, correlazioni (in 'hybrid' -> Gemini)
+      - 'dictation': post-processing rapido dettatura (in 'adaptive'/'gemini' -> Gemini con fallback locale)
+      - 'whis_chat': chat rapida Whis (in 'adaptive'/'gemini' -> Gemini con fallback locale)
+      - 'whis_screen': analisi schermo/immagini Whis (in 'adaptive'/'hybrid'/'gemini' -> Gemini)
+      - 'whis_deep': analisi profonda/codice complesso Whis (in 'adaptive'/'hybrid'/'gemini' -> Gemini)
+      - 'vision_ocr': Vision OCR /ocr / Ctrl+Shift+V (in 'adaptive'/'hybrid'/'gemini' -> Gemini)
+      - 'lecture_heavy': sbobine lunghe, sommari, flashcard, correlazioni (in 'adaptive'/'hybrid'/'gemini' -> Gemini)
     """
     cfg = get_ai_routing_config(db_manager)
     if not cfg["has_key"]:
         return False
 
     provider = cfg["provider"]
-    if provider == "gemini":
+    if provider in ("adaptive", "gemini"):
         return True
     if provider == "hybrid":
         return task_type in ("vision_ocr", "whis_screen", "whis_deep", "lecture_heavy")
@@ -151,7 +220,7 @@ def generate_content(
     stop_sequences: Optional[List[str]] = None,
     model: Optional[str] = None,
     api_key: Optional[str] = None,
-    timeout: float = 20.0,
+    timeout: float = DEFAULT_GEMINI_TIMEOUT,
 ) -> str:
     """Esegue una chiamata sincrona a Gemini (SDK google-genai o REST API v1beta)."""
     cfg = get_ai_routing_config()
@@ -246,7 +315,7 @@ def stream_generate_content(
     max_output_tokens: int = 2048,
     model: Optional[str] = None,
     api_key: Optional[str] = None,
-    timeout: float = 30.0,
+    timeout: float = DEFAULT_GEMINI_TIMEOUT,
 ) -> Iterator[str]:
     """Esegue una chiamata in streaming a Gemini restituendo i delta testuali."""
     cfg = get_ai_routing_config()

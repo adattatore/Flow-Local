@@ -39,14 +39,16 @@ except ImportError:
     GOOGLE_LIBS_AVAILABLE = False
 
 from database.db_manager import db
+from core.paths import get_resource_path, get_user_data_path, is_frozen
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 DEFAULT_TIMEZONE = 'Europe/Rome'
 
-# Risoluzione percorsi file credenziali e token
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_CREDENTIALS_PATH = os.path.join(PROJECT_ROOT, "credentials.json")
-DEFAULT_TOKEN_PATH = os.path.join(PROJECT_ROOT, "token_calendar.json")
+# Risoluzione percorsi file credenziali (sola lettura / override utente) e token (scrivibile)
+_USER_CREDS_PATH = str(get_user_data_path("credentials.json"))
+_BUNDLED_CREDS_PATH = str(get_resource_path("credentials.json"))
+DEFAULT_CREDENTIALS_PATH = _USER_CREDS_PATH if os.path.exists(_USER_CREDS_PATH) else _BUNDLED_CREDS_PATH
+DEFAULT_TOKEN_PATH = str(get_user_data_path("token_calendar.json"))
 
 ITALIAN_WEEKDAYS = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
 ITALIAN_MONTHS = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
@@ -100,13 +102,20 @@ class GoogleCalendarManager:
                 pass
 
     def _resolve_paths(self):
-        """Assicura che vengano controllati sia il percorso root del progetto che la directory corrente."""
+        """Assicura che vengano controllati i percorsi user-data e risorse impacchettate (_MEIPASS)."""
         if not os.path.exists(self.credentials_path):
-            cwd_creds = os.path.join(os.getcwd(), "credentials.json")
-            if os.path.exists(cwd_creds):
-                self.credentials_path = cwd_creds
+            candidates = [
+                str(get_user_data_path("credentials.json")),
+                str(get_resource_path("credentials.json")),
+            ]
+            if not is_frozen():
+                candidates.append(os.path.join(os.getcwd(), "credentials.json"))
+            for cand in candidates:
+                if os.path.exists(cand):
+                    self.credentials_path = cand
+                    break
 
-        if not os.path.exists(self.token_path):
+        if not os.path.exists(self.token_path) and not is_frozen():
             cwd_token = os.path.join(os.getcwd(), "token_calendar.json")
             if os.path.exists(cwd_token):
                 self.token_path = cwd_token
@@ -174,6 +183,7 @@ class GoogleCalendarManager:
             flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, SCOPES)
             creds = flow.run_local_server(port=0)
 
+            os.makedirs(os.path.dirname(os.path.abspath(self.token_path)), exist_ok=True)
             with open(self.token_path, "w", encoding="utf-8") as token_file:
                 token_file.write(creds.to_json())
 

@@ -20,6 +20,7 @@ import ctypes
 from ctypes import wintypes
 import os
 import re
+import sys
 import tempfile
 import threading
 import time
@@ -67,6 +68,7 @@ from database import db
 from core.exporter import export_to_md, export_to_docx, export_to_pdf, export_to_tex
 from core.audio_sync import archive_audio_for_note, save_note_audio_sync, load_note_audio_sync
 from ui.scientific_editor import DictationGhostLineEdit, ScientificNoteEditor, strip_markdown_syntax
+from ui.rsvp_reader import RsvpReaderModal, tokenize_rsvp_markdown
 from ui.audio_sync_bar import AudioSyncBar
 from ui.notes_tree import (
     SamsungNotesTreeWidget,
@@ -119,7 +121,14 @@ from ui.theme_widgets import (
     AnimatedSegmentedBox,
 )
 from ui.icons import get_icon, get_pixmap, apply_win11_titlebar
-from ui.settings_dialog import HubSettingsDialog
+from ui.settings_dialog import HubSettingsDialog, GeminiKeyGuideDialog, GEMINI_AISTUDIO_URL
+from core.gemini_client import (
+    add_runtime_engine_listener,
+    get_active_runtime_engine,
+    is_ollama_available,
+)
+from PyQt6.QtCore import QUrl
+from PyQt6.QtGui import QDesktopServices
 from ui.flowtime_widgets import (
     FLOWTIME_COLOR_PALETTE,
     LinkEventNoteDialog,
@@ -152,9 +161,15 @@ from ui.study_widgets import (
 class FlowLocalHub(QMainWindow):
     note_added = pyqtSignal()
     flowtime_sync_done = pyqtSignal(bool, str)
+    _aiRuntimeSignal = pyqtSignal(str)
+    _ollamaProbeSignal = pyqtSignal(bool)
 
     def __init__(self, on_device_changed: Optional[Callable] = None, engine=None):
         super().__init__()
+        self._ollama_detected: Optional[bool] = None
+        self._aiRuntimeSignal.connect(self._on_ai_runtime_changed, Qt.ConnectionType.QueuedConnection)
+        self._ollamaProbeSignal.connect(self._on_ollama_probe_finished, Qt.ConnectionType.QueuedConnection)
+        add_runtime_engine_listener(lambda lbl: self._aiRuntimeSignal.emit(lbl))
         # API pubblica mantenuta per compatibilità con main.py / pipeline audio
         self.on_device_changed = on_device_changed
         self.engine = engine
@@ -259,6 +274,13 @@ class FlowLocalHub(QMainWindow):
         self.cloud_poll_timer.start(10000)
         self._poll_cloud_queue()
 
+        # Probe asincrono non bloccante per banner onboarding su PC senza Ollama né chiave Gemini
+        threading.Thread(
+            target=self._probe_ollama_worker,
+            daemon=True,
+            name="FlowLocal-OllamaProbe",
+        ).start()
+
     # -----------------------------------------------------------------
     # API pubblica
     # -----------------------------------------------------------------
@@ -289,6 +311,8 @@ class FlowLocalHub(QMainWindow):
 
     def _apply_windows_titlebar_theme(self, theme_key: str, reading_mode: Optional[bool] = None):
         """Sincronizza la barra del titolo nativa di Windows 10/11 con il tema attivo."""
+        if sys.platform != "win32":
+            return
         if reading_mode is None:
             reading_mode = getattr(self, "_reading_mode", False)
         try:
@@ -696,10 +720,12 @@ class FlowLocalHub(QMainWindow):
             ("settings_btn", "settings", "subtitle", 15),
             ("import_slide_btn", "download", "text", 14),
             ("sbobina_btn", "mic", "text", 14),
-            ("cloud_sync_btn", "cloud", "text", 14),
-            ("nk_copy_btn", "copy", "subtitle", 14),
-            ("nk_del_btn", "trash", "danger", 14),
-            ("nk_history_btn", "clock", "subtitle", 14),
+            ("nk_more_btn", "more", "subtitle", 15),
+            ("nk_history_btn", "clock", "subtitle", 15),
+            ("nk_focus_mode_btn", "expand", "subtitle", 15),
+            ("nk_studio_btn", "book", "text", 14),
+            ("nk_rsvp_btn", "lightning", "text", 14),
+            ("nk_fc_btn", "cards", "text", 14),
             ("nk_ask_whis_btn", "sparkles", "accent", 14),
             ("ft_today_btn", "calendar", "text", 14),
             ("ft_save_btn", "save", "on_accent", 14),
@@ -804,6 +830,46 @@ class FlowLocalHub(QMainWindow):
         st_layout.addWidget(card_streak)
         layout.addWidget(stats_box)
 
+        # --- BANNER DISCRETO ONBOARDING AI (solo se Ollama assente e nessuna chiave Gemini) ---
+        self.ai_onboarding_card = QFrame()
+        self.ai_onboarding_card.setObjectName("Card")
+        self.ai_onboarding_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        onb_layout = QVBoxLayout(self.ai_onboarding_card)
+        onb_layout.setContentsMargins(14, 12, 14, 12)
+        onb_layout.setSpacing(8)
+
+        onb_title = _make_label("Attiva l'AI avanzata senza appesantire il PC", "CardTitle", wrap=True)
+        onb_text = _make_label(
+            "Collega una chiave gratuita Google AI Studio in 30 secondi per sbloccare LaTeX, Whis e OCR da screenshot.",
+            "CardBody",
+            wrap=True,
+        )
+        onb_layout.addWidget(onb_title)
+        onb_layout.addWidget(onb_text)
+
+        onb_actions = QHBoxLayout()
+        onb_actions.setSpacing(8)
+        onb_get_btn = _make_button("Ottieni chiave gratuita", "primary")
+        onb_get_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(GEMINI_AISTUDIO_URL)))
+        onb_actions.addWidget(onb_get_btn)
+
+        onb_guide_btn = _make_button("Guida (4 step)", "ghost")
+        onb_guide_btn.clicked.connect(self._on_open_gemini_guide_from_hub)
+        onb_actions.addWidget(onb_guide_btn)
+
+        onb_insert_btn = _make_button("Inserisci chiave", "ghost")
+        onb_insert_btn.clicked.connect(lambda: self._on_open_settings_clicked(initial_tab=1))
+        onb_actions.addWidget(onb_insert_btn)
+
+        onb_actions.addStretch(1)
+        onb_dismiss_btn = _make_button("Continua solo con trascrizione vocale", "ghost")
+        onb_dismiss_btn.clicked.connect(self._on_dismiss_ai_onboarding)
+        onb_actions.addWidget(onb_dismiss_btn)
+        onb_layout.addLayout(onb_actions)
+
+        self.ai_onboarding_card.setVisible(False)
+        layout.addWidget(self.ai_onboarding_card)
+
         # --- SELETTORE RAPIDO STILE DI DETTATURA ---
         style_box = QFrame()
         style_box.setObjectName("Card")
@@ -823,6 +889,15 @@ class FlowLocalHub(QMainWindow):
         self.flowtype_active_style_label.setObjectName("Badge")
         s_header.addWidget(self.flowtype_active_style_label)
         s_header.addStretch(1)
+
+        self.ai_engine_pill = ThemedPushButton(get_active_runtime_engine())
+        self.ai_engine_pill.setObjectName("FilterPill")
+        self.ai_engine_pill.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.ai_engine_pill.setToolTip("Motore AI attivo — Clicca per aprire Motore AI & Hardware")
+        self.ai_engine_pill.setStyleSheet("padding: 2px 10px; font-size: 11px; min-height: 24px;")
+        self.ai_engine_pill.clicked.connect(lambda: self._on_open_settings_clicked(initial_tab=1))
+        s_header.addWidget(self.ai_engine_pill)
+
         s_layout.addLayout(s_header)
 
         pills_layout = QHBoxLayout()
@@ -1758,7 +1833,7 @@ class FlowLocalHub(QMainWindow):
             col3_layout.setContentsMargins(48, 18, 48, 16)
         col3_layout.setSpacing(8)
 
-        # Toolbar superiore unica: ripristino sidebar, auto-save, Vista Studio + azioni secondarie
+        # Toolbar superiore dell'editor: parte sinistra pulita, tutti i controlli allineati a destra
         editor_top_bar = QHBoxLayout()
         editor_top_bar.setContentsMargins(0, 0, 0, 0)
         editor_top_bar.setSpacing(6)
@@ -1775,93 +1850,89 @@ class FlowLocalHub(QMainWindow):
         self.nk_show_col2_btn.clicked.connect(lambda: self._toggle_nk_card_view(True))
         editor_top_bar.addWidget(self.nk_show_col2_btn)
 
-        self.nk_autosave_badge = QLabel("✓ Salvato automaticamente")
-        self.nk_autosave_badge.setObjectName("NKAutoSaveBadge")
-        self.nk_autosave_badge.setStyleSheet(
-            "background: transparent; border: none; color: #787774; font-size: 12px; font-weight: 400;"
-        )
-        editor_top_bar.addWidget(self.nk_autosave_badge)
-
         editor_top_bar.addStretch(1)
 
-        self.cloud_badge = QLabel("Cloud (0)")
-        self.cloud_badge.setObjectName("CloudBadge")
-        self.cloud_badge.setProperty("pending", False)
-        self.cloud_badge.setFixedHeight(28)
-        self.cloud_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.cloud_badge.setToolTip("Coda Cloud in sospeso")
-        editor_top_bar.addWidget(self.cloud_badge)
+        # Gruppo 1 — Utility & Gestione File (Icon-only 32x32px ghost, gap 6px)
+        grp1_lay = QHBoxLayout()
+        grp1_lay.setContentsMargins(0, 0, 0, 0)
+        grp1_lay.setSpacing(6)
 
-        self.cloud_process_btn = _make_button("Elabora", "success")
-        self.cloud_process_btn.setObjectName("NKActionBtn")
-        self.cloud_process_btn.setEnabled(False)
-        self.cloud_process_btn.setVisible(False)
-        self.cloud_process_btn.clicked.connect(self._on_process_cloud_queue_clicked)
-        editor_top_bar.addWidget(self.cloud_process_btn)
-
-        self.cloud_sync_btn = _make_button(" Cloud", "ghost")
-        self.cloud_sync_btn.setObjectName("NKActionBtn")
-        self.cloud_sync_btn.setIcon(get_icon("cloud", theme_key=self._current_theme, role="text", size=14))
-        self.cloud_sync_btn.setToolTip("Sincronizza note e flashcard con Google Drive")
-        self.cloud_sync_btn.clicked.connect(self._on_sync_cloud_clicked)
-        editor_top_bar.addWidget(self.cloud_sync_btn)
-
-        self.export_all_btn = _make_button("Esporta ▾")
-        self.export_all_btn.setObjectName("NKActionBtn")
-        self.export_all_btn.clicked.connect(self._show_export_all_menu)
-        editor_top_bar.addWidget(self.export_all_btn)
-
-        self.nk_fc_btn = _make_button(" Flashcard", "ghost")
-        self.nk_fc_btn.setObjectName("NKActionBtn")
-        self.nk_fc_btn.setIcon(get_icon("cards", theme_key=self._current_theme, role="text", size=14))
-        self.nk_fc_btn.setToolTip("Genera flashcard da questa nota")
-        self.nk_fc_btn.clicked.connect(self._on_nk_extract_flashcards_clicked)
-        editor_top_bar.addWidget(self.nk_fc_btn)
-
-        self.nk_copy_btn = _make_button("", "ghost")
-        self.nk_copy_btn.setObjectName("NKActionBtn")
-        self.nk_copy_btn.setIcon(get_icon("copy", theme_key=self._current_theme, role="subtitle", size=14))
-        self.nk_copy_btn.setToolTip("Copia Markdown")
-        self.nk_copy_btn.clicked.connect(lambda: self._copy_to_clipboard(self.nk_editor_body.get_markdown_text()))
-        editor_top_bar.addWidget(self.nk_copy_btn)
-
-        self.nk_del_btn = _make_button("", "danger")
-        self.nk_del_btn.setObjectName("NKActionBtn")
-        self.nk_del_btn.setIcon(get_icon("trash", theme_key=self._current_theme, role="danger", size=14))
-        self.nk_del_btn.setToolTip("Elimina nota")
-        self.nk_del_btn.clicked.connect(self._on_nk_delete_clicked)
-        editor_top_bar.addWidget(self.nk_del_btn)
+        self.nk_more_btn = _make_button("", "ghost")
+        self.nk_more_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_more_btn.setFixedSize(32, 32)
+        self.nk_more_btn.setIcon(get_icon("more", theme_key=self._current_theme, role="subtitle", size=15))
+        self.nk_more_btn.setToolTip("Altre azioni (Esporta, Duplica, Elimina)")
+        self.nk_more_btn.clicked.connect(self._show_nk_more_menu)
+        grp1_lay.addWidget(self.nk_more_btn)
 
         self.nk_history_btn = _make_button("", "ghost")
-        self.nk_history_btn.setObjectName("NKActionBtn")
-        self.nk_history_btn.setIcon(get_icon("clock", theme_key=self._current_theme, role="subtitle", size=14))
+        self.nk_history_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_history_btn.setFixedSize(32, 32)
+        self.nk_history_btn.setIcon(get_icon("clock", theme_key=self._current_theme, role="subtitle", size=15))
         self.nk_history_btn.setToolTip("Cronologia versioni")
         self.nk_history_btn.clicked.connect(self._on_nk_history_clicked)
-        editor_top_bar.addWidget(self.nk_history_btn)
+        grp1_lay.addWidget(self.nk_history_btn)
 
-        self.nk_ask_whis_btn = _make_button(" Whis", "accent")
-        self.nk_ask_whis_btn.setObjectName("NKActionBtn")
-        self.nk_ask_whis_btn.setIcon(get_icon("sparkles", theme_key=self._current_theme, role="accent", size=14))
-        self.nk_ask_whis_btn.setToolTip("Chiedi a Whis")
-        self.nk_ask_whis_btn.clicked.connect(self._on_nk_ask_whis_clicked)
-        editor_top_bar.addWidget(self.nk_ask_whis_btn)
+        self.nk_focus_mode_btn = _make_button("", "ghost")
+        self.nk_focus_mode_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_focus_mode_btn.setFixedSize(32, 32)
+        self.nk_focus_mode_btn.setIcon(get_icon("expand", theme_key=self._current_theme, role="subtitle", size=15))
+        self.nk_focus_mode_btn.setToolTip("Schermo intero")
+        self.nk_focus_mode_btn.clicked.connect(self._toggle_nk_focus_mode)
+        grp1_lay.addWidget(self.nk_focus_mode_btn)
+
+        editor_top_bar.addLayout(grp1_lay)
+
+        # Divisore verticale (1px x 18px) con gap 12px tra i due gruppi
+        editor_top_bar.addSpacing(6)  # +6px spacing base = 12px
+        toolbar_divider = QFrame()
+        toolbar_divider.setFixedSize(1, 18)
+        toolbar_divider.setStyleSheet("background-color: rgba(148, 163, 184, 0.28); border: none;")
+        editor_top_bar.addWidget(toolbar_divider, 0, Qt.AlignmentFlag.AlignVCenter)
+        editor_top_bar.addSpacing(6)  # +6px spacing base = 12px
+
+        # Gruppo 2 — Azioni Primarie di Studio & AI (Pillole 32px, gap 6px, all'estrema destra)
+        grp2_lay = QHBoxLayout()
+        grp2_lay.setContentsMargins(0, 0, 0, 0)
+        grp2_lay.setSpacing(6)
 
         self.nk_studio_btn = _make_button(" Vista Studio")
-        self.nk_studio_btn.setObjectName("NKRestorePill")
+        self.nk_studio_btn.setObjectName("NKToolbarPill")
+        self.nk_studio_btn.setFixedHeight(32)
         self.nk_studio_btn.setIcon(get_icon("book", theme_key=self._current_theme, role="text", size=14))
         self.nk_studio_btn.setCheckable(True)
         self.nk_studio_btn.setToolTip("Alterna Modifica e Vista Studio (Ctrl+E)")
         self.nk_studio_btn.clicked.connect(self._on_nk_studio_btn_clicked)
-        editor_top_bar.addWidget(self.nk_studio_btn)
+        grp2_lay.addWidget(self.nk_studio_btn)
 
         self.nk_studio_shortcut = QShortcut(QKeySequence("Ctrl+E"), col3)
         self.nk_studio_shortcut.activated.connect(self._on_nk_studio_shortcut)
 
-        self.nk_focus_mode_btn = _make_button("⛶")
-        self.nk_focus_mode_btn.setObjectName("NKRestorePill")
-        self.nk_focus_mode_btn.setToolTip("Modalità Focus (nascondi/ripristina sidebar)")
-        self.nk_focus_mode_btn.clicked.connect(self._toggle_nk_focus_mode)
-        editor_top_bar.addWidget(self.nk_focus_mode_btn)
+        self.nk_rsvp_btn = _make_button(" RSVP")
+        self.nk_rsvp_btn.setObjectName("NKToolbarPill")
+        self.nk_rsvp_btn.setFixedHeight(32)
+        self.nk_rsvp_btn.setIcon(get_icon("lightning", theme_key=self._current_theme, role="text", size=14))
+        self.nk_rsvp_btn.setToolTip("Lettura veloce RSVP (Alt+R)")
+        self.nk_rsvp_btn.clicked.connect(self._on_nk_rsvp_btn_clicked)
+        grp2_lay.addWidget(self.nk_rsvp_btn)
+
+        self.nk_fc_btn = _make_button(" Flashcard")
+        self.nk_fc_btn.setObjectName("NKToolbarPill")
+        self.nk_fc_btn.setFixedHeight(32)
+        self.nk_fc_btn.setIcon(get_icon("cards", theme_key=self._current_theme, role="text", size=14))
+        self.nk_fc_btn.setToolTip("Genera flashcard da questa nota")
+        self.nk_fc_btn.clicked.connect(self._on_nk_extract_flashcards_clicked)
+        grp2_lay.addWidget(self.nk_fc_btn)
+
+        self.nk_ask_whis_btn = _make_button(" Whis", "accent")
+        self.nk_ask_whis_btn.setObjectName("NKActionBtn")
+        self.nk_ask_whis_btn.setFixedHeight(32)
+        self.nk_ask_whis_btn.setIcon(get_icon("sparkles", theme_key=self._current_theme, role="accent", size=14))
+        self.nk_ask_whis_btn.setToolTip("Chiedi a Whis")
+        self.nk_ask_whis_btn.clicked.connect(self._on_nk_ask_whis_clicked)
+        grp2_lay.addWidget(self.nk_ask_whis_btn)
+
+        editor_top_bar.addLayout(grp2_lay)
 
         col3_layout.addLayout(editor_top_bar)
 
@@ -1915,6 +1986,12 @@ class FlowLocalHub(QMainWindow):
         meta_grid.addWidget(self.nk_editor_profile)
 
         meta_grid.addStretch(1)
+        self.nk_autosave_badge = QLabel("✓ Salvato automaticamente")
+        self.nk_autosave_badge.setObjectName("NKAutoSaveBadge")
+        self.nk_autosave_badge.setStyleSheet(
+            "background: transparent; border: none; color: #787774; font-size: 11.5px; font-weight: 400;"
+        )
+        meta_grid.addWidget(self.nk_autosave_badge)
         col3_layout.addLayout(meta_grid)
 
         # Sottile linea divisoria orizzontale
@@ -1968,6 +2045,7 @@ class FlowLocalHub(QMainWindow):
         self.nk_editor_body.summarizeRequested.connect(self._on_nk_summarize_clicked)
         self.nk_editor_body.flashcardsRequested.connect(self._on_nk_extract_flashcards_clicked)
         self.nk_editor_body.studioViewChanged.connect(self._on_nk_studio_view_changed)
+        self.nk_editor_body.rsvpRequested.connect(self._on_nk_rsvp_requested)
 
         splitter.addWidget(col3)
 
@@ -2653,8 +2731,106 @@ class FlowLocalHub(QMainWindow):
         if hasattr(self, "nk_studio_btn"):
             self.nk_studio_btn.blockSignals(True)
             self.nk_studio_btn.setChecked(is_studio)
-            self.nk_studio_btn.setText("✏️ Modifica" if is_studio else "✦ Vista Studio")
+            self.nk_studio_btn.setText(" Modifica" if is_studio else " Vista Studio")
             self.nk_studio_btn.blockSignals(False)
+
+    def _on_nk_rsvp_btn_clicked(self):
+        if not hasattr(self, "nk_editor_body"):
+            return
+        cur = self.nk_editor_body.textCursor()
+        has_sel = cur.hasSelection() and bool(cur.selectedText().strip())
+        self._on_nk_rsvp_requested(start_block_idx=0, selection_only=has_sel)
+
+    def _show_nk_more_menu(self):
+        pal = self._active_palette()
+        is_dark = self._active_is_dark()
+        bg = pal.get("input_bg") or ("#1A1F29" if is_dark else "#FFFFFF")
+        fg = pal.get("text") or ("#F8FAFC" if is_dark else "#0F172A")
+        bd = pal.get("card_border") or ("#2D3545" if is_dark else "#CBD5E1")
+        hv = pal.get("btn_hover_bg") or ("#253042" if is_dark else "#F1F5F9")
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background-color: {bg}; color: {fg}; border: 1px solid {bd}; padding: 6px; border-radius: 10px; }}"
+            f"QMenu::item {{ padding: 7px 14px; border-radius: 6px; font-size: 12.5px; }}"
+            f"QMenu::item:selected {{ background-color: {hv}; }}"
+            f"QMenu::separator {{ height: 1px; background: {bd}; margin: 4px 8px; }}"
+        )
+
+        # Sottomenu Esporta (opzioni di export esistenti)
+        export_sub = menu.addMenu(get_icon("download", theme_key=self._current_theme, role="subtitle", size=14), "Esporta")
+        export_sub.setStyleSheet(menu.styleSheet())
+        act_md = export_sub.addAction("📄 Markdown (.md)")
+        act_tex = export_sub.addAction("📄 Documento LaTeX (.tex)")
+        act_docx = export_sub.addAction("📘 Documento Word (.docx)")
+        act_pdf = export_sub.addAction("📕 Documento PDF (.pdf)")
+
+        act_dup = menu.addAction(get_icon("copy", theme_key=self._current_theme, role="subtitle", size=14), "Duplica nota")
+        menu.addSeparator()
+
+        act_del = menu.addAction(get_icon("trash", theme_key=self._current_theme, role="danger", size=14), "Elimina nota")
+        # Colore rosso danger per l'azione Elimina nel menu
+        del_font = act_del.font()
+        del_font.setWeight(QFont.Weight.DemiBold)
+        act_del.setFont(del_font)
+
+        chosen = menu.exec(self.nk_more_btn.mapToGlobal(self.nk_more_btn.rect().bottomLeft()))
+        if not chosen:
+            return
+        if chosen in (act_md, act_tex, act_docx, act_pdf):
+            fmt_map = {act_md: "md", act_tex: "tex", act_docx: "docx", act_pdf: "pdf"}
+            self._export_notes_by_format(fmt_map[chosen])
+        elif chosen == act_dup:
+            self._on_nk_duplicate_clicked()
+        elif chosen == act_del:
+            self._on_nk_delete_clicked()
+
+    def _on_nk_duplicate_clicked(self):
+        if not hasattr(self, "nk_editor_body"):
+            return
+        raw_title = self.nk_editor_title.text().strip() or "Appunto senza titolo"
+        content = self.nk_editor_body.get_markdown_text()
+        prof = self.nk_editor_profile.currentText().strip() or "Alessandro"
+        subj = self.nk_editor_subject.text().strip() or "Generale"
+        top = self.nk_editor_topic.text().strip() or "Generale"
+        ntype = self.nk_editor_type.currentText().strip() or "appunto"
+        new_title = f"{raw_title} (Copia)"
+        try:
+            new_id = db.add_study_note(new_title, content, ntype, "", None, prof, subj, top)
+            self._nk_selected_note_id = new_id
+            self._refresh_study_notes_list(select_note_id=new_id)
+            self._set_nk_autosave_badge(saved=True, custom_text="✓ Nota duplicata")
+        except Exception as exc:
+            QMessageBox.warning(self, "Duplica nota", f"Impossibile duplicare la nota:\n{exc}")
+
+    def _on_nk_rsvp_requested(self, start_block_idx: int = 0, selection_only: bool = False):
+        if not hasattr(self, "nk_editor_body"):
+            return
+        md_slice, base_block = self.nk_editor_body.get_rsvp_markdown_slice(
+            start_block_idx=start_block_idx,
+            selection_only=selection_only,
+        )
+        tokens = tokenize_rsvp_markdown(md_slice, start_block_idx=base_block)
+        if not tokens:
+            self._set_nk_autosave_badge(saved=True, custom_text="⚡ RSVP: nessun testo da leggere")
+            return
+        pal = self._active_palette()
+        accent_hex = pal.get("accent") or pal.get("nav_checked_border") or "#818CF8"
+        font_family = getattr(self, "_font_family", "Segoe UI")
+        if "," in font_family:
+            font_family = font_family.split(",")[0].strip().strip("'").strip('"')
+
+        modal = RsvpReaderModal(
+            tokens=tokens,
+            parent=self,
+            accent_hex=accent_hex,
+            font_family=font_family,
+            on_close_block=self.nk_editor_body.focus_block,
+            palette=pal,
+            is_dark=self._active_is_dark(),
+        )
+        self._rsvp_modal = modal
+        modal.open_animated()
 
     def _on_nk_summarize_clicked(self):
         text = self.nk_editor_body.get_markdown_text().strip()
@@ -3474,8 +3650,9 @@ class FlowLocalHub(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        self.cloud_process_btn.setEnabled(False)
-        self.cloud_process_btn.setText("⏳ In elaborazione...")
+        if hasattr(self, "cloud_process_btn"):
+            self.cloud_process_btn.setEnabled(False)
+            self.cloud_process_btn.setText("⏳ In elaborazione...")
         self.sbobina_btn.setEnabled(False)
 
         self.sbobina_status_label.setText(f"Avvio Coda Cloud: 0/{total} completati...")
@@ -3497,8 +3674,9 @@ class FlowLocalHub(QMainWindow):
 
     def _on_cloud_queue_finished(self, count: int, results: list):
         self.sbobina_progress_box.hide()
-        self.cloud_process_btn.setEnabled(True)
-        self.cloud_process_btn.setText("▶️ Elabora Coda")
+        if hasattr(self, "cloud_process_btn"):
+            self.cloud_process_btn.setEnabled(True)
+            self.cloud_process_btn.setText("▶️ Elabora Coda")
         self.sbobina_btn.setEnabled(True)
         self._poll_cloud_queue()
         self._refresh_notes()
@@ -3514,8 +3692,9 @@ class FlowLocalHub(QMainWindow):
 
     def _on_cloud_queue_error(self, err_msg: str):
         self.sbobina_progress_box.hide()
-        self.cloud_process_btn.setEnabled(True)
-        self.cloud_process_btn.setText("▶️ Elabora Coda")
+        if hasattr(self, "cloud_process_btn"):
+            self.cloud_process_btn.setEnabled(True)
+            self.cloud_process_btn.setText("▶️ Elabora Coda")
         self.sbobina_btn.setEnabled(True)
         self._poll_cloud_queue()
         QMessageBox.critical(
@@ -3524,8 +3703,9 @@ class FlowLocalHub(QMainWindow):
 
     def _on_cloud_queue_cancelled(self):
         self.sbobina_progress_box.hide()
-        self.cloud_process_btn.setEnabled(True)
-        self.cloud_process_btn.setText("▶️ Elabora Coda")
+        if hasattr(self, "cloud_process_btn"):
+            self.cloud_process_btn.setEnabled(True)
+            self.cloud_process_btn.setText("▶️ Elabora Coda")
         self.sbobina_btn.setEnabled(True)
         self._poll_cloud_queue()
         self._refresh_notes()
@@ -3747,11 +3927,6 @@ class FlowLocalHub(QMainWindow):
         )
 
     def _show_export_all_menu(self):
-        notes = self._filtered_notes()
-        if not notes:
-            QMessageBox.information(self, "Esporta note", "Non ci sono note o sbobine da esportare.")
-            return
-
         menu = QMenu(self)
         menu.setStyleSheet(
             "QMenu { background-color: #1A1F29; color: #F8FAFC; border: 1px solid #2D3545; padding: 4px; border-radius: 8px; }"
@@ -3764,12 +3939,22 @@ class FlowLocalHub(QMainWindow):
         docx_act = menu.addAction("📘 Documento Word (.docx)")
         pdf_act = menu.addAction("📕 Documento PDF (.pdf)")
 
-        chosen = menu.exec(self.export_all_btn.mapToGlobal(self.export_all_btn.rect().bottomLeft()))
+        anchor = getattr(self, "nk_more_btn", None)
+        pos = anchor.mapToGlobal(anchor.rect().bottomLeft()) if anchor is not None else QCursor.pos()
+        chosen = menu.exec(pos)
         if not chosen:
+            return
+        fmt_map = {md_act: "md", tex_act: "tex", docx_act: "docx", pdf_act: "pdf"}
+        self._export_notes_by_format(fmt_map[chosen])
+
+    def _export_notes_by_format(self, fmt: str):
+        notes = self._filtered_notes()
+        if not notes:
+            QMessageBox.information(self, "Esporta note", "Non ci sono note o sbobine da esportare.")
             return
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M')
-        if chosen == md_act:
+        if fmt == "md":
             default_name = f"FlowLocal_Note_{timestamp}.md"
             path, _ = QFileDialog.getSaveFileName(self, "Esporta tutte le note", default_name, "Markdown (*.md)")
             if path:
@@ -3779,7 +3964,7 @@ class FlowLocalHub(QMainWindow):
                 except Exception as e:
                     QMessageBox.warning(self, "Errore esportazione", f"Impossibile esportare in Markdown:\n{e}")
 
-        elif chosen == tex_act:
+        elif fmt == "tex":
             # Esporta la nota corrente aperta nell'editor (o tutte le filtrate se nessuna è aperta)
             if hasattr(self, "nk_editor_title") and hasattr(self, "nk_editor_body") and (
                 getattr(self, "_nk_selected_note_id", None) or self.nk_editor_body.get_markdown_text().strip()
@@ -3806,7 +3991,7 @@ class FlowLocalHub(QMainWindow):
                 except Exception as e:
                     QMessageBox.warning(self, "Errore esportazione", f"Impossibile esportare in LaTeX:\n{e}")
 
-        elif chosen == docx_act:
+        elif fmt == "docx":
             default_name = f"FlowLocal_Note_{timestamp}.docx"
             path, _ = QFileDialog.getSaveFileName(self, "Esporta tutte le note", default_name, "Documento Word (*.docx)")
             if path:
@@ -3816,7 +4001,7 @@ class FlowLocalHub(QMainWindow):
                 except Exception as e:
                     QMessageBox.warning(self, "Errore esportazione", f"Impossibile esportare in Word:\n{e}")
 
-        elif chosen == pdf_act:
+        elif fmt == "pdf":
             default_name = f"FlowLocal_Note_{timestamp}.pdf"
             path, _ = QFileDialog.getSaveFileName(self, "Esporta tutte le note", default_name, "Documento PDF (*.pdf)")
             if path:
@@ -4211,9 +4396,46 @@ class FlowLocalHub(QMainWindow):
         except Exception:
             pass
 
-    def _on_open_settings_clicked(self):
-        dlg = HubSettingsDialog(self)
+    def _probe_ollama_worker(self):
+        ollama_url = db.get_setting("ollama_base_url", "http://localhost:11434") or "http://localhost:11434"
+        ok = is_ollama_available(ollama_url, timeout=0.8)
+        self._ollamaProbeSignal.emit(ok)
+
+    def _on_ollama_probe_finished(self, ollama_ok: bool):
+        self._ollama_detected = ollama_ok
+        self._refresh_ai_onboarding_and_badge()
+
+    def _on_ai_runtime_changed(self, label: str):
+        if hasattr(self, "ai_engine_pill") and self.ai_engine_pill is not None:
+            self.ai_engine_pill.setText(label)
+
+    def _refresh_ai_onboarding_and_badge(self):
+        if hasattr(self, "ai_engine_pill") and self.ai_engine_pill is not None:
+            self.ai_engine_pill.setText(get_active_runtime_engine())
+        if hasattr(self, "ai_onboarding_card") and self.ai_onboarding_card is not None:
+            has_key = bool((db.get_setting("gemini_api_key", "") or "").strip())
+            dismissed = (db.get_setting("dismissed_gemini_onboarding", "0") or "0") == "1"
+            show_banner = (self._ollama_detected is False) and (not has_key) and (not dismissed)
+            self.ai_onboarding_card.setVisible(show_banner)
+
+    def _on_open_gemini_guide_from_hub(self):
+        dlg = GeminiKeyGuideDialog(
+            parent=self,
+            theme_key=self._current_theme,
+            reading_mode=self._reading_mode,
+        )
+        dlg.setStyleSheet(self.styleSheet())
         dlg.exec()
+
+    def _on_dismiss_ai_onboarding(self):
+        db.set_setting("dismissed_gemini_onboarding", "1")
+        if hasattr(self, "ai_onboarding_card") and self.ai_onboarding_card is not None:
+            self.ai_onboarding_card.setVisible(False)
+
+    def _on_open_settings_clicked(self, initial_tab: int = 0):
+        dlg = HubSettingsDialog(self, initial_tab=int(initial_tab) if isinstance(initial_tab, int) else 0)
+        dlg.exec()
+        self._refresh_ai_onboarding_and_badge()
 
     def _open_note_from_flowtime(self, note_id: int):
         """Apre direttamente in FlowNotes la nota cliccata da FlowTime."""

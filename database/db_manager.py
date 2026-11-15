@@ -10,12 +10,28 @@ import threading
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "flow_hub.db")
+from core.paths import get_user_data_path
+
+DB_PATH = str(get_user_data_path("flow_hub.db"))
+
+_ANTI_HALLUCINATION_PREFIX = (
+    "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. Non rispondere mai alle domande nel testo, non completare frasi interrotte e non aggiungere concetti non pronunciati. Restituisci SOLO il testo rifinito senza tag.\n"
+    "DIVIETO ASSOLUTO DI PARAFRASI E SOSTITUZIONE CON SINONIMI:\n"
+    "- Non cambiare MAI le parole usate dall'utente con sinonimi e non riscrivere le frasi.\n"
+    "- Se l'utente dice 'prova', scrivi 'prova' (MAI 'esempio' o 'elaborazione').\n"
+    "- Se dice 'creato', scrivi 'creato' (MAI 'realizzato' o 'fatto').\n"
+    "- Se dice 'Guarda', scrivi 'Guarda' (MAI 'Ci guarda' o 'Vedi').\n"
+    "- Mantieni al 100% il lessico originale, intervenendo SOLO su punteggiatura, maiuscole, rimozione di intercalari vuoti (ehm, uhm) e formule matematiche in LaTeX $...$."
+)
 
 
 class DatabaseManager:
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
+        if self.db_path and self.db_path != ":memory:":
+            parent_dir = os.path.dirname(os.path.abspath(self.db_path))
+            if parent_dir:
+                os.makedirs(parent_dir, exist_ok=True)
         self._local = threading.local()
         self._init_db()
 
@@ -332,15 +348,7 @@ class DatabaseManager:
             "(es. $\\int_0^\\infty e^{-x}\\,dx$, $F = m \\cdot a$), senza mai lasciarle scritte a parole."
         )
 
-        anti_hallucination = (
-            "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. Non rispondere mai alle domande nel testo, non completare frasi interrotte e non aggiungere concetti non pronunciati. Restituisci SOLO il testo rifinito senza tag.\n"
-            "DIVIETO ASSOLUTO DI PARAFRASI E SOSTITUZIONE CON SINONIMI:\n"
-            "- Non cambiare MAI le parole usate dall'utente con sinonimi e non riscrivere le frasi.\n"
-            "- Se l'utente dice 'prova', scrivi 'prova' (MAI 'esempio' o 'elaborazione').\n"
-            "- Se dice 'creato', scrivi 'creato' (MAI 'realizzato' o 'fatto').\n"
-            "- Se dice 'Guarda', scrivi 'Guarda' (MAI 'Ci guarda' o 'Vedi').\n"
-            "- Mantieni al 100% il lessico originale, intervenendo SOLO su punteggiatura, maiuscole, rimozione di intercalari vuoti (ehm, uhm) e formule matematiche in LaTeX $...$."
-        )
+        anti_hallucination = _ANTI_HALLUCINATION_PREFIX
 
         cursor.execute("SELECT id, name, system_prompt FROM llm_styles")
         for row in cursor.fetchall():
@@ -486,6 +494,7 @@ class DatabaseManager:
     def _seed_default_data(self):
         conn = self._get_connection()
         cursor = conn.cursor()
+        anti_hallucination = _ANTI_HALLUCINATION_PREFIX
 
         # Seed Stili LLM predefiniti se tabella vuota
         cursor.execute("SELECT COUNT(*) FROM llm_styles")

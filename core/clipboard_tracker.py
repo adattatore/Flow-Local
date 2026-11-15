@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import deque
 import ctypes
+import sys
 import threading
 import time
 from typing import Deque, Dict, List, Optional
@@ -147,6 +148,8 @@ class ClipboardDictationTracker:
 
     def save_focus_target(self):
         """Salva l'HWND della finestra attiva all'inizio della dettatura."""
+        if sys.platform != "win32":
+            return
         try:
             hwnd = int(ctypes.windll.user32.GetForegroundWindow() or 0)
             with self._lock:
@@ -160,6 +163,8 @@ class ClipboardDictationTracker:
 
     def restore_focus_target(self):
         """Tenta il ripristino del focus sulla finestra attiva all'inizio della dettatura."""
+        if sys.platform != "win32":
+            return
         with self._lock:
             hwnd = self._saved_hwnd
         if not hwnd:

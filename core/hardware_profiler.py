@@ -9,7 +9,9 @@ from __future__ import annotations
 import ctypes
 import os
 import platform
+import re
 import subprocess
+import sys
 import time
 import warnings
 from dataclasses import dataclass
@@ -35,6 +37,7 @@ class HardwareInfo:
     has_avx2: bool
     recommended_tier: HardwareTier
     detection_ms: float
+    cpu_model: str = ""
 
 
 @dataclass(frozen=True)
@@ -54,12 +57,40 @@ class HardwareProfile:
 _CACHED_HARDWARE_INFO: Optional[HardwareInfo] = None
 
 
+def _read_linux_cpuinfo() -> str:
+    """Legge /proc/cpuinfo su Linux in modo sicuro (< 1ms)."""
+    try:
+        with open("/proc/cpuinfo", "r", encoding="utf-8", errors="ignore") as f:
+            return f.read(65536)
+    except Exception:
+        return ""
+
+
+def _detect_cpu_model() -> str:
+    """Rileva il modello della CPU (es. 'AMD Ryzen 7 ...' su Linux via /proc/cpuinfo)."""
+    try:
+        if sys.platform.startswith("linux"):
+            cpuinfo = _read_linux_cpuinfo()
+            m = re.search(r"^model name\s*:\s*(.+)$", cpuinfo, flags=re.MULTILINE)
+            if m:
+                return m.group(1).strip()
+        proc = platform.processor() or ""
+        return proc.strip()
+    except Exception:
+        return ""
+
+
 def _check_avx2_support() -> bool:
     """Verifica rapida (<1ms) del supporto alle istruzioni AVX2 su CPU x86_64."""
     try:
         if platform.system() == "Windows":
             # PF_AVX2_INSTRUCTIONS_AVAILABLE = 40
             return bool(ctypes.windll.kernel32.IsProcessorFeaturePresent(40))
+        if sys.platform.startswith("linux"):
+            cpuinfo = _read_linux_cpuinfo()
+            m = re.search(r"^flags\s*:\s*(.+)$", cpuinfo, flags=re.MULTILINE)
+            if m:
+                return "avx2" in m.group(1).split()
     except Exception:
         pass
     return False
@@ -145,6 +176,7 @@ def detect_hardware(force_refresh: bool = False) -> HardwareInfo:
 
     cpu_cores = os.cpu_count() or 4
     cpu_arch = platform.machine() or "x86_64"
+    cpu_model = _detect_cpu_model()
     has_avx2 = _check_avx2_support()
 
     # 3. Dettagli GPU NVIDIA (solo se CUDA rilevato o per conferma)
@@ -177,6 +209,7 @@ def detect_hardware(force_refresh: bool = False) -> HardwareInfo:
         has_avx2=has_avx2,
         recommended_tier=rec_tier,
         detection_ms=elapsed_ms,
+        cpu_model=cpu_model,
     )
     _CACHED_HARDWARE_INFO = info
     return info
@@ -261,6 +294,8 @@ def build_profile(tier: HardwareTier, hw: HardwareInfo) -> HardwareProfile:
     w_model, w_dev, w_comp = "base", "cpu", "int8"
     if hw.has_cuda:
         badge = f"{hw.gpu_name} ({hw.vram_gb:.1f} GB VRAM) • Profilo ECO"
+    elif hw.cpu_model:
+        badge = f"{hw.cpu_model} ({hw.cpu_cores} core, {hw.ram_gb:.0f} GB RAM) • Profilo ECO"
     else:
         badge = f"CPU {hw.cpu_cores} core ({hw.ram_gb:.0f} GB RAM) • Profilo ECO"
     detail = (

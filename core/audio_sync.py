@@ -16,8 +16,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-AUDIO_NOTES_DIR = os.path.join(_PROJECT_ROOT, "data", "audio_notes")
+from core.paths import get_user_data_dir, get_user_data_path
+
+_PROJECT_ROOT = str(get_user_data_dir())
+AUDIO_NOTES_DIR = str(get_user_data_path(os.path.join("data", "audio_notes")))
 
 _TOKEN_RE = re.compile(r"\w+(?:['’]\w+)?", re.UNICODE)
 

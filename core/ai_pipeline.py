@@ -11,6 +11,7 @@ Supporta:
 
 import os
 import re
+import sys
 import math
 import time
 import json
@@ -53,8 +54,10 @@ from core.audio_ducker import audio_ducker, AudioDucker
 from core.clipboard_tracker import dictation_tracker
 from core.hardware_profiler import get_active_profile
 from core.gemini_client import (
+    DEFAULT_GEMINI_TIMEOUT,
     generate_content as gemini_generate_content,
     get_ai_routing_config,
+    set_active_runtime_engine,
     should_use_gemini,
 )
 
@@ -152,6 +155,28 @@ def sound_toggle_pause(paused: bool):
     pass
 
 
+def _send_ctrl_shortcut(key_char: str, hold_s: float = 0.015) -> None:
+    """Invia Ctrl+<tasto> su Windows (user32.keybd_event) o Linux (pynput)."""
+    if sys.platform == "win32":
+        vk = 0x56 if key_char.lower() == "v" else 0x43
+        user32 = ctypes.windll.user32
+        user32.keybd_event(0x11, 0, 0, 0)
+        try:
+            user32.keybd_event(vk, 0, 0, 0)
+            time.sleep(hold_s)
+            user32.keybd_event(vk, 0, 0x0002, 0)
+        finally:
+            user32.keybd_event(0x11, 0, 0x0002, 0)
+        return
+
+    from pynput.keyboard import Controller, Key
+    kb = Controller()
+    with kb.pressed(Key.ctrl):
+        kb.press(key_char.lower())
+        time.sleep(hold_s)
+        kb.release(key_char.lower())
+
+
 class WindowsInjector:
     VK_CONTROL = 0x11
     VK_V = 0x56
@@ -172,19 +197,13 @@ class WindowsInjector:
 
         pyperclip.copy(clean_text)
         time.sleep(0.025)
-
-        user32 = ctypes.windll.user32
-        user32.keybd_event(cls.VK_CONTROL, 0, 0, 0)
-        try:
-            user32.keybd_event(cls.VK_V, 0, 0, 0)
-            time.sleep(0.015)
-            user32.keybd_event(cls.VK_V, 0, cls.KEYEVENTF_KEYUP, 0)
-        finally:
-            user32.keybd_event(cls.VK_CONTROL, 0, cls.KEYEVENTF_KEYUP, 0)
+        _send_ctrl_shortcut("v", hold_s=0.015)
 
     @classmethod
     def get_target_point(cls) -> Optional[Tuple[int, int]]:
         """Restituisce le coordinate schermo (x, y) del caret di testo attivo o del campo/finestra target."""
+        if sys.platform != "win32":
+            return None
         try:
             from ctypes import wintypes
 
@@ -727,6 +746,7 @@ class LLMRefiner:
         user_content = f"Testo pronunciato da elaborare:\n<trascrizione>\n{clean_prompt_text}\n</trascrizione>"
 
         routing_cfg = get_ai_routing_config()
+        provider = routing_cfg.get("provider", "local")
         hw_profile = get_active_profile()
         local_model = hw_profile.llm_default_model or LLM_MODEL
         ollama_url = routing_cfg.get("ollama_chat_url") or OLLAMA_API_URL
@@ -735,6 +755,7 @@ class LLMRefiner:
         qwen_ms = 0
         req_timeout = max(6.0, min(14.0, 6.0 + len(raw_text) / 80.0))
         raw_llm_content = ""
+        used_gemini = False
 
         if use_gemini:
             try:
@@ -744,10 +765,13 @@ class LLMRefiner:
                     temperature=0.0,
                     max_output_tokens=max(120, len(raw_text.split()) * 3),
                     stop_sequences=["</trascrizione>"],
-                    timeout=req_timeout,
+                    timeout=DEFAULT_GEMINI_TIMEOUT,
                 )
+                if raw_llm_content:
+                    used_gemini = True
+                    set_active_runtime_engine("Adattivo • Gemini Online" if provider == "adaptive" else "Cloud • Gemini Online")
             except Exception as gem_exc:
-                print(f"[FlowLocal] Gemini BYOK non raggiungibile in dettatura ({gem_exc}). Fallback su Ollama locale.")
+                print(f"[FlowLocal] Gemini non raggiungibile in dettatura ({gem_exc}). Fallback su motore locale.")
                 raw_llm_content = ""
 
         if not raw_llm_content and (not use_gemini or routing_cfg.get("hybrid_fallback", True)):
@@ -776,8 +800,12 @@ class LLMRefiner:
                 with urllib.request.urlopen(req, timeout=req_timeout) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                     raw_llm_content = data.get("message", {}).get("content", "") or ""
+                    if raw_llm_content:
+                        set_active_runtime_engine("Adattivo • Qwen 3.5 Offline" if provider == "adaptive" else "Locale • Qwen 3.5")
             except Exception:
                 raw_llm_content = ""
+                if not used_gemini:
+                    set_active_runtime_engine("Adattivo • Deterministico Offline" if provider == "adaptive" else "Locale • Deterministico")
 
         if raw_llm_content:
             try:
@@ -1907,17 +1935,7 @@ class FlowLocalEngine:
                 LAST_SELECTION_CAPTURE_TIME = time.time()
                 try:
                     pyperclip.copy("")
-                    user32 = ctypes.windll.user32
-                    VK_CONTROL = 0x11
-                    VK_C = 0x43
-                    KEYEVENTF_KEYUP = 0x0002
-                    user32.keybd_event(VK_CONTROL, 0, 0, 0)
-                    try:
-                        user32.keybd_event(VK_C, 0, 0, 0)
-                        time.sleep(0.080)  # Breve attesa per la cattura selezione su Windows
-                        user32.keybd_event(VK_C, 0, KEYEVENTF_KEYUP, 0)
-                    finally:
-                        user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+                    _send_ctrl_shortcut("c", hold_s=0.080)
                     time.sleep(0.020)
 
                     current_clip = (pyperclip.paste() or "").strip()
@@ -2313,15 +2331,7 @@ class FlowLocalEngine:
                 pyperclip.copy(transformed_text)
                 time.sleep(0.04)
 
-                user32 = ctypes.windll.user32
-                VK_CONTROL = 0x11
-                VK_V = 0x56
-                KEYEVENTF_KEYUP = 0x0002
-                user32.keybd_event(VK_CONTROL, 0, 0, 0)
-                user32.keybd_event(VK_V, 0, 0, 0)
-                time.sleep(0.03)
-                user32.keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0)
-                user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+                _send_ctrl_shortcut("v", hold_s=0.03)
 
                 sound_done()
 

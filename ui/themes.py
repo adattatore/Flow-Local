@@ -2878,17 +2878,46 @@ QTextEdit#NKEditorBody:focus {{
     border: none;
 }}
 QPushButton#NKActionBtn {{
-    min-height: 30px;
-    max-height: 30px;
+    min-height: 32px;
+    max-height: 32px;
     border-radius: {p['btn_radius']};
-    padding: 0 11px;
+    padding: 0 12px;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
 }}
 QPushButton#NKActionBtn:pressed {{
     padding-top: 2px;
-    padding-left: 12px;
-    padding-right: 10px;
+    padding-left: 13px;
+    padding-right: 11px;
+}}
+QPushButton#NKToolbarIconBtn {{
+    min-width: 32px;
+    max-width: 32px;
+    min-height: 32px;
+    max-height: 32px;
+    border-radius: {p['btn_radius']};
+    padding: 0;
+}}
+QPushButton#NKToolbarPill {{
+    min-height: 32px;
+    max-height: 32px;
+    border-radius: {p['btn_radius']};
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 600;
+    {p['pill_border_qss']}
+    background-color: {p['nk_pill_bg']};
+    color: {p['btn_text']};
+}}
+QPushButton#NKToolbarPill:hover {{
+    {p['pill_hover_qss']}
+}}
+QPushButton#NKToolbarPill:pressed {{
+    {p['pill_pressed_qss']}
+    padding: 2px 12px 0 12px;
+}}
+QPushButton#NKToolbarPill:checked {{
+    {p['pill_checked_qss']}
 }}
 QPushButton#NKCol1Btn {{
     min-height: 34px;

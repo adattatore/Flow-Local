@@ -625,6 +625,243 @@ class ThemedPushButton(QPushButton):
         painter.end()
 
 
+def _build_theme_preview_qss(theme_key: str) -> str:
+    """Restituisce lo stylesheet QSS dedicato per l'anteprima di un tema classico su ThemePreviewButton."""
+    styles = {
+        "obsidian": """
+            QPushButton#ThemePreviewPill {
+                background-color: #0F141F;
+                border: 1px solid #1C2536;
+                border-radius: 16px;
+                color: #94A3B8;
+                font-family: 'Segoe UI';
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 14px;
+            }
+            QPushButton#ThemePreviewPill:hover {
+                background-color: #161E2E;
+                border: 1px solid #2B3954;
+                color: #F8FAFC;
+            }
+            QPushButton#ThemePreviewPill:checked {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #152D42, stop:1 #2A1B42);
+                border: 2px solid #38BDF8;
+                color: #7DD3FC;
+                font-weight: 700;
+            }
+        """,
+        "light": """
+            QPushButton#ThemePreviewPill {
+                background-color: #FFFFFF;
+                border: 1px solid #CBD5E1;
+                border-radius: 16px;
+                color: #475569;
+                font-family: 'Segoe UI';
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 14px;
+            }
+            QPushButton#ThemePreviewPill:hover {
+                background-color: #F1F5F9;
+                border: 1px solid #94A3B8;
+                color: #0F172A;
+            }
+            QPushButton#ThemePreviewPill:checked {
+                background-color: #E0F2FE;
+                border: 2px solid #38BDF8;
+                color: #0369A1;
+                font-weight: 700;
+            }
+        """,
+        "orb": """
+            QPushButton#ThemePreviewPill {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #EEF8FF, stop:0.55 #F4F0FF, stop:1 #ECFCF6);
+                border: 1px solid #93D5FA;
+                border-radius: 16px;
+                color: #334155;
+                font-family: 'Segoe UI';
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 14px;
+            }
+            QPushButton#ThemePreviewPill:hover {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #DFF2FF, stop:0.55 #ECE2FF, stop:1 #DDF9EE);
+                border: 1px solid #38BDF8;
+                color: #0B1324;
+            }
+            QPushButton#ThemePreviewPill:checked {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #CBEBFF, stop:0.55 #DFCEFF, stop:1 #C9F5E4);
+                border: 2px solid #0284C7;
+                color: #0369A1;
+                font-weight: 700;
+            }
+        """,
+        "dark_orb": """
+            QPushButton#ThemePreviewPill {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0E3452, stop:0.55 #2C144E, stop:1 #0C362A);
+                border: 1px solid #2A7AA8;
+                border-radius: 16px;
+                color: #BAE6FD;
+                font-family: 'Segoe UI';
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 14px;
+            }
+            QPushButton#ThemePreviewPill:hover {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #154870, stop:0.55 #3E1C6E, stop:1 #114A3A);
+                border: 1px solid #A855F7;
+                color: #F8FAFC;
+            }
+            QPushButton#ThemePreviewPill:checked {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1B5E91, stop:0.52 #582599, stop:1 #16634D);
+                border: 2px solid #38BDF8;
+                color: #F0F9FF;
+                font-weight: 700;
+            }
+        """,
+        "amber_crt": """
+            QPushButton#ThemePreviewPill {
+                background-color: #1A1209;
+                border: 1px solid #4A3516;
+                border-bottom: 2px solid #4A3516;
+                border-radius: 2px;
+                color: #E6CFA8;
+                font-family: 'Consolas', 'JetBrains Mono', 'Courier New', monospace;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 14px;
+            }
+            QPushButton#ThemePreviewPill:hover {
+                background-color: #2B1D0D;
+                border: 1px solid #FFB642;
+                border-bottom: 2px solid #FFB642;
+                color: #FFB642;
+            }
+            QPushButton#ThemePreviewPill:checked {
+                background-color: #FFB642;
+                border: 1px solid #FFB642;
+                border-bottom: 2px solid #FFD27D;
+                color: #120D07;
+                font-weight: 700;
+            }
+        """,
+        "starfield_alabaster": """
+            QPushButton#ThemePreviewPill {
+                background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #FFFFFF, stop:1 #EAE8E1);
+                border: 1px solid #C59B27;
+                border-bottom: 2px solid #9E7B1C;
+                border-radius: 5px;
+                color: #1B365D;
+                font-family: 'Segoe UI';
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 14px;
+            }
+            QPushButton#ThemePreviewPill:hover {
+                background-color: #25477A;
+                border: 1px solid #14213D;
+                border-bottom: 2px solid #E5B83B;
+                color: #FFFFFF;
+            }
+            QPushButton#ThemePreviewPill:checked {
+                background-color: #1B365D;
+                border: 1px solid #14213D;
+                border-bottom: 3px solid #C59B27;
+                color: #FFFFFF;
+                font-weight: 700;
+            }
+        """,
+        "cyber_synthwave": """
+            QPushButton#ThemePreviewPill {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #2A0E3D, stop:1 #0F2537);
+                border: 1px solid #FF007F;
+                border-bottom: 2px solid #00F0FF;
+                border-radius: 8px;
+                color: #F0F6FF;
+                font-family: 'Segoe UI';
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0 14px;
+            }
+            QPushButton#ThemePreviewPill:hover {
+                background-color: qradialgradient(cx:0.5, cy:0.5, radius:0.8, fx:0.5, fy:0.5, stop:0 #FF3399, stop:1 #1F0A33);
+                border: 1px solid #00F0FF;
+                border-bottom: 2px solid #00F0FF;
+                color: #FFFFFF;
+            }
+            QPushButton#ThemePreviewPill:checked {
+                background-color: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #FF007F, stop:1 #7928CA);
+                border: 1px solid #00F0FF;
+                border-bottom: 2px solid #00F0FF;
+                color: #FFFFFF;
+                font-weight: 700;
+            }
+        """,
+    }
+    return styles.get(theme_key, styles["obsidian"])
+
+
+class ThemePreviewButton(QPushButton):
+    """Pulsante selettore tema che rispecchia fedelmente colori, forma e font del tema rappresentato."""
+
+    def __init__(self, text: str, theme_key: str, parent: Optional[QWidget] = None):
+        super().__init__(text, parent)
+        self.theme_key = theme_key
+        self.setObjectName("ThemePreviewPill")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+
+        if theme_key in _MORPHOLOGICAL_THEMES:
+            self.setStyleSheet("QPushButton#ThemePreviewPill { background: transparent; border: none; }")
+            p = _resolve_palette(theme_key, False)
+            raw_fam = str(p.get("font_family", "'Segoe UI'"))
+            first_fam = raw_fam.split(",")[0].strip().strip("'\"")
+            font = QFont(first_fam, 9)
+            font.setPixelSize(12)
+            font.setWeight(QFont.Weight.DemiBold)
+            self.setFont(font)
+        else:
+            self.setStyleSheet(_build_theme_preview_qss(theme_key))
+
+    def paintEvent(self, event):
+        if self.theme_key not in _MORPHOLOGICAL_THEMES:
+            super().paintEvent(event)
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        rect = QRectF(0.0, 0.0, float(self.width()), float(self.height()))
+
+        is_checked = self.isChecked()
+        is_hovered = self.underMouse() and self.isEnabled()
+        is_down = self.isDown() and self.isEnabled()
+
+        txt_col = _paint_morphological_surface(
+            painter,
+            rect,
+            self.theme_key,
+            is_checked=is_checked,
+            is_hovered=is_hovered,
+            is_down=is_down,
+            reading_mode=False,
+        )
+        if not self.isEnabled():
+            txt_col.setAlpha(115)
+
+        font = QFont(self.font())
+        font.setWeight(QFont.Weight.Bold if is_checked else QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(txt_col)
+
+        text_rect = rect.adjusted(10.0, 0.0, -10.0, 0.0)
+        if is_down:
+            text_rect.translate(0.5, 1.0)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, self.text())
+        painter.end()
+
+
 def _make_button(text: str, variant: Optional[str] = None) -> QPushButton:
     btn = ThemedPushButton(text)
     btn.setCursor(Qt.CursorShape.PointingHandCursor)

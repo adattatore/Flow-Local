@@ -18,6 +18,7 @@ import json
 import base64
 import ctypes
 import datetime
+import sys
 import urllib.request
 import urllib.error
 from io import BytesIO
@@ -26,7 +27,9 @@ from typing import Callable, Optional, List, Dict, Tuple, Any
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from core.gemini_client import (
+    DEFAULT_GEMINI_TIMEOUT,
     get_ai_routing_config,
+    set_active_runtime_engine,
     should_use_gemini,
     stream_generate_content as gemini_stream_generate,
 )
@@ -288,20 +291,21 @@ def extract_clean_note_content(raw_text: str) -> str:
 
 
 def get_active_window_title() -> str:
-    """Recupera il titolo della finestra attiva in primo piano su Windows."""
-    try:
-        user32 = ctypes.windll.user32
-        hwnd = user32.GetForegroundWindow()
-        if hwnd:
-            length = user32.GetWindowTextLengthW(hwnd)
-            if length > 0:
-                buf = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(hwnd, buf, length + 1)
-                title = buf.value.strip()
-                if title:
-                    return title
-    except Exception as e:
-        print(f"[Whis Active Window Warning] {e}")
+    """Recupera il titolo della finestra attiva in primo piano."""
+    if sys.platform == "win32":
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if hwnd:
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buf = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buf, length + 1)
+                    title = buf.value.strip()
+                    if title:
+                        return title
+        except Exception as e:
+            print(f"[Whis Active Window Warning] {e}")
     try:
         from core.context_detector import get_foreground_window_info
         title, exe = get_foreground_window_info()
@@ -1343,6 +1347,7 @@ class WhisAgent(QObject):
         messages.append(user_msg)
 
         routing_cfg = get_ai_routing_config()
+        provider = routing_cfg.get("provider", "local")
         if screen_b64:
             task_type = "whis_screen"
         elif DEEP_ANALYSIS_KEYWORDS.search(user_prompt or ""):
@@ -1370,14 +1375,15 @@ class WhisAgent(QObject):
                     temperature=0.45,
                     max_output_tokens=2048,
                     model=gem_model,
-                    timeout=30.0,
+                    timeout=DEFAULT_GEMINI_TIMEOUT,
                 ):
                     full_response.append(delta)
                     on_chunk(delta)
                 if full_response:
                     gemini_succeeded = True
+                    set_active_runtime_engine("Adattivo • Gemini Online" if provider == "adaptive" else "Cloud • Gemini Online")
             except Exception as gem_err:
-                print(f"[WhisAgent] Gemini BYOK non raggiungibile ({gem_err}).")
+                print(f"[WhisAgent] Gemini non raggiungibile ({gem_err}). Fallback su motore locale.")
                 if not routing_cfg.get("hybrid_fallback", True):
                     err_text = f"Errore di comunicazione con Gemini ({gem_model}): {gem_err}"
                     self.set_status("Errore", user_prompt)
@@ -1388,6 +1394,7 @@ class WhisAgent(QObject):
                 actual_model = selected_model
 
         if not gemini_succeeded:
+            set_active_runtime_engine("Adattivo • Qwen 3.5 Offline" if provider == "adaptive" else "Locale • Qwen 3.5")
             self.set_status(f"Elaborazione con {selected_model}...", user_prompt)
             ollama_url = routing_cfg.get("ollama_chat_url") or OLLAMA_API_URL
             payload = {

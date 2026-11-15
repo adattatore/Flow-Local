@@ -10,9 +10,11 @@ import os
 import re
 import shutil
 import string
+import sys
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Callable
 
+from core.paths import get_user_data_path
 from database.db_manager import db
 
 
@@ -48,6 +50,13 @@ class CloudSyncManager:
         saved = db.get_setting("cloud_sync_folder")
         if saved and os.path.exists(saved):
             return saved
+
+        # Su Linux i dati utente scrivibili risiedono in ~/.local/share/FlowLocal
+        if sys.platform.startswith("linux"):
+            linux_sync_dir = str(get_user_data_path("FlowLocal_Sync"))
+            os.makedirs(linux_sync_dir, exist_ok=True)
+            db.set_setting("cloud_sync_folder", linux_sync_dir)
+            return linux_sync_dir
 
         # Percorsi tipici di Google Drive Desktop su Windows
         home = os.path.expanduser("~")

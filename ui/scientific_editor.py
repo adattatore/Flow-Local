@@ -98,7 +98,9 @@ def _strip_think_blocks_safe(text: str) -> str:
     return cleaned.strip()
 
 
-BASE_DATA_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from core.paths import get_user_data_dir, is_frozen
+
+BASE_DATA_DIR = str(get_user_data_dir())
 NOTE_MEDIA_DIR = os.path.join(BASE_DATA_DIR, "note_media")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
@@ -897,6 +899,7 @@ SLASH_COMMANDS: List[Dict[str, str]] = [
     {"cmd": "/h3", "label": "H3 /h3", "desc": "Titolo di terzo livello"},
     {"cmd": "/riassumi", "label": "✦  /riassumi", "desc": "Riassumi nota con AI locale"},
     {"cmd": "/flashcard", "label": "❖  /flashcard", "desc": "Genera flashcard d'esame"},
+    {"cmd": "/rsvp", "label": "⚡  /rsvp", "desc": "Lettura veloce RSVP (alias: /speedread, Alt+R)"},
 ]
 
 
@@ -1116,6 +1119,14 @@ class SlashPreviewPopup(QFrame):
                 f"<span style='color:{muted}; font-size:10px;'>Crea carte di ripasso dalla nota corrente.</span></div>",
                 "Salvate nella sezione Flashcard.",
             ),
+            "/rsvp": (
+                "Lettura Veloce RSVP",
+                f"<div style='text-align:center; color:{fg}; font-size:14px; font-weight:700;'>"
+                f"le<span style='color:{acc};'>t</span>tura</div>"
+                f"<div style='text-align:center; color:{muted}; font-size:10px; margin-top:4px;'>"
+                f"350 WPM · ORP focale · Pausa su formule $$</div>",
+                "Scorciatoia: Alt+R (o seleziona testo).",
+            ),
         }
 
         title, html_body, hint = previews.get(
@@ -1210,11 +1221,13 @@ class SlashCommandPopup(QListWidget):
     def filter_commands(self, prefix: str) -> int:
         self.clear()
         q = (prefix or "").lower()
-        # Alias /tabs -> /tabella, /matrix -> /matrice
+        # Alias /tabs -> /tabella, /matrix -> /matrice, /speedread -> /rsvp
         if q == "/tabs":
             q = "/tabella"
         elif q == "/matrix":
             q = "/matrice"
+        elif q.startswith("/sp") and "/speedread".startswith(q):
+            q = "/rsvp"
         for entry in SLASH_COMMANDS:
             if not q or entry["cmd"].startswith(q) or q.lstrip("/") in entry["desc"].lower():
                 item = QListWidgetItem(f"{entry['label']}  —  {entry['desc']}")
@@ -2025,10 +2038,13 @@ class _VisionOcrWorker(QThread):
 
     def run(self):
         from core.gemini_client import (
+            DEFAULT_GEMINI_TIMEOUT,
             generate_content as gemini_generate_content,
             get_ai_routing_config,
+            set_active_runtime_engine,
             should_use_gemini,
         )
+        from core.hardware_profiler import get_active_profile
 
         prompt = (
             "Trascrivi fedelmente il contenuto di questa immagine restituendo SOLO il codice finale, "
@@ -2042,9 +2058,10 @@ class _VisionOcrWorker(QThread):
         )
 
         routing_cfg = get_ai_routing_config()
+        provider = routing_cfg.get("provider", "local")
         use_gemini = should_use_gemini("vision_ocr")
 
-        # 1. Primario Gemini Cloud BYOK se attivo in modalità 'gemini' o 'hybrid'
+        # 1. Primario Gemini Cloud BYOK se attivo in modalità 'adaptive', 'gemini' o 'hybrid'
         if use_gemini:
             try:
                 content = gemini_generate_content(
@@ -2053,20 +2070,22 @@ class _VisionOcrWorker(QThread):
                     image_mime="image/png",
                     temperature=0.1,
                     max_output_tokens=2048,
-                    timeout=25.0,
+                    timeout=DEFAULT_GEMINI_TIMEOUT,
                 )
                 cleaned = _strip_think_blocks_safe(content)
                 if cleaned:
+                    set_active_runtime_engine("Adattivo • Gemini Online" if provider == "adaptive" else "Cloud • Gemini Online")
                     self.ocrCompleted.emit(self.placeholder_id, cleaned, False, "")
                     return
             except Exception as gem_exc:
-                print(f"[VisionOCR] Gemini BYOK non raggiungibile ({gem_exc}).")
+                print(f"[VisionOCR] Gemini non raggiungibile ({gem_exc}). Fallback su motore locale.")
 
-        # 2. Ollama Vision locale (primario in modalità 'local', o fallback se 'hybrid_fallback' attivo)
+        # 2. Ollama Vision locale (primario in modalità 'local', o fallback se 'hybrid_fallback' / 'adaptive' attivo)
         if not use_gemini or routing_cfg.get("hybrid_fallback", True):
+            local_vision_model = get_active_profile().llm_default_model or VISION_OCR_MODEL
             b64_img = base64.b64encode(self.png_bytes).decode("ascii")
             payload = {
-                "model": VISION_OCR_MODEL,
+                "model": local_vision_model,
                 "messages": [
                     {
                         "role": "user",
@@ -2092,6 +2111,7 @@ class _VisionOcrWorker(QThread):
                 content = raw_json.get("message", {}).get("content", "") or ""
                 cleaned = _strip_think_blocks_safe(content)
                 if cleaned:
+                    set_active_runtime_engine("Adattivo • Qwen 3.5 Offline" if provider == "adaptive" else "Locale • Qwen 3.5")
                     self.ocrCompleted.emit(self.placeholder_id, cleaned, False, "")
                     return
             except Exception:
@@ -2112,6 +2132,7 @@ class _VisionOcrWorker(QThread):
                     if len(item) >= 2 and item[1]:
                         lines.append(str(item[1]).strip())
             text_out = "\n".join(lines).strip()
+            set_active_runtime_engine("Adattivo • RapidOCR Offline" if provider == "adaptive" else "Locale • RapidOCR")
             if text_out:
                 self.ocrCompleted.emit(self.placeholder_id, text_out, True, "")
             else:
@@ -2202,7 +2223,8 @@ class _PythonExecWorker(QThread):
             if os.name == "nt":
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-            proc = subprocess.run([sys.executable, "-u", tmp_path], **kwargs)
+            cmd = [sys.executable, "--exec-python", tmp_path] if is_frozen() else [sys.executable, "-u", tmp_path]
+            proc = subprocess.run(cmd, **kwargs)
             elapsed = time.perf_counter() - t0
             raw_out = proc.stdout or ""
             raw_err = self._clean_traceback(proc.stderr or "", tmp_path)
@@ -2485,6 +2507,54 @@ class LatexSourceEditDialog(QDialog):
         return self._edit.toPlainText().strip()
 
 
+class _SelectionFloatingToolbar(QFrame):
+    """Toolbar fluttuante contestuale che appare sopra il testo selezionato."""
+
+    rsvpClicked = pyqtSignal()
+
+    def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True):
+        super().__init__(parent)
+        self._dark_mode = dark_mode
+        self.setObjectName("SelectionFloatingToolbar")
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setSpacing(4)
+
+        self._rsvp_btn = QPushButton("⚡ RSVP", self)
+        self._rsvp_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._rsvp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._rsvp_btn.setToolTip("Lettura veloce RSVP sulla selezione (Alt+R)")
+        self._rsvp_btn.clicked.connect(self.rsvpClicked.emit)
+        lay.addWidget(self._rsvp_btn)
+
+        self.apply_theme(dark_mode)
+        self.adjustSize()
+
+    def apply_theme(self, dark_mode: bool):
+        self._dark_mode = dark_mode
+        if dark_mode:
+            bg = "rgba(18, 24, 38, 0.96)"
+            bd = "rgba(129, 140, 248, 0.35)"
+            fg = "#E2E8F0"
+            hv = "rgba(129, 140, 248, 0.25)"
+        else:
+            bg = "rgba(255, 255, 255, 0.96)"
+            bd = "rgba(79, 70, 229, 0.30)"
+            fg = "#0F172A"
+            hv = "rgba(79, 70, 229, 0.14)"
+        self.setStyleSheet(
+            f"QFrame#SelectionFloatingToolbar {{ background-color: {bg}; border: 1px solid {bd}; border-radius: 9px; }}"
+        )
+        self._rsvp_btn.setStyleSheet(
+            f"QPushButton {{ color: {fg}; background: transparent; border: none; border-radius: 6px; "
+            f"padding: 4px 10px; font-size: 11px; font-weight: 700; }}"
+            f"QPushButton:hover {{ background-color: {hv}; }}"
+        )
+        self.adjustSize()
+
+
 class ScientificNoteEditor(QTextEdit):
     """
     Editor WYSIWYG a Blocchi Reali in stile Notion:
@@ -2502,6 +2572,7 @@ class ScientificNoteEditor(QTextEdit):
     markdownModified = pyqtSignal()
     seekRequested = pyqtSignal(int)
     togglePlayRequested = pyqtSignal()
+    rsvpRequested = pyqtSignal(int, bool)  # (start_block_idx, selection_only)
 
     def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True, reading_mode: bool = False):
         super().__init__(parent)
@@ -2550,8 +2621,13 @@ class ScientificNoteEditor(QTextEdit):
         self.slash_popup.commandChosen.connect(self._apply_slash_command)
         self.slash_popup.hide()
 
+        self._selection_toolbar = _SelectionFloatingToolbar(self.viewport(), dark_mode=dark_mode)
+        self._selection_toolbar.rsvpClicked.connect(self._on_selection_rsvp_clicked)
+        self._selection_toolbar.hide()
+
         self.textChanged.connect(self._on_internal_text_changed)
         self.cursorPositionChanged.connect(self._on_cursor_pos_changed)
+        self.selectionChanged.connect(self._on_selection_changed_for_toolbar)
         sig = dictation_tracker.signals
         if sig is not None:
             sig.historyUpdated.connect(self.viewport().update, Qt.ConnectionType.QueuedConnection)
@@ -2588,6 +2664,7 @@ class ScientificNoteEditor(QTextEdit):
         self.document().setDocumentMargin(12 if reading_mode else 4)
         self.highlighter.set_dark_mode(dark_mode)
         self.slash_popup.apply_theme(dark_mode)
+        self._selection_toolbar.apply_theme(dark_mode)
         for panel in self._code_output_panels.values():
             panel.apply_theme(dark_mode, reading_mode)
         # Aggiorna bordi tabelle e colori dei blocchi esistenti
@@ -3694,7 +3771,105 @@ class ScientificNoteEditor(QTextEdit):
 
     def focusOutEvent(self, event):
         super().focusOutEvent(event)
+        self._selection_toolbar.hide()
         self.viewport().update()
+
+    def _on_selection_changed_for_toolbar(self):
+        if self._is_studio_view:
+            self._selection_toolbar.hide()
+            return
+        cur = self.textCursor()
+        if not cur.hasSelection() or not cur.selectedText().strip():
+            self._selection_toolbar.hide()
+            return
+        # Posiziona la toolbar fluttuante sopra l'inizio (o fine) della selezione
+        start_cur = QTextCursor(self.document())
+        start_cur.setPosition(min(cur.selectionStart(), cur.selectionEnd()))
+        rect = self.cursorRect(start_cur)
+        self._selection_toolbar.adjustSize()
+        tw = self._selection_toolbar.width()
+        th = self._selection_toolbar.height()
+        vp = self.viewport().rect()
+        tx = max(8, min(rect.left(), vp.width() - tw - 8))
+        ty = rect.top() - th - 6
+        if ty < 6:
+            ty = min(vp.height() - th - 6, rect.bottom() + 6)
+        self._selection_toolbar.move(tx, ty)
+        self._selection_toolbar.show()
+        self._selection_toolbar.raise_()
+
+    def _on_selection_rsvp_clicked(self):
+        cur = self.textCursor()
+        if cur.hasSelection():
+            start_cur = QTextCursor(self.document())
+            start_cur.setPosition(min(cur.selectionStart(), cur.selectionEnd()))
+            self._selection_toolbar.hide()
+            self.rsvpRequested.emit(start_cur.blockNumber(), True)
+
+    def get_rsvp_markdown_slice(self, start_block_idx: int = 0, selection_only: bool = False) -> Tuple[str, int]:
+        """Estrae il Markdown (o snippet selezionato) per la modalità RSVP preservando il LaTeX."""
+        if self._is_studio_view:
+            return (self._raw_markdown or "", 0)
+
+        cur = self.textCursor()
+        if selection_only and cur.hasSelection():
+            s_pos = min(cur.selectionStart(), cur.selectionEnd())
+            e_pos = max(cur.selectionStart(), cur.selectionEnd())
+            start_cur = QTextCursor(self.document())
+            start_cur.setPosition(s_pos)
+            base_block = start_cur.blockNumber()
+
+            # Estrai i frammenti nella selezione convertendo eventuali PROP_LATEX_SOURCE in $$...$$
+            parts: List[str] = []
+            blk = start_cur.block()
+            while blk.isValid() and blk.position() <= e_pos:
+                fit = blk.begin()
+                while not fit.atEnd():
+                    frag = fit.fragment()
+                    if frag.isValid():
+                        f_start = frag.position()
+                        f_end = f_start + frag.length()
+                        if f_end > s_pos and f_start < e_pos:
+                            cf = frag.charFormat()
+                            if cf.hasProperty(PROP_LATEX_SOURCE):
+                                tex_src = str(cf.property(PROP_LATEX_SOURCE) or "").strip()
+                                if tex_src:
+                                    parts.append(f"\n$$\n{tex_src}\n$$\n")
+                            else:
+                                txt = frag.text().replace("\ufffc", "")
+                                cut_l = max(0, s_pos - f_start)
+                                cut_r = min(len(txt), e_pos - f_start)
+                                if cut_r > cut_l:
+                                    parts.append(txt[cut_l:cut_r])
+                    fit += 1
+                if blk.position() + blk.length() <= e_pos:
+                    parts.append("\n")
+                blk = blk.next()
+            return ("".join(parts).strip(), base_block)
+
+        # Dal blocco start_block_idx fino alla fine della nota
+        lines: List[str] = []
+        doc = self.document()
+        blk = doc.findBlockByNumber(max(0, start_block_idx))
+        while blk.isValid():
+            lines.append(self._serialize_block_to_md(blk))
+            blk = blk.next()
+        md = "\n".join(lines)
+        md = re.sub(r"\n?\ufffc\n?", "\n", md).replace("\ufffc", "")
+        return (md, max(0, start_block_idx))
+
+    def focus_block(self, block_idx: int):
+        """Riporta il focus nell'editor esattamente al blocco indicato."""
+        if self._is_studio_view:
+            self.setFocus()
+            return
+        doc = self.document()
+        blk = doc.findBlockByNumber(max(0, min(block_idx, doc.blockCount() - 1)))
+        if blk.isValid():
+            cur = QTextCursor(blk)
+            self.setTextCursor(cur)
+            self.ensureCursorVisible()
+        self.setFocus()
 
     def _on_cursor_pos_changed(self):
         if self._inline_calc_suggestion is not None:
@@ -4330,17 +4505,33 @@ class ScientificNoteEditor(QTextEdit):
         elif cmd == "/flashcard":
             self.setTextCursor(cursor)
             self.flashcardsRequested.emit()
+        elif cmd in ("/rsvp", "/speedread"):
+            self.setTextCursor(cursor)
+            self.rsvpRequested.emit(cursor.blockNumber(), False)
 
     # -----------------------------------------------------------------
     # TASTIERA: TAB CALC/TABELLA, BACKSPACE BLOCCHI, AUTO-TODO/QUOTE, SLASH, =
     # -----------------------------------------------------------------
     def keyPressEvent(self, event: QKeyEvent):
+        key = event.key()
+        mods = event.modifiers()
+
+        # Scorciatoia RSVP (Alt+R): selezione se attiva, altrimenti dal blocco cursore a fine nota
+        if key == Qt.Key.Key_R and (mods & Qt.KeyboardModifier.AltModifier) and not (mods & Qt.KeyboardModifier.ControlModifier):
+            cur = self.textCursor()
+            if cur.hasSelection() and cur.selectedText().strip():
+                start_cur = QTextCursor(self.document())
+                start_cur.setPosition(min(cur.selectionStart(), cur.selectionEnd()))
+                self._selection_toolbar.hide()
+                self.rsvpRequested.emit(start_cur.blockNumber(), True)
+            else:
+                self.rsvpRequested.emit(cur.blockNumber(), False)
+            event.accept()
+            return
+
         if self._is_studio_view:
             super().keyPressEvent(event)
             return
-
-        key = event.key()
-        mods = event.modifiers()
 
         # 0. Scorciatoia Play/Pausa Audio-Sync (Ctrl+Spazio) nelle sbobine
         if self._audio_sync_active and key == Qt.Key.Key_Space and (mods & Qt.KeyboardModifier.ControlModifier):

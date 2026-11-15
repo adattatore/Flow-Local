@@ -6,6 +6,7 @@ iniezione del testo in Windows e integrazione con il Database SQLite.
 
 import os
 import re
+import sys
 import site
 import time
 import json
@@ -118,12 +119,20 @@ class WindowsInjector:
         pyperclip.copy(text)
         time.sleep(0.04)
 
-        user32 = ctypes.windll.user32
-        user32.keybd_event(cls.VK_CONTROL, 0, 0, 0)
-        user32.keybd_event(cls.VK_V, 0, 0, 0)
-        time.sleep(0.03)
-        user32.keybd_event(cls.VK_V, 0, cls.KEYEVENTF_KEYUP, 0)
-        user32.keybd_event(cls.VK_CONTROL, 0, cls.KEYEVENTF_KEYUP, 0)
+        if sys.platform == "win32":
+            user32 = ctypes.windll.user32
+            user32.keybd_event(cls.VK_CONTROL, 0, 0, 0)
+            user32.keybd_event(cls.VK_V, 0, 0, 0)
+            time.sleep(0.03)
+            user32.keybd_event(cls.VK_V, 0, cls.KEYEVENTF_KEYUP, 0)
+            user32.keybd_event(cls.VK_CONTROL, 0, cls.KEYEVENTF_KEYUP, 0)
+        else:
+            from pynput.keyboard import Controller, Key
+            kb = Controller()
+            with kb.pressed(Key.ctrl):
+                kb.press("v")
+                time.sleep(0.03)
+                kb.release("v")
 
         def restore():
             time.sleep(0.6)
