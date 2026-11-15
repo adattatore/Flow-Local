@@ -8,7 +8,7 @@ import re
 import sqlite3
 import threading
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "flow_hub.db")
 
@@ -276,6 +276,45 @@ class DatabaseManager:
             );
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_note_folders_parent ON note_folders(parent_id);")
+
+        # 12. Blocco 4: Sessioni Pomodoro per materia, Exam Countdowns e Time Machine delle note
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS study_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_id INTEGER DEFAULT NULL,
+                note_id INTEGER DEFAULT NULL,
+                duration_minutes INTEGER NOT NULL DEFAULT 25,
+                mode TEXT NOT NULL DEFAULT 'focus',
+                completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_study_sessions_subject ON study_sessions(subject_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_study_sessions_completed ON study_sessions(completed_at);")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS exam_countdowns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject_id INTEGER DEFAULT NULL,
+                exam_title TEXT NOT NULL,
+                exam_date TEXT NOT NULL,
+                cfu INTEGER DEFAULT 6,
+                target_notes_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_exam_countdowns_date ON exam_countdowns(exam_date);")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS note_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                note_id INTEGER NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                content TEXT NOT NULL DEFAULT '',
+                trigger_reason TEXT NOT NULL DEFAULT 'Salvataggio automatico',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_note_history_note ON note_history(note_id, id DESC);")
 
         conn.commit()
         self._seed_default_data()
@@ -2025,6 +2064,226 @@ class DatabaseManager:
             WHERE l.note_id = ? AND e.sync_status != 'pending_delete'
             ORDER BY e.event_date DESC, e.start_time ASC
         """, (note_id,))
+        return [dict(r) for r in cursor.fetchall()]
+
+    # -------------------------------------------------------------------------
+    # BLOCCO 4: STUDY SESSIONS, EXAM COUNTDOWNS & TIME MACHINE (NOTE HISTORY)
+    # -------------------------------------------------------------------------
+    def add_study_session(
+        self,
+        subject_id: Optional[int],
+        note_id: Optional[int],
+        duration_minutes: int,
+        mode: str = "focus",
+    ) -> int:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO study_sessions (subject_id, note_id, duration_minutes, mode)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                int(subject_id) if subject_id is not None else None,
+                int(note_id) if note_id is not None else None,
+                max(1, int(duration_minutes)),
+                (mode or "focus").strip().lower(),
+            ),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+    def get_weekly_study_summary(self) -> List[Dict[str, Any]]:
+        """Restituisce i minuti di focus degli ultimi 7 giorni raggruppati per materia."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT s.subject_id,
+                   COALESCE(f.name, 'Generale') AS subject_name,
+                   COALESCE(f.color, '#6366F1') AS subject_color,
+                   SUM(s.duration_minutes) AS total_minutes,
+                   COUNT(*) AS sessions_count
+            FROM study_sessions s
+            LEFT JOIN note_folders f ON s.subject_id = f.id
+            WHERE s.mode = 'focus'
+              AND datetime(s.completed_at, 'localtime') >= datetime('now', 'localtime', '-7 days')
+            GROUP BY s.subject_id
+            ORDER BY total_minutes DESC
+            """
+        )
+        return [dict(r) for r in cursor.fetchall()]
+
+    def _get_subject_folder_ids(self, subject_id: Optional[int]) -> Tuple[List[int], str]:
+        """Restituisce (lista id cartella + sottocartelle, nome materia)."""
+        if subject_id is None:
+            return ([], "Generale")
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name FROM note_folders WHERE id = ?", (int(subject_id),))
+        row = cursor.fetchone()
+        if row is None:
+            return ([], "Generale")
+        subj_name = row["name"]
+        ids = [int(row["id"])]
+        cursor.execute("SELECT id FROM note_folders WHERE parent_id = ?", (int(subject_id),))
+        for sub in cursor.fetchall():
+            ids.append(int(sub["id"]))
+        return (ids, subj_name)
+
+    def add_exam_countdown(
+        self,
+        subject_id: Optional[int],
+        exam_title: str,
+        exam_date: str,
+        cfu: int = 6,
+        target_notes_count: int = 0,
+    ) -> int:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO exam_countdowns (subject_id, exam_title, exam_date, cfu, target_notes_count)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                int(subject_id) if subject_id is not None else None,
+                (exam_title or "Esame").strip(),
+                (exam_date or "").strip(),
+                max(1, int(cfu or 6)),
+                max(0, int(target_notes_count or 0)),
+            ),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+    def delete_exam_countdown(self, exam_id: int) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM exam_countdowns WHERE id = ?", (int(exam_id),))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def get_exam_countdowns(self) -> List[Dict[str, Any]]:
+        """Restituisce gli esami con avanzamento note studiate e ore focus accumulate."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT e.*, COALESCE(f.name, 'Generale') AS subject_name, COALESCE(f.color, '#6366F1') AS subject_color
+            FROM exam_countdowns e
+            LEFT JOIN note_folders f ON e.subject_id = f.id
+            ORDER BY e.exam_date ASC, e.id DESC
+            """
+        )
+        exams = [dict(r) for r in cursor.fetchall()]
+        for ex in exams:
+            sid = ex.get("subject_id")
+            folder_ids, subj_name = self._get_subject_folder_ids(sid)
+            if folder_ids:
+                placeholders = ",".join("?" for _ in folder_ids)
+                cursor.execute(
+                    f"""
+                    SELECT COUNT(*) AS total_notes,
+                           SUM(CASE WHEN COALESCE(is_studied, 0) = 1 THEN 1 ELSE 0 END) AS studied_notes
+                    FROM study_notes
+                    WHERE LOWER(COALESCE(note_type, '')) != 'flashcard'
+                      AND (folder_id IN ({placeholders}) OR (folder_id IS NULL AND LOWER(COALESCE(subject, '')) = LOWER(?)))
+                    """,
+                    (*folder_ids, subj_name),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT COUNT(*) AS total_notes,
+                           SUM(CASE WHEN COALESCE(is_studied, 0) = 1 THEN 1 ELSE 0 END) AS studied_notes
+                    FROM study_notes
+                    WHERE LOWER(COALESCE(note_type, '')) != 'flashcard'
+                      AND LOWER(COALESCE(subject, 'Generale')) = LOWER(?)
+                    """,
+                    (subj_name,),
+                )
+            stat = cursor.fetchone()
+            ex["total_notes"] = int((stat["total_notes"] if stat else 0) or 0)
+            ex["studied_notes"] = int((stat["studied_notes"] if stat else 0) or 0)
+
+            if sid is not None:
+                cursor.execute(
+                    "SELECT COALESCE(SUM(duration_minutes), 0) AS mins FROM study_sessions WHERE mode = 'focus' AND subject_id = ?",
+                    (int(sid),),
+                )
+            else:
+                cursor.execute(
+                    "SELECT COALESCE(SUM(duration_minutes), 0) AS mins FROM study_sessions WHERE mode = 'focus' AND subject_id IS NULL"
+                )
+            frow = cursor.fetchone()
+            ex["focus_minutes"] = int((frow["mins"] if frow else 0) or 0)
+        return exams
+
+    def add_note_snapshot(
+        self,
+        note_id: int,
+        title: str,
+        content: str,
+        trigger_reason: str = "Salvataggio automatico",
+    ) -> Optional[int]:
+        """Salva uno snapshot solo se diverso dall'ultimo e mantiene al massimo 20 versioni per nota."""
+        if note_id is None:
+            return None
+        nid = int(note_id)
+        t_clean = (title or "").strip()
+        c_clean = content or ""
+        if not t_clean and not c_clean.strip():
+            return None
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT title, content FROM note_history WHERE note_id = ? ORDER BY id DESC LIMIT 1",
+            (nid,),
+        )
+        last = cursor.fetchone()
+        if last is not None and last["title"] == t_clean and last["content"] == c_clean:
+            return None
+
+        cursor.execute(
+            """
+            INSERT INTO note_history (note_id, title, content, trigger_reason)
+            VALUES (?, ?, ?, ?)
+            """,
+            (nid, t_clean, c_clean, (trigger_reason or "Salvataggio automatico").strip()),
+        )
+        new_id = int(cursor.lastrowid)
+        # Auto-pruning: mantieni al massimo gli ultimi 20 snapshot per nota
+        cursor.execute(
+            """
+            DELETE FROM note_history
+            WHERE note_id = ?
+              AND id NOT IN (
+                  SELECT id FROM note_history WHERE note_id = ? ORDER BY id DESC LIMIT 20
+              )
+            """,
+            (nid, nid),
+        )
+        conn.commit()
+        return new_id
+
+    def get_note_history(self, note_id: int, limit: int = 20) -> List[Dict[str, Any]]:
+        if note_id is None:
+            return []
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, note_id, title, content, trigger_reason,
+                   datetime(created_at, 'localtime') AS local_created_at
+            FROM note_history
+            WHERE note_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (int(note_id), max(1, int(limit))),
+        )
         return [dict(r) for r in cursor.fetchall()]
 
 
