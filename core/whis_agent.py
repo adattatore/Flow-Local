@@ -1,9 +1,10 @@
 """
 Whis AI Agent — Assistente Virtuale Ingegneristico per FlowLocal
 Caratteristiche:
-- Modello rapido: qwen2.5:3b (default per latenza minima)
-- Modello profondo: qwen2.5:7b (attivato per analisi profonda o codice complesso)
-- Modalità configurabile: 'auto' (3B/7B dinamico), '3b' (solo 3B), '7b' (solo 7B)
+- Modello rapido + Vision (default): qwen3.5:4b (latenza minima e multimodalità nativa)
+- Modello alta precisione + Vision: qwen3.5:9b (attivato per analisi profonda o codice complesso)
+- Modello leggero + Vision: qwen3.5:2b (per profili leggeri)
+- Modalità configurabile: 'auto' (4B/9B dinamico), 'qwen3.5:4b', 'qwen3.5:9b', 'qwen3.5:2b'
 - Personalità: calmo, brillante, arguto, sintetico, 2-4 frasi dritte al punto (salvo codice)
 - Deissi / Clipboard context: lettura automatica appunti se il comando cita 'questo errore/codice/testo...'
 - Memoria di sessione: ultimi 5 scambi per follow-up coerenti
@@ -14,10 +15,12 @@ Caratteristiche:
 import time
 import re
 import json
+import base64
 import ctypes
 import datetime
 import urllib.request
 import urllib.error
+from io import BytesIO
 import pyperclip
 from typing import Callable, Optional, List, Dict, Tuple, Any
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -46,6 +49,15 @@ except ImportError:
     _get_ocr = lambda: None
 
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
+
+
+def strip_think_blocks(text: str) -> str:
+    """Rimuove eventuali blocchi di ragionamento <think>...</think> dall'output LLM."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<think>[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 DEEP_ANALYSIS_KEYWORDS = re.compile(
     r'\b('
@@ -331,6 +343,45 @@ def capture_screen_text() -> str:
 
     return ""
 
+
+def capture_screen_image_base64(max_dim: int = 1280) -> str:
+    """Cattura lo schermo intero come JPEG compresso in base64 per la Vision nativa di Qwen 3.5."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return ""
+
+    pil_img = None
+    if mss is not None:
+        try:
+            with mss.MSS() as sct:
+                mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+                shot = sct.grab(mon)
+                pil_img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+        except Exception as e:
+            print(f"[Whis Vision mss warning] {e}")
+
+    if pil_img is None:
+        try:
+            from PIL import ImageGrab
+            pil_img = ImageGrab.grab().convert("RGB")
+        except Exception as e:
+            print(f"[Whis Vision ImageGrab warning] {e}")
+            return ""
+
+    try:
+        w, h = pil_img.size
+        if max(w, h) > max_dim:
+            scale = max_dim / float(max(w, h))
+            pil_img = pil_img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.Resampling.LANCZOS)
+        buf = BytesIO()
+        pil_img.save(buf, format="JPEG", quality=82, optimize=True)
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as e:
+        print(f"[Whis Vision encode warning] {e}")
+        return ""
+
+
 WHIS_SYSTEM_PROMPT = (
     "Sei Whis, l'assistente virtuale integrato di FlowLocal. "
     "Sei brillante, calmo, arguto, sintetico ed estremamente competente. "
@@ -355,11 +406,12 @@ class WhisAgent(QObject):
     interaction_saved = pyqtSignal(dict)      # (saved_interaction_dict)
     note_created = pyqtSignal(int, str)       # (note_id, title)
 
-    def __init__(self, default_model: str = "qwen2.5:3b", deep_model: str = "qwen2.5:7b", parent=None):
+    def __init__(self, default_model: str = "qwen3.5:4b", deep_model: str = "qwen3.5:9b", light_model: str = "qwen3.5:2b", parent=None):
         super().__init__(parent)
         self.default_model = default_model
         self.deep_model = deep_model
-        self.model_mode = "auto"  # "auto", "3b", "7b"
+        self.light_model = light_model
+        self.model_mode = "auto"  # "auto", "qwen3.5:4b", "qwen3.5:9b", "qwen3.5:2b"
         self.history: List[Dict[str, str]] = []
         self.current_status = "In attesa"
         self.last_query = ""
@@ -367,6 +419,16 @@ class WhisAgent(QObject):
         self.current_subject = "Generale"
         self.current_topic = "Generale"
         self.pending_calendar_create: Optional[Dict[str, Any]] = None
+        self._last_screen_b64: str = ""
+        try:
+            from database.db_manager import db
+            saved_mode = db.get_setting("whis_model_mode", None)
+            if saved_mode:
+                self.set_model_mode(saved_mode)
+                if "qwen2.5" in saved_mode.lower():
+                    db.set_setting("whis_model_mode", self.model_mode)
+        except Exception:
+            pass
 
     def set_study_context(self, profile: str = "Alessandro", subject: str = "Generale", topic: str = "Generale"):
         """Aggiorna il contesto accademico corrente per Whis (Materia, Argomento, Profilo)."""
@@ -376,12 +438,17 @@ class WhisAgent(QObject):
         self.current_topic = (topic or "Generale").strip()
 
     def set_model_mode(self, mode: str):
-        """Imposta la modalità di selezione del modello: 'auto', '3b', '7b'."""
+        """Imposta la modalità di selezione del modello: 'auto', 'qwen3.5:4b', 'qwen3.5:9b', 'qwen3.5:2b'."""
         mode_clean = (mode or "auto").lower().strip()
-        if mode_clean in ("3b", "rapido", "qwen2.5:3b"):
-            self.model_mode = "3b"
-        elif mode_clean in ("7b", "profondo", "qwen2.5:7b"):
-            self.model_mode = "7b"
+        if "qwen2.5" in mode_clean:
+            # Migrazione silenziosa da qualsiasi vecchio tag qwen2.5
+            self.model_mode = "qwen3.5:4b"
+        elif mode_clean in ("3b", "4b", "rapido", "qwen3.5:4b"):
+            self.model_mode = "qwen3.5:4b"
+        elif mode_clean in ("7b", "9b", "profondo", "qwen3.5:9b"):
+            self.model_mode = "qwen3.5:9b"
+        elif mode_clean in ("2b", "leggero", "qwen3.5:2b"):
+            self.model_mode = "qwen3.5:2b"
         else:
             self.model_mode = "auto"
 
@@ -389,11 +456,13 @@ class WhisAgent(QObject):
         return self.model_mode
 
     def select_model(self, prompt: str) -> str:
-        """Determina dinamicamente se impiegare il modello 3B rapido o 7B per compiti complessi."""
-        if self.model_mode == "3b":
+        """Determina dinamicamente se impiegare il modello 4B rapido, 9B alta precisione o 2B leggero."""
+        if self.model_mode == "qwen3.5:4b":
             return self.default_model
-        if self.model_mode == "7b":
+        if self.model_mode == "qwen3.5:9b":
             return self.deep_model
+        if self.model_mode == "qwen3.5:2b":
+            return self.light_model
         if DEEP_ANALYSIS_KEYWORDS.search(prompt):
             return self.deep_model
         return self.default_model
@@ -407,12 +476,15 @@ class WhisAgent(QObject):
 
     def detect_and_attach_screen(self, prompt: str) -> Tuple[str, bool, str]:
         """
-        Superpotere Vista Schermo: Se la richiesta cita schermo, monitor, slide, pagina, finestra, vedi, ecc.,
-        cattura il monitor con mss + RapidOCR e include il titolo della finestra attiva in primo piano.
+        Superpotere Vista Schermo (Vision Nativa Qwen 3.5 + RapidOCR):
+        Se la richiesta cita schermo, monitor, slide, pagina, finestra, vedi, ecc.,
+        cattura lo screenshot per la Vision nativa di Qwen 3.5 + testo RapidOCR e titolo finestra attiva.
         """
+        self._last_screen_b64 = ""
         if SCREEN_TRIGGER_KEYWORDS.search(prompt):
-            self.set_status("Cattura schermo (OCR)...", prompt)
+            self.set_status("Cattura schermo (Vision + OCR)...", prompt)
             window_title = get_active_window_title()
+            self._last_screen_b64 = capture_screen_image_base64()
             screen_txt = capture_screen_text()
             clean_ocr = (screen_txt or "").strip()[:6000]
             if clean_ocr:
@@ -426,7 +498,7 @@ class WhisAgent(QObject):
                 enhanced = (
                     f"[FINESTRA ATTIVA IN PRIMO PIANO]:\n{window_title}\n\n"
                     f"[TESTO SULLO SCHERMO (Screen OCR)]:\n"
-                    f"*(Nessun testo rilevato su schermo o applicazione grafica - Titolo finestra: {window_title})*\n\n"
+                    f"*(Nessun testo OCR estratto - Analizza direttamente l'immagine allegata dello schermo - Titolo finestra: {window_title})*\n\n"
                     f"[Richiesta dell'utente]:\n{prompt}"
                 )
             return enhanced, True, clean_ocr
@@ -643,6 +715,8 @@ class WhisAgent(QObject):
                     {"role": "user", "content": prompt}
                 ],
                 "stream": False,
+                "think": False,
+                "keep_alive": "30m",
                 "format": "json",
                 "options": {"temperature": 0.0}
             }
@@ -653,7 +727,7 @@ class WhisAgent(QObject):
             )
             with urllib.request.urlopen(req, timeout=12.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                content = data.get("message", {}).get("content", "").strip()
+                content = strip_think_blocks(data.get("message", {}).get("content", ""))
                 parsed = json.loads(content)
                 if isinstance(parsed, dict) and "date" in parsed and "title" in parsed:
                     return parsed
@@ -1030,6 +1104,8 @@ class WhisAgent(QObject):
                             {"role": "user", "content": prompt}
                         ],
                         "stream": False,
+                        "think": False,
+                        "keep_alive": "30m",
                         "options": {"temperature": 0.0}
                     }
                     req = urllib.request.Request(
@@ -1039,7 +1115,7 @@ class WhisAgent(QObject):
                     )
                     with urllib.request.urlopen(req, timeout=10.0) as resp_qwen:
                         data = json.loads(resp_qwen.read().decode("utf-8"))
-                        answer = data.get("message", {}).get("content", "").strip()
+                        answer = strip_think_blocks(data.get("message", {}).get("content", ""))
 
                         # Guardrail anti-allucinazione:
                         # Se abbiamo trovato eventi reali ma Qwen dice che non ce ne sono,
@@ -1244,22 +1320,28 @@ class WhisAgent(QObject):
         system_content = WHIS_SYSTEM_PROMPT
         if metadata.get("screen_ocr"):
             system_content = (
-                "ATTENZIONE: HAI ACCESSO VISIVO ALLO SCHERMO DELL'UTENTE TRAMITE IL MODULO OCR LOCALE. "
+                "ATTENZIONE: HAI ACCESSO VISIVO NATIVO (MULTIMODALE VISION + OCR LOCALE) ALLO SCHERMO DELL'UTENTE. "
                 "È ASSOLUTAMENTE VIETATO dire 'Non posso vedere il tuo schermo' o 'Sono un modello testuale'. "
-                "Qui sotto trovi il titolo della finestra attiva e tutto il testo appena letto dallo schermo dell'utente: "
-                "usalo direttamente per rispondere a cosa sta guardando!\n\n"
+                "Qui sotto trovi l'immagine dello schermo, il titolo della finestra attiva e il testo estratto dall'OCR: "
+                "usali direttamente per rispondere con precisione a cosa sta guardando l'utente!\n\n"
                 + WHIS_SYSTEM_PROMPT
             )
 
         messages = [{"role": "system", "content": system_content}]
         # Inietta gli ultimi scambi della sessione (fino a 10 messaggi = 5 scambi)
         messages.extend(self.history[-10:])
-        messages.append({"role": "user", "content": prompt_with_context})
+        user_msg: Dict[str, Any] = {"role": "user", "content": prompt_with_context}
+        if screen_attached and getattr(self, "_last_screen_b64", ""):
+            user_msg["images"] = [self._last_screen_b64]
+            metadata["vision_image"] = True
+        messages.append(user_msg)
 
         payload = {
             "model": selected_model,
             "messages": messages,
             "stream": True,
+            "think": False,
+            "keep_alive": "30m",
             "options": {
                 "temperature": 0.45,
                 "top_p": 0.9,
@@ -1290,8 +1372,8 @@ class WhisAgent(QObject):
                     except Exception:
                         pass
         except Exception as e:
-            # Se il modello profondo fallisce o non risponde, fallback immediato su 3B
-            if selected_model != self.default_model and self.model_mode != "7b":
+            # Se il modello profondo fallisce o non risponde, fallback immediato su qwen3.5:4b
+            if selected_model != self.default_model and self.model_mode != "qwen3.5:9b":
                 try:
                     payload["model"] = self.default_model
                     actual_model = self.default_model

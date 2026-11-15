@@ -14,9 +14,16 @@ Include:
 import base64
 import html
 import io
+import json
 import os
 import re
+import subprocess
+import sys
+import tempfile
 import time
+import urllib.error
+import urllib.request
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib
@@ -25,7 +32,7 @@ from matplotlib.mathtext import math_to_image
 
 from PyQt6.QtCore import (
     Qt, QBuffer, QEvent, QIODevice, QMimeData, QObject, QPoint, QPointF, QRectF,
-    QRegularExpression, QUrl, pyqtSignal
+    QRegularExpression, QThread, QTimer, QUrl, pyqtSignal
 )
 from PyQt6.QtGui import (
     QBrush,
@@ -39,6 +46,7 @@ from PyQt6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPixmap,
     QSyntaxHighlighter,
     QTextBlockFormat,
     QTextBlockUserData,
@@ -67,6 +75,8 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -74,6 +84,18 @@ from PyQt6.QtWidgets import (
 
 from core.math_eval import evaluate_inline_equals, parse_latex_matrix
 from core.clipboard_tracker import dictation_tracker
+
+OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
+VISION_OCR_MODEL = "qwen3.5:4b"
+
+
+def _strip_think_blocks_safe(text: str) -> str:
+    """Rimuove eventuali blocchi <think>...</think> dall'output LLM."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<think>[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 
 BASE_DATA_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -90,6 +112,8 @@ PROP_LATEX_SOURCE = QTextFormat.Property.UserProperty + 5 # sorgente LaTeX su QT
 PROP_AI_NOTE_TITLE = QTextFormat.Property.UserProperty + 6
 PROP_AI_NOTE_BODY = QTextFormat.Property.UserProperty + 7
 PROP_AI_NOTE_EXPANDED = QTextFormat.Property.UserProperty + 8
+PROP_OCR_PLACEHOLDER_ID = QTextFormat.Property.UserProperty + 9
+PROP_CODE_ID = QTextFormat.Property.UserProperty + 10
 
 PLACEHOLDER_TEXTS: Dict[str, str] = {
     "h1": "Titolo 1",
@@ -139,6 +163,37 @@ def _qimage_to_png_b64(img: QImage) -> str:
     return base64.b64encode(bytes(ba.data())).decode("ascii")
 
 
+def _normalize_latex_for_mathtext(expr: str) -> str:
+    """Normalizza costrutti LaTeX comuni per renderli 100% compatibili con matplotlib.mathtext."""
+    s = (expr or "").strip()
+    if s.startswith("$$") and s.endswith("$$") and len(s) > 4:
+        s = s[2:-2].strip()
+    elif s.startswith("$") and s.endswith("$") and len(s) > 2:
+        s = s[1:-1].strip()
+    if not s:
+        return s
+    # Apici/pedici Unicode -> sintassi LaTeX esplicita
+    sup_map = str.maketrans({
+        "⁰": "^0", "¹": "^1", "²": "^2", "³": "^3", "⁴": "^4",
+        "⁵": "^5", "⁶": "^6", "⁷": "^7", "⁸": "^8", "⁹": "^9",
+        "₀": "_0", "₁": "_1", "₂": "_2", "₃": "_3", "₄": "_4",
+        "₅": "_5", "₆": "_6", "₇": "_7", "₈": "_8", "₉": "_9",
+    })
+    s = s.translate(sup_map)
+    s = re.sub(r"\\(displaystyle|textstyle|scriptstyle|limits|nolimits)(?![a-zA-Z])", "", s)
+    s = s.replace("\\dfrac", "\\frac").replace("\\tfrac", "\\frac")
+    s = re.sub(r"\\text\s*\{", r"\\mathrm{", s)
+    s = re.sub(r"\\textbf\s*\{", r"\\mathbf{", s)
+    # Rimuovi spazi attorno a ^, _, { e } (tipici dell'output tokenizzato di Qwen Vision)
+    s = re.sub(r"\s*\^\s*", "^", s)
+    s = re.sub(r"\s*_\s*", "_", s)
+    s = re.sub(r"\{\s+", "{", s)
+    s = re.sub(r"\s+\}", "}", s)
+    s = re.sub(r"(\\[a-zA-Z]+)\s+\{", r"\1{", s)
+    s = re.sub(r"\}\s+\{", "}{", s)
+    return s.strip()
+
+
 def _mathtext_to_transparent_qimage(expr: str, dpi: int, ink_hex: str) -> Optional[QImage]:
     """
     Renderizza un'espressione LaTeX con matplotlib.mathtext su sfondo 100% trasparente
@@ -146,8 +201,9 @@ def _mathtext_to_transparent_qimage(expr: str, dpi: int, ink_hex: str) -> Option
     """
     import numpy as np
 
+    norm_expr = _normalize_latex_for_mathtext(expr)
     buf = io.BytesIO()
-    math_to_image(f"${expr}$", buf, dpi=dpi, format="png", color="#000000")
+    math_to_image(f"${norm_expr}$", buf, dpi=dpi, format="png", color="#000000")
     src = QImage.fromData(buf.getvalue(), "PNG")
     if src.isNull():
         return None
@@ -835,10 +891,11 @@ SLASH_COMMANDS: List[Dict[str, str]] = [
     {"cmd": "/immagine", "label": "🖼️ /immagine", "desc": "Incorpora immagine da file"},
     {"cmd": "/formula", "label": "∑  /formula", "desc": "Blocco equazione LaTeX ($$ ... $$)"},
     {"cmd": "/matrice", "label": "⊞  /matrice", "desc": "Matrice interattiva modificabile (bmatrix)"},
+    {"cmd": "/ocr", "label": "📷 /ocr", "desc": "Estrai LaTeX/Tabella da Immagine (Ctrl+Shift+V)"},
     {"cmd": "/h1", "label": "H1 /h1", "desc": "Titolo grande di sezione"},
     {"cmd": "/h2", "label": "H2 /h2", "desc": "Sottotitolo di sezione"},
     {"cmd": "/h3", "label": "H3 /h3", "desc": "Titolo di terzo livello"},
-    {"cmd": "/riassumi", "label": "✦  /riassumi", "desc": "Riassumi nota con Qwen 2.5 AI"},
+    {"cmd": "/riassumi", "label": "✦  /riassumi", "desc": "Riassumi nota con Qwen 3.5 AI"},
     {"cmd": "/flashcard", "label": "🃏 /flashcard", "desc": "Genera flashcard d'esame"},
 ]
 
@@ -1654,6 +1711,460 @@ class DictationGhostLineEdit(QLineEdit):
         super().keyPressEvent(event)
 
 
+_RAPID_OCR_INSTANCE = None
+
+
+def _get_rapid_ocr():
+    """Inizializza RapidOCR in modo lazy per il fallback istantaneo offline."""
+    global _RAPID_OCR_INSTANCE
+    if _RAPID_OCR_INSTANCE is None:
+        from rapidocr_onnxruntime import RapidOCR
+        _RAPID_OCR_INSTANCE = RapidOCR()
+    return _RAPID_OCR_INSTANCE
+
+
+class _VisionOcrWorker(QThread):
+    """Worker asincrono per Vision OCR: primario qwen3.5:4b su Ollama, fallback RapidOCR."""
+
+    ocrCompleted = pyqtSignal(str, str, bool, str)  # placeholder_id, result_text, used_fallback, error_msg
+
+    def __init__(self, placeholder_id: str, png_bytes: bytes, parent=None):
+        super().__init__(parent)
+        self.placeholder_id = placeholder_id
+        self.png_bytes = png_bytes
+
+    def run(self):
+        b64_img = base64.b64encode(self.png_bytes).decode("ascii")
+        prompt = (
+            "Trascrivi fedelmente il contenuto di questa immagine restituendo SOLO il codice finale, "
+            "senza introduzioni, commenti o spiegazioni:\n"
+            "- Se è una formula, equazione o sistema di equazioni: restituisci codice LaTeX pulito racchiuso tra $$ e $$. "
+            "Fai massima attenzione a esponenti/apici con ^ (es. E = mc^2, x^{n+1}), pedici con _ (es. x_1), "
+            "frazioni con \\frac{a}{b}, radici con \\sqrt{x} e lettere greche.\n"
+            "- Se è una singola matrice numerica o simbolica: restituisci esclusivamente \\begin{bmatrix} ... \\end{bmatrix}.\n"
+            "- Se è una tabella di dati: restituisci una tabella Markdown formattata (| col | ... |).\n"
+            "- Altrimenti restituisci il testo estratto pulito."
+        )
+        payload = {
+            "model": VISION_OCR_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": [b64_img],
+                }
+            ],
+            "stream": False,
+            "think": False,
+            "keep_alive": "30s",
+            "options": {
+                "temperature": 0.1,
+            },
+        }
+        try:
+            req = urllib.request.Request(
+                OLLAMA_CHAT_URL,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=28.0) as resp:
+                raw_json = json.loads(resp.read().decode("utf-8", errors="replace"))
+            content = raw_json.get("message", {}).get("content", "") or ""
+            cleaned = _strip_think_blocks_safe(content)
+            if cleaned:
+                self.ocrCompleted.emit(self.placeholder_id, cleaned, False, "")
+                return
+        except Exception:
+            pass
+
+        # Fallback istantaneo con rapidocr-onnxruntime
+        try:
+            import numpy as np
+            from PIL import Image
+
+            pil_img = Image.open(io.BytesIO(self.png_bytes)).convert("RGB")
+            img_arr = np.array(pil_img)
+            ocr_engine = _get_rapid_ocr()
+            res, _ = ocr_engine(img_arr)
+            lines = []
+            if res:
+                for item in res:
+                    if len(item) >= 2 and item[1]:
+                        lines.append(str(item[1]).strip())
+            text_out = "\n".join(lines).strip()
+            if text_out:
+                self.ocrCompleted.emit(self.placeholder_id, text_out, True, "")
+            else:
+                self.ocrCompleted.emit(self.placeholder_id, "", True, "Nessun testo o formula rilevata nell'immagine.")
+        except Exception as exc:
+            self.ocrCompleted.emit(self.placeholder_id, "", True, f"Errore OCR fallback: {exc}")
+
+
+_PYTHON_PRELUDE = (
+    "import sys, os, math, tempfile, uuid\n"
+    "try:\n"
+    "    import numpy as np\n"
+    "except Exception:\n"
+    "    pass\n"
+    "try:\n"
+    "    import sympy as sp\n"
+    "except Exception:\n"
+    "    pass\n"
+    "try:\n"
+    "    import matplotlib\n"
+    "    matplotlib.use('Agg')\n"
+    "    import matplotlib.pyplot as plt\n"
+    "except Exception:\n"
+    "    plt = None\n"
+)
+_PYTHON_PRELUDE_LINES = _PYTHON_PRELUDE.count("\n")
+
+_PYTHON_POSTLUDE = (
+    "\ntry:\n"
+    "    if 'plt' in globals() and plt is not None and plt.get_fignums():\n"
+    "        _fl_dir = os.path.join(tempfile.gettempdir(), 'flowlocal_plots')\n"
+    "        os.makedirs(_fl_dir, exist_ok=True)\n"
+    "        for _fl_num in list(plt.get_fignums()):\n"
+    "            _fl_fig = plt.figure(_fl_num)\n"
+    "            _fl_out = os.path.join(_fl_dir, f'plot_{uuid.uuid4().hex[:10]}.png')\n"
+    "            _fl_fig.savefig(_fl_out, dpi=150, bbox_inches='tight')\n"
+    "            print(f'__FLOWLOCAL_PLOT__:{_fl_out}')\n"
+    "        plt.close('all')\n"
+    "except Exception as _fl_err:\n"
+    "    print(f'[Plot Error] {_fl_err}', file=sys.stderr)\n"
+)
+
+
+class _PythonExecWorker(QThread):
+    """Esegue un blocco Python in subprocess isolato con timeout 10s e cattura grafici matplotlib."""
+
+    execCompleted = pyqtSignal(str, str, str, list, float, bool)  # code_id, stdout, stderr, plot_paths, elapsed, ok
+
+    def __init__(self, code_id: str, code_text: str, parent=None):
+        super().__init__(parent)
+        self.code_id = code_id
+        self.code_text = code_text
+
+    def _clean_traceback(self, err_text: str, script_path: str) -> str:
+        if not err_text:
+            return ""
+        cleaned = err_text.replace(script_path, "<blocco-python>")
+
+        def _shift_line(m):
+            ln = int(m.group(1))
+            adj = max(1, ln - _PYTHON_PRELUDE_LINES)
+            return f"line {adj}"
+
+        cleaned = re.sub(r"\bline (\d+)\b", _shift_line, cleaned)
+        return cleaned.strip()
+
+    def run(self):
+        t0 = time.perf_counter()
+        tmp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".py", prefix="flowlocal_exec_", delete=False, encoding="utf-8"
+            ) as tf:
+                tmp_path = tf.name
+                tf.write(_PYTHON_PRELUDE)
+                tf.write(self.code_text)
+                if not self.code_text.endswith("\n"):
+                    tf.write("\n")
+                tf.write(_PYTHON_POSTLUDE)
+
+            kwargs: Dict[str, Any] = {
+                "capture_output": True,
+                "text": True,
+                "timeout": 10.0,
+                "encoding": "utf-8",
+                "errors": "replace",
+            }
+            if os.name == "nt":
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+            proc = subprocess.run([sys.executable, "-u", tmp_path], **kwargs)
+            elapsed = time.perf_counter() - t0
+            raw_out = proc.stdout or ""
+            raw_err = self._clean_traceback(proc.stderr or "", tmp_path)
+
+            plot_paths: List[str] = []
+            out_lines: List[str] = []
+            for ln in raw_out.splitlines():
+                if ln.startswith("__FLOWLOCAL_PLOT__:"):
+                    p = ln.split(":", 1)[1].strip()
+                    if p and os.path.exists(p):
+                        plot_paths.append(p)
+                else:
+                    out_lines.append(ln)
+
+            ok = (proc.returncode == 0)
+            self.execCompleted.emit(
+                self.code_id,
+                "\n".join(out_lines).strip(),
+                raw_err,
+                plot_paths,
+                elapsed,
+                ok,
+            )
+        except subprocess.TimeoutExpired:
+            elapsed = time.perf_counter() - t0
+            self.execCompleted.emit(
+                self.code_id,
+                "",
+                "TimeoutError: esecuzione interrotta (limite massimo 10 secondi).",
+                [],
+                elapsed,
+                False,
+            )
+        except Exception as exc:
+            elapsed = time.perf_counter() - t0
+            self.execCompleted.emit(self.code_id, "", f"Errore esecuzione: {exc}", [], elapsed, False)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+
+
+class CodeOutputPanel(QFrame):
+    """Pannello inline compatto sotto al blocco codice Python per stdout, traceback e grafici."""
+
+    closeRequested = pyqtSignal(str)
+    insertPlotRequested = pyqtSignal(str, str)  # code_id, plot_path
+
+    def __init__(self, code_id: str, parent=None, dark_mode: bool = True, reading_mode: bool = False):
+        super().__init__(parent)
+        self.code_id = code_id
+        self._dark_mode = dark_mode
+        self._reading_mode = reading_mode
+        self._copy_text = ""
+        self._plot_paths: List[str] = []
+
+        self.setObjectName("CodeOutputPanel")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        root_lay = QVBoxLayout(self)
+        root_lay.setContentsMargins(10, 6, 10, 8)
+        root_lay.setSpacing(6)
+
+        hdr = QHBoxLayout()
+        hdr.setContentsMargins(0, 0, 0, 0)
+        hdr.setSpacing(6)
+
+        self._title_lbl = QLabel("Output")
+        hdr.addWidget(self._title_lbl)
+        hdr.addStretch(1)
+
+        self._insert_plot_btn = QPushButton("📥 Inserisci grafico nella nota")
+        self._insert_plot_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._insert_plot_btn.clicked.connect(self._on_insert_plot)
+        self._insert_plot_btn.hide()
+        hdr.addWidget(self._insert_plot_btn)
+
+        self._copy_btn = QPushButton("📋 Copia")
+        self._copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._copy_btn.clicked.connect(self._on_copy)
+        hdr.addWidget(self._copy_btn)
+
+        self._close_btn = QPushButton("✕")
+        self._close_btn.setFixedSize(22, 20)
+        self._close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._close_btn.clicked.connect(lambda: self.closeRequested.emit(self.code_id))
+        hdr.addWidget(self._close_btn)
+        root_lay.addLayout(hdr)
+
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll.setMaximumHeight(220)
+
+        self._body_widget = QWidget()
+        self._body_lay = QVBoxLayout(self._body_widget)
+        self._body_lay.setContentsMargins(0, 0, 0, 0)
+        self._body_lay.setSpacing(6)
+
+        self._out_lbl = QLabel()
+        self._out_lbl.setWordWrap(True)
+        self._out_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._out_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._body_lay.addWidget(self._out_lbl)
+
+        self._err_lbl = QLabel()
+        self._err_lbl.setWordWrap(True)
+        self._err_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._err_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        self._body_lay.addWidget(self._err_lbl)
+
+        self._plots_container = QWidget()
+        self._plots_lay = QVBoxLayout(self._plots_container)
+        self._plots_lay.setContentsMargins(0, 0, 0, 0)
+        self._plots_lay.setSpacing(6)
+        self._body_lay.addWidget(self._plots_container)
+
+        self._scroll.setWidget(self._body_widget)
+        root_lay.addWidget(self._scroll)
+
+        self.apply_theme(dark_mode, reading_mode)
+
+    def apply_theme(self, dark_mode: bool, reading_mode: bool = False):
+        self._dark_mode = dark_mode
+        self._reading_mode = reading_mode
+        if reading_mode:
+            bg = "#1E1712" if dark_mode else "#EFE2C8"
+            bd = "#3A2F26" if dark_mode else "#DCC9A5"
+            fg = "#E2E8F0" if dark_mode else "#292524"
+            btn_bg = "#2C231C" if dark_mode else "#E5D3B3"
+        else:
+            bg = "#161820" if dark_mode else "#F1F5F9"
+            bd = "#2D3343" if dark_mode else "#CBD5E1"
+            fg = "#E2E8F0" if dark_mode else "#1E293B"
+            btn_bg = "#232836" if dark_mode else "#E2E8F0"
+        err_fg = "#FCA5A5" if dark_mode else "#B91C1C"
+        muted = "#94A3B8" if dark_mode else "#475569"
+
+        self.setStyleSheet(
+            f"QFrame#CodeOutputPanel {{ background-color: {bg}; border: 1px solid {bd}; border-radius: 8px; }}"
+            f"QScrollArea {{ background-color: transparent; }}"
+            f"QLabel {{ color: {fg}; font-family: Consolas, monospace; font-size: 11px; }}"
+            f"QPushButton {{ background-color: {btn_bg}; color: {fg}; border: 1px solid {bd}; "
+            f"border-radius: 4px; padding: 2px 8px; font-size: 11px; }}"
+            f"QPushButton:hover {{ background-color: #4F46E5; color: #FFFFFF; }}"
+        )
+        self._title_lbl.setStyleSheet(f"color: {muted}; font-family: 'Segoe UI', sans-serif; font-weight: 600; font-size: 11px;")
+        self._err_lbl.setStyleSheet(f"color: {err_fg}; font-family: Consolas, monospace; font-size: 11px;")
+
+    def set_result(self, stdout: str, stderr: str, plot_paths: List[str], elapsed: float, ok: bool):
+        self._plot_paths = [p for p in (plot_paths or []) if os.path.exists(p)]
+        status_txt = f"✓ {elapsed:.2f}s" if ok else f"✕ Errore ({elapsed:.2f}s)"
+        self._title_lbl.setText(f"Output  •  {status_txt}")
+
+        if stdout:
+            self._out_lbl.setText(stdout)
+            self._out_lbl.show()
+        elif not stderr and not self._plot_paths:
+            self._out_lbl.setText("(Nessun output)")
+            self._out_lbl.show()
+        else:
+            self._out_lbl.hide()
+
+        if stderr:
+            self._err_lbl.setText(stderr)
+            self._err_lbl.show()
+        else:
+            self._err_lbl.hide()
+
+        while self._plots_lay.count():
+            item = self._plots_lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for p_path in self._plot_paths:
+            pix = QPixmap(p_path)
+            if not pix.isNull():
+                lbl = QLabel()
+                lbl.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                scaled = pix.scaledToWidth(min(480, pix.width()), Qt.TransformationMode.SmoothTransformation)
+                lbl.setPixmap(scaled)
+                self._plots_lay.addWidget(lbl)
+
+        self._plots_container.setVisible(bool(self._plot_paths))
+        self._insert_plot_btn.setVisible(bool(self._plot_paths))
+        self._copy_text = "\n".join(x for x in (stdout, stderr) if x).strip()
+
+        self._body_widget.adjustSize()
+        content_h = self._body_widget.sizeHint().height() + 44
+        self.setFixedHeight(max(68, min(280, content_h)))
+
+    def _on_copy(self):
+        if self._copy_text:
+            QApplication.clipboard().setText(self._copy_text)
+            self._copy_btn.setText("✓ Copiato")
+            QTimer.singleShot(1400, lambda: self._copy_btn.setText("📋 Copia"))
+
+    def _on_insert_plot(self):
+        if self._plot_paths:
+            self.insertPlotRequested.emit(self.code_id, self._plot_paths[0])
+
+
+class LatexSourceEditDialog(QDialog):
+    """Dialog tematizzato per modificare il codice LaTeX di una formula inline."""
+
+    def __init__(self, initial_tex: str, dark_mode: bool = True, reading_mode: bool = False, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Modifica Formula LaTeX")
+        self.setMinimumWidth(440)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+
+        if reading_mode:
+            bg = "#1E1712" if dark_mode else "#FBF5E9"
+            card_bg = "#2A2018" if dark_mode else "#F3E8D2"
+            bd = "#44372D" if dark_mode else "#DCC9A5"
+            fg = "#F8FAFC" if dark_mode else "#1C1917"
+            muted = "#CBD5E1" if dark_mode else "#57534E"
+            btn_bg = "#33281F" if dark_mode else "#E5D3B3"
+        else:
+            bg = "#141824" if dark_mode else "#FFFFFF"
+            card_bg = "#1E2433" if dark_mode else "#F8FAFC"
+            bd = "#334155" if dark_mode else "#CBD5E1"
+            fg = "#F8FAFC" if dark_mode else "#0F172A"
+            muted = "#94A3B8" if dark_mode else "#475569"
+            btn_bg = "#1E293B" if dark_mode else "#E2E8F0"
+
+        self.setStyleSheet(
+            f"QDialog {{ background-color: {bg}; color: {fg}; }}"
+            f"QLabel {{ color: {muted}; font-size: 12px; }}"
+            f"QTextEdit {{ background-color: {card_bg}; color: {fg}; border: 1px solid {bd}; "
+            f"border-radius: 6px; padding: 8px; font-family: Consolas, monospace; font-size: 13px; }}"
+            f"QTextEdit:focus {{ border: 1px solid #6366F1; }}"
+            f"QPushButton {{ background-color: {btn_bg}; color: {fg}; border: 1px solid {bd}; "
+            f"border-radius: 6px; padding: 6px 14px; font-size: 12px; font-weight: 600; }}"
+            f"QPushButton:hover {{ background-color: #475569; color: #FFFFFF; }}"
+            f"QPushButton#OkBtn {{ background-color: #4F46E5; color: #FFFFFF; border: 1px solid #4338CA; }}"
+            f"QPushButton#OkBtn:hover {{ background-color: #4338CA; }}"
+        )
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(10)
+
+        lbl = QLabel("Codice LaTeX (es. E = mc^2, \\frac{a}{b}):")
+        lay.addWidget(lbl)
+
+        self._edit = QTextEdit()
+        self._edit.setAcceptRichText(False)
+        self._edit.setMinimumHeight(110)
+        self._edit.setPlainText(initial_tex)
+        self._edit.selectAll()
+        lay.addWidget(self._edit)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        cancel_btn = QPushButton("Annulla")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        ok_btn = QPushButton("Salva")
+        ok_btn.setObjectName("OkBtn")
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self.accept)
+        btn_row.addWidget(ok_btn)
+        lay.addLayout(btn_row)
+
+        self._edit.setFocus()
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            self.accept()
+            return
+        super().keyPressEvent(event)
+
+    def latex_text(self) -> str:
+        return self._edit.toPlainText().strip()
+
+
 class ScientificNoteEditor(QTextEdit):
     """
     Editor WYSIWYG a Blocchi Reali in stile Notion:
@@ -1698,6 +2209,16 @@ class ScientificNoteEditor(QTextEdit):
         self._sync_accent_color: QColor = QColor("#6366F1")
         self._active_highlight_span = None
         self._auto_scroll_paused: bool = False
+
+        # Blocco 3B: Vision OCR & Inline Python Execution state
+        self._active_ocr_workers: List[_VisionOcrWorker] = []
+        self._active_exec_workers: List[_PythonExecWorker] = []
+        self._code_exec_states: Dict[str, Dict[str, Any]] = {}
+        self._code_output_panels: Dict[str, CodeOutputPanel] = {}
+        self._toast_label: Optional[QLabel] = None
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self._hide_discrete_toast)
 
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
@@ -1747,6 +2268,8 @@ class ScientificNoteEditor(QTextEdit):
         self.document().setDocumentMargin(12 if reading_mode else 4)
         self.highlighter.set_dark_mode(dark_mode)
         self.slash_popup.apply_theme(dark_mode)
+        for panel in self._code_output_panels.values():
+            panel.apply_theme(dark_mode, reading_mode)
         # Aggiorna bordi tabelle e colori dei blocchi esistenti
         cur_md = self.get_markdown_text()
         self.set_markdown_text(cur_md)
@@ -2154,10 +2677,10 @@ class ScientificNoteEditor(QTextEdit):
         else:
             try:
                 ink_hex = _editor_ink_hex(self._dark_mode, self._reading_mode)
-                qimg = _mathtext_to_transparent_qimage(clean, dpi=175, ink_hex=ink_hex)
+                qimg = _mathtext_to_transparent_qimage(clean, dpi=190, ink_hex=ink_hex)
                 if qimg is not None and not qimg.isNull():
-                    w_px = max(20, int(qimg.width() * 0.62))
-                    h_px = max(20, int(qimg.height() * 0.62))
+                    w_px = max(20, int(qimg.width() * 0.68))
+                    h_px = max(20, int(qimg.height() * 0.68))
             except Exception:
                 qimg = None
 
@@ -2295,6 +2818,7 @@ class ScientificNoteEditor(QTextEdit):
         f_fmt.setBottomMargin(12)
         f_fmt.setBorder(0)
         f_fmt.setProperty(PROP_FRAME_KIND, lang or "python")
+        f_fmt.setProperty(PROP_CODE_ID, uuid.uuid4().hex[:12])
 
         frame = cursor.insertFrame(f_fmt)
         inner_cur = frame.firstCursorPosition()
@@ -2378,6 +2902,8 @@ class ScientificNoteEditor(QTextEdit):
     def paintEvent(self, event):
         self._block_action_rects = []
         pending_delete_badges: List[Tuple[QRectF, str, Any]] = []
+        pending_run_badges: List[Tuple[QRectF, QRectF, QTextFrame, str]] = []
+        visible_code_panel_rects: Dict[str, QRectF] = {}
         vp_rect = self.viewport().rect()
 
         painter = QPainter(self.viewport())
@@ -2400,6 +2926,7 @@ class ScientificNoteEditor(QTextEdit):
         root = self.document().rootFrame()
         for frame in root.childFrames():
             if frame.frameFormat().hasProperty(PROP_FRAME_KIND):
+                f_kind = str(frame.frameFormat().property(PROP_FRAME_KIND) or "")
                 f_rect = doc_layout.frameBoundingRect(frame).translated(hx, vy)
                 draw_rect = QRectF(
                     2.0,
@@ -2413,6 +2940,13 @@ class ScientificNoteEditor(QTextEdit):
                 if draw_rect.bottom() >= 0 and draw_rect.top() <= vp_rect.height():
                     del_rect = QRectF(draw_rect.right() - 24.0, draw_rect.top() + 6.0, 18.0, 18.0)
                     pending_delete_badges.append((del_rect, "delete_frame", frame))
+                    if f_kind in ("python", "py"):
+                        code_id = str(frame.frameFormat().property(PROP_CODE_ID) or "")
+                        run_rect = QRectF(del_rect.left() - 70.0, draw_rect.top() + 6.0, 64.0, 18.0)
+                        status_rect = QRectF(run_rect.left() - 106.0, draw_rect.top() + 6.0, 100.0, 18.0)
+                        pending_run_badges.append((run_rect, status_rect, frame, code_id))
+                        if code_id and code_id in self._code_output_panels:
+                            visible_code_panel_rects[code_id] = draw_rect
 
         # 2. Disegna barra verticale Quote (3px), Callout, File, AI Note
         block = self.document().begin()
@@ -2614,7 +3148,46 @@ class ScientificNoteEditor(QTextEdit):
                         preview["ghost_text"],
                     )
 
-        # 5. Pulsanti discreti ✕ per eliminare blocchi speciali (/code, /callout, /file, ai_note)
+        # 5. Pulsanti discreti ✕ e ▶ Esegui per blocchi speciali (/code, /callout, /file, ai_note)
+        for run_rect, status_rect, frame, code_id in pending_run_badges:
+            st = self._code_exec_states.get(code_id, {}) if code_id else {}
+            st_kind = st.get("status", "ready")
+            elapsed = st.get("elapsed", 0.0)
+            if st_kind == "running":
+                st_txt = "⏳ Esecuzione..."
+                st_col = QColor("#FBBF24" if self._dark_mode else "#D97706")
+            elif st_kind == "done":
+                st_txt = f"✓ {elapsed:.2f}s"
+                st_col = QColor("#34D399" if self._dark_mode else "#059669")
+            elif st_kind == "error":
+                st_txt = f"✕ {elapsed:.2f}s"
+                st_col = QColor("#F87171" if self._dark_mode else "#DC2626")
+            else:
+                st_txt = "Pronto"
+                st_col = QColor("#94A3B8" if self._dark_mode else "#64748B")
+
+            sf = QFont(self.font())
+            sf.setPointSizeF(8.0)
+            fg_painter.setFont(sf)
+            fg_painter.setPen(QPen(st_col))
+            fg_painter.drawText(status_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, st_txt)
+
+            run_idx = len(self._block_action_rects)
+            self._block_action_rects.append((run_rect, "run_code", frame))
+            r_hov = (self._hovered_action_idx == run_idx)
+            r_bg = QColor("#059669" if r_hov else ("#1E293B" if self._dark_mode else "#E2E8F0"))
+            r_bg.setAlpha(235 if r_hov else 190)
+            r_fg = QColor("#FFFFFF" if r_hov else ("#E2E8F0" if self._dark_mode else "#1E293B"))
+            fg_painter.setPen(Qt.PenStyle.NoPen)
+            fg_painter.setBrush(QBrush(r_bg))
+            fg_painter.drawRoundedRect(run_rect, 4.0, 4.0)
+            fg_painter.setPen(QPen(r_fg))
+            rf = QFont(self.font())
+            rf.setPointSizeF(8.2)
+            rf.setWeight(QFont.Weight.DemiBold)
+            fg_painter.setFont(rf)
+            fg_painter.drawText(run_rect, Qt.AlignmentFlag.AlignCenter, "▶ Esegui")
+
         for rect, action_kind, target in pending_delete_badges:
             idx = len(self._block_action_rects)
             self._block_action_rects.append((rect, action_kind, target))
@@ -2622,12 +3195,34 @@ class ScientificNoteEditor(QTextEdit):
 
         fg_painter.end()
 
+        # 6. Riposiziona pannelli Output inline sotto i rispettivi blocchi codice Python
+        for cid, panel in list(self._code_output_panels.items()):
+            f_draw_rect = visible_code_panel_rects.get(cid)
+            if f_draw_rect is None:
+                panel.hide()
+                continue
+            pw = max(160, int(f_draw_rect.width()))
+            px = int(f_draw_rect.left())
+            py = int(f_draw_rect.bottom()) + 4
+            if py > vp_rect.height() - 16 or py + panel.height() < 0:
+                panel.hide()
+                continue
+            if panel.width() != pw:
+                panel.setFixedWidth(pw)
+            panel.move(px, py)
+            if not panel.isVisible():
+                panel.show()
+                panel.raise_()
+
     # -----------------------------------------------------------------
     # ELIMINAZIONE BLOCCHI UNDO-SAFE & MATRICE IN-PLACE
     # -----------------------------------------------------------------
     def _delete_frame_undoable(self, frame: QTextFrame):
         if frame is None:
             return
+        cid = str(frame.frameFormat().property(PROP_CODE_ID) or "")
+        if cid:
+            self._close_code_output_panel(cid)
         doc = self.document()
         c = QTextCursor(doc)
         c.beginEditBlock()
@@ -3106,6 +3701,8 @@ class ScientificNoteEditor(QTextEdit):
                 if rect.contains(pt_f):
                     if action_kind == "delete_frame":
                         self._delete_frame_undoable(target)
+                    elif action_kind == "run_code":
+                        self._run_code_frame(target)
                     elif action_kind == "delete_block":
                         self._delete_block_undoable(target)
                     elif action_kind == "delete_matrix":
@@ -3147,41 +3744,92 @@ class ScientificNoteEditor(QTextEdit):
 
         super().mousePressEvent(event)
 
-    def _edit_latex_at_cursor(self, cur: QTextCursor, old_tex: str):
+    def _find_latex_fragment_at_pos(self, pos: int) -> Optional[Tuple[int, str]]:
+        """Trova il singolo carattere immagine LaTeX (PROP_LATEX_SOURCE) vicino a pos."""
+        doc = self.document()
+        for probe_pos in (pos, pos - 1, pos + 1):
+            if probe_pos < 0 or probe_pos >= doc.characterCount():
+                continue
+            block = doc.findBlock(probe_pos)
+            if not block.isValid():
+                continue
+            fit = block.begin()
+            while not fit.atEnd():
+                frag = fit.fragment()
+                if frag.isValid() and frag.position() <= probe_pos < frag.position() + frag.length():
+                    cf = frag.charFormat()
+                    if cf.hasProperty(PROP_LATEX_SOURCE):
+                        return (frag.position(), str(cf.property(PROP_LATEX_SOURCE) or ""))
+                fit += 1
+        return None
+
+    def _edit_latex_at_cursor(self, cur: QTextCursor, old_tex: str, frag_pos: Optional[int] = None):
+        if frag_pos is None:
+            hit = self._find_latex_fragment_at_pos(min(cur.selectionStart(), cur.selectionEnd()))
+            if hit is not None:
+                frag_pos, old_tex = hit
         if re.search(r"\\begin\{[bpv]matrix\}", old_tex):
-            pos = min(cur.selectionStart(), cur.selectionEnd())
+            pos = frag_pos if frag_pos is not None else min(cur.selectionStart(), cur.selectionEnd())
             self._open_inline_matrix_editor(pos, old_tex)
             return
-        val, accepted = QInputDialog.getMultiLineText(
-            self,
-            "Modifica LaTeX",
-            "Codice LaTeX:",
+
+        anchor_cur = None
+        if frag_pos is not None and 0 <= frag_pos < self.document().characterCount() - 1:
+            anchor_cur = QTextCursor(self.document())
+            anchor_cur.setPosition(frag_pos)
+            anchor_cur.setPosition(frag_pos + 1, QTextCursor.MoveMode.KeepAnchor)
+
+        dlg = LatexSourceEditDialog(
             old_tex,
+            dark_mode=self._dark_mode,
+            reading_mode=self._reading_mode,
+            parent=self,
         )
-        if accepted and val.strip():
-            c = QTextCursor(cur)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_tex = dlg.latex_text()
+            if not new_tex:
+                return
+            # Rimuovi eventuali delimitatori $ / $$ esterni inseriti dall'utente
+            if new_tex.startswith("$$") and new_tex.endswith("$$") and len(new_tex) > 4:
+                new_tex = new_tex[2:-2].strip()
+            elif new_tex.startswith("$") and new_tex.endswith("$") and len(new_tex) > 2:
+                new_tex = new_tex[1:-1].strip()
+
+            c = QTextCursor(self.document())
             c.beginEditBlock()
-            c.removeSelectedText()
-            self._insert_latex_block_at_cursor(c, val.strip())
+            if anchor_cur is not None and anchor_cur.hasSelection():
+                c.setPosition(min(anchor_cur.anchor(), anchor_cur.position()))
+                c.setPosition(max(anchor_cur.anchor(), anchor_cur.position()), QTextCursor.MoveMode.KeepAnchor)
+                c.removeSelectedText()
+            else:
+                re_hit = self._find_latex_fragment_at_pos(frag_pos if frag_pos is not None else cur.position())
+                if re_hit is not None:
+                    c.setPosition(re_hit[0])
+                    c.setPosition(re_hit[0] + 1, QTextCursor.MoveMode.KeepAnchor)
+                    c.removeSelectedText()
+                else:
+                    c = QTextCursor(cur)
+                    if c.hasSelection():
+                        c.removeSelectedText()
+            c.setCharFormat(QTextCharFormat())
+            self._insert_latex_block_at_cursor(c, new_tex)
             c.endEditBlock()
+            self.setTextCursor(c)
             self._on_internal_text_changed()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         if not self._is_studio_view and event.button() == Qt.MouseButton.LeftButton:
             mat_hit = self._find_matrix_at_point(event.pos())
             if mat_hit is not None:
+                event.accept()
                 self._open_inline_matrix_editor(mat_hit[0], mat_hit[1])
                 return
             cur = self.cursorForPosition(event.pos())
-            cf = cur.charFormat()
-            if not cf.hasProperty(PROP_LATEX_SOURCE):
-                probe = QTextCursor(cur)
-                if probe.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1):
-                    cf = probe.charFormat()
-                    cur = probe
-            if cf.hasProperty(PROP_LATEX_SOURCE):
-                old_tex = str(cf.property(PROP_LATEX_SOURCE) or "")
-                self._edit_latex_at_cursor(cur, old_tex)
+            hit = self._find_latex_fragment_at_pos(cur.position())
+            if hit is not None:
+                event.accept()
+                frag_pos, old_tex = hit
+                self._edit_latex_at_cursor(cur, old_tex, frag_pos=frag_pos)
                 return
         super().mouseDoubleClickEvent(event)
 
@@ -3337,6 +3985,9 @@ class ScientificNoteEditor(QTextEdit):
                 self.setTextCursor(cursor)
                 self._on_internal_text_changed()
                 self._open_inline_matrix_editor(mat_pos, init_tex)
+        elif cmd == "/ocr":
+            self.setTextCursor(cursor)
+            self.trigger_vision_ocr()
         elif cmd == "/h1":
             self._apply_heading_block_at_cursor(cursor, level=1, text="")
             self.setTextCursor(cursor)
@@ -3368,6 +4019,27 @@ class ScientificNoteEditor(QTextEdit):
         if self._audio_sync_active and key == Qt.Key.Key_Space and (mods & Qt.KeyboardModifier.ControlModifier):
             self.togglePlayRequested.emit()
             return
+
+        # 0a. Vision OCR istantaneo da appunti (Ctrl+Shift+V) — lascia intatto Ctrl+V
+        if (
+            key == Qt.Key.Key_V
+            and (mods & Qt.KeyboardModifier.ControlModifier)
+            and (mods & Qt.KeyboardModifier.ShiftModifier)
+            and not (mods & Qt.KeyboardModifier.AltModifier)
+        ):
+            self.trigger_vision_ocr()
+            return
+
+        # 0a-bis. Esecuzione inline blocco codice Python (Ctrl+Enter)
+        if (
+            key in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            and (mods & Qt.KeyboardModifier.ControlModifier)
+            and not (mods & Qt.KeyboardModifier.ShiftModifier)
+        ):
+            chk_frame = self.textCursor().currentFrame()
+            if chk_frame is not None and chk_frame.frameFormat().property(PROP_FRAME_KIND) in ("python", "py"):
+                self._run_code_frame(chk_frame)
+                return
 
         # 0b. Accetta suggerimento Ghost-Text di Auto-Calcolo (=) con Tab
         if self._inline_calc_suggestion is not None:
@@ -3612,3 +4284,270 @@ class ScientificNoteEditor(QTextEdit):
                 res["pos"] = c.position()
                 self._inline_calc_suggestion = res
                 self.viewport().update()
+
+    # -----------------------------------------------------------------
+    # BLOCCO 3B: VISION OCR ISTANTANEO (/ocr & Ctrl+Shift+V)
+    # -----------------------------------------------------------------
+    def _show_discrete_toast(self, message: str, duration_ms: int = 2600):
+        if self._toast_label is None:
+            lbl = QLabel(self.viewport())
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            self._toast_label = lbl
+        lbl = self._toast_label
+        bg = "#1E293B" if self._dark_mode else "#0F172A"
+        bd = "#334155" if self._dark_mode else "#1E293B"
+        lbl.setStyleSheet(
+            f"QLabel {{ background-color: {bg}; color: #F8FAFC; border: 1px solid {bd}; "
+            f"border-radius: 6px; padding: 6px 12px; font-size: 11px; }}"
+        )
+        lbl.setText(message)
+        lbl.adjustSize()
+        px = max(12, (self.viewport().width() - lbl.width()) // 2)
+        py = max(12, self.viewport().height() - lbl.height() - 16)
+        lbl.move(px, py)
+        lbl.show()
+        lbl.raise_()
+        self._toast_timer.start(duration_ms)
+
+    def _hide_discrete_toast(self):
+        if self._toast_label is not None:
+            self._toast_label.hide()
+
+    def trigger_vision_ocr(self):
+        if self._is_studio_view:
+            return
+        cb = QApplication.clipboard()
+        qimg = cb.image() if cb is not None else QImage()
+        if qimg is None or qimg.isNull():
+            self._show_discrete_toast("Nessuno screenshot trovato negli appunti")
+            return
+
+        buf = QBuffer()
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        qimg.save(buf, "PNG")
+        png_bytes = bytes(buf.data())
+        buf.close()
+        if not png_bytes:
+            self._show_discrete_toast("Impossibile leggere l'immagine dagli appunti")
+            return
+
+        placeholder_id = uuid.uuid4().hex[:12]
+        cur = self.textCursor()
+        cur.beginEditBlock()
+        cf = QTextCharFormat()
+        cf.setForeground(QColor("#94A3B8" if self._dark_mode else "#64748B"))
+        cf.setFontItalic(True)
+        cf.setProperty(PROP_OCR_PLACEHOLDER_ID, placeholder_id)
+        cur.insertText("⏳ Estrazione formula / tabella in corso...", cf)
+        cur.endEditBlock()
+        self.setTextCursor(cur)
+
+        worker = _VisionOcrWorker(placeholder_id, png_bytes, parent=self)
+        self._active_ocr_workers.append(worker)
+        worker.ocrCompleted.connect(self._on_vision_ocr_finished, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(lambda w=worker: self._cleanup_worker(self._active_ocr_workers, w))
+        worker.start()
+
+    def _cleanup_worker(self, pool: list, worker: QThread):
+        if worker in pool:
+            pool.remove(worker)
+        worker.deleteLater()
+
+    def _find_ocr_placeholder_range(self, placeholder_id: str) -> Optional[Tuple[int, int]]:
+        doc = self.document()
+        block = doc.begin()
+        start_pos = None
+        end_pos = None
+        while block.isValid():
+            fit = block.begin()
+            while not fit.atEnd():
+                frag = fit.fragment()
+                if frag.isValid():
+                    if frag.charFormat().property(PROP_OCR_PLACEHOLDER_ID) == placeholder_id:
+                        if start_pos is None:
+                            start_pos = frag.position()
+                        end_pos = frag.position() + frag.length()
+                fit += 1
+            block = block.next()
+        if start_pos is not None and end_pos is not None:
+            return (start_pos, end_pos)
+        return None
+
+    @staticmethod
+    def _parse_markdown_table(md_text: str) -> Optional[List[List[str]]]:
+        lines = [ln.strip() for ln in md_text.strip().splitlines() if ln.strip()]
+        if len(lines) < 2:
+            return None
+        if not all("|" in ln for ln in lines[:2]):
+            return None
+        sep_re = re.compile(r"^\|?[\s:\-]+\|[\s:\-\|]*$")
+        if not sep_re.match(lines[1]):
+            return None
+        rows: List[List[str]] = []
+        for idx, ln in enumerate(lines):
+            if idx == 1 and sep_re.match(ln):
+                continue
+            if not "|" in ln:
+                return None
+            parts = ln.strip("|").split("|")
+            rows.append([p.strip() for p in parts])
+        return rows if len(rows) >= 1 else None
+
+    def _on_vision_ocr_finished(self, placeholder_id: str, result_text: str, used_fallback: bool, error_msg: str):
+        rng = self._find_ocr_placeholder_range(placeholder_id)
+        if rng is None:
+            return
+        start_pos, end_pos = rng
+        cur = QTextCursor(self.document())
+        cur.beginEditBlock()
+        cur.setPosition(start_pos)
+        cur.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
+        cur.removeSelectedText()
+        cur.setCharFormat(QTextCharFormat())
+
+        if error_msg or not result_text.strip():
+            cur.endEditBlock()
+            self._show_discrete_toast(error_msg or "Nessun risultato estratto")
+            return
+
+        raw = result_text.strip()
+        # Rimuovi eventuale fence markdown ```latex / ```markdown
+        fence_m = re.match(r"^```[a-zA-Z]*\s*\n([\s\S]*?)\n```$", raw)
+        if fence_m:
+            raw = fence_m.group(1).strip()
+
+        # Normalizza \[ ... \] -> $$ ... $$
+        if raw.startswith("\\[") and raw.endswith("\\]"):
+            raw = f"$${raw[2:-2].strip()}$$"
+
+        # 1. Singola matrice -> Matrice Interattiva Blocco 3A
+        inner_no_dollars = re.sub(r"^\$\$\s*|\s*\$\$$", "", raw).strip()
+        if re.fullmatch(r"\\begin\{[bpv]matrix\}[\s\S]*?\\end\{[bpv]matrix\}", inner_no_dollars):
+            self._insert_latex_block_at_cursor(cur, inner_no_dollars)
+            cur.endEditBlock()
+            self.setTextCursor(cur)
+            self._on_internal_text_changed()
+            return
+
+        # 2. Tabella Markdown -> QTextTable interattiva
+        tbl_rows = self._parse_markdown_table(raw)
+        if tbl_rows is not None:
+            tbl = self._insert_table_at_cursor(cur, data=tbl_rows)
+            cur.endEditBlock()
+            self.setTextCursor(tbl.cellAt(0, 0).firstCursorPosition())
+            self._on_internal_text_changed()
+            return
+
+        # 3. Formula / equazioni LaTeX -> render inline
+        if (raw.startswith("$$") and raw.endswith("$$")) or (raw.startswith("$") and raw.endswith("$") and raw.count("$") == 2):
+            tex_inner = raw.strip("$").strip()
+            if "\n" in tex_inner and "\\begin{" not in tex_inner:
+                for line_tex in [ln.strip() for ln in tex_inner.splitlines() if ln.strip()]:
+                    self._insert_latex_block_at_cursor(cur, line_tex)
+                    cur.insertText("\n")
+            else:
+                self._insert_latex_block_at_cursor(cur, tex_inner)
+            cur.endEditBlock()
+            self.setTextCursor(cur)
+            self._on_internal_text_changed()
+            return
+
+        # 4. Testo semplice (es. fallback RapidOCR)
+        cur.insertText(raw)
+        cur.endEditBlock()
+        self.setTextCursor(cur)
+        self._on_internal_text_changed()
+        if used_fallback:
+            self._show_discrete_toast("Estratto con OCR locale (RapidOCR)")
+
+    # -----------------------------------------------------------------
+    # BLOCCO 3B: ESECUZIONE INLINE PYTHON (▶ Esegui & Ctrl+Enter)
+    # -----------------------------------------------------------------
+    def _get_or_assign_frame_code_id(self, frame: QTextFrame) -> str:
+        cid = str(frame.frameFormat().property(PROP_CODE_ID) or "")
+        if not cid:
+            cid = uuid.uuid4().hex[:12]
+            fmt = frame.frameFormat()
+            fmt.setProperty(PROP_CODE_ID, cid)
+            frame.setFrameFormat(fmt)
+        return cid
+
+    @staticmethod
+    def _extract_frame_text(frame: QTextFrame) -> str:
+        lines: List[str] = []
+        fit = frame.begin()
+        while not fit.atEnd():
+            fb = fit.currentBlock()
+            if fb.isValid():
+                lines.append(fb.text())
+            fit += 1
+        return "\n".join(lines)
+
+    def _run_code_frame(self, frame: QTextFrame):
+        if frame is None or self._is_studio_view:
+            return
+        code_id = self._get_or_assign_frame_code_id(frame)
+        cur_state = self._code_exec_states.get(code_id, {})
+        if cur_state.get("status") == "running":
+            return
+
+        code_text = self._extract_frame_text(frame)
+        self._code_exec_states[code_id] = {"status": "running", "elapsed": 0.0}
+        self.viewport().update()
+
+        worker = _PythonExecWorker(code_id, code_text, parent=self)
+        self._active_exec_workers.append(worker)
+        worker.execCompleted.connect(self._on_python_exec_finished, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(lambda w=worker: self._cleanup_worker(self._active_exec_workers, w))
+        worker.start()
+
+    def _on_python_exec_finished(
+        self, code_id: str, stdout: str, stderr: str, plot_paths: list, elapsed: float, ok: bool
+    ):
+        self._code_exec_states[code_id] = {
+            "status": "done" if ok else "error",
+            "elapsed": elapsed,
+        }
+        panel = self._code_output_panels.get(code_id)
+        if panel is None:
+            panel = CodeOutputPanel(
+                code_id, parent=self.viewport(), dark_mode=self._dark_mode, reading_mode=self._reading_mode
+            )
+            panel.closeRequested.connect(self._close_code_output_panel)
+            panel.insertPlotRequested.connect(self._insert_plot_image_after_frame)
+            self._code_output_panels[code_id] = panel
+        panel.set_result(stdout, stderr, plot_paths, elapsed, ok)
+        panel.show()
+        self.viewport().update()
+
+    def _close_code_output_panel(self, code_id: str):
+        panel = self._code_output_panels.pop(code_id, None)
+        if panel is not None:
+            panel.hide()
+            panel.deleteLater()
+        self.viewport().update()
+
+    def _insert_plot_image_after_frame(self, code_id: str, plot_path: str):
+        if not plot_path or not os.path.exists(plot_path):
+            return
+        qimg = QImage(plot_path)
+        if qimg.isNull():
+            return
+        target_frame = None
+        for frame in self.document().rootFrame().childFrames():
+            if str(frame.frameFormat().property(PROP_CODE_ID) or "") == code_id:
+                target_frame = frame
+                break
+        if target_frame is None:
+            return
+
+        exit_cur = target_frame.lastCursorPosition()
+        if not exit_cur.movePosition(QTextCursor.MoveOperation.NextBlock) or exit_cur.currentFrame() == target_frame:
+            exit_cur = self.document().rootFrame().lastCursorPosition()
+            exit_cur.insertBlock()
+            exit_cur.setBlockFormat(QTextBlockFormat())
+            exit_cur.setCharFormat(QTextCharFormat())
+        self.setTextCursor(exit_cur)
+        self._save_and_insert_image(qimg)
+        self._show_discrete_toast("Grafico inserito nella nota")

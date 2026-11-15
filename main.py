@@ -367,7 +367,7 @@ def main():
     # 2. WhisHUD (HUD Assistente Peek-from-Edge da bordo destro) integrato con VoiceOrb
     whis_hud = WhisHUD(orb=orb)
 
-    # 3. Core Engine: Faster-Whisper (caricamento async) + Qwen 2.5 + Audio WASAPI
+    # 3. Core Engine: Faster-Whisper (caricamento async) + Qwen 3.5 + Audio WASAPI
     engine = FlowLocalEngine(orb=orb, hub=None, whis_hud=whis_hud)
     orb.on_click_toggle = engine.toggle_recording_click
     orb.on_change_mode = engine.set_mode

@@ -4044,7 +4044,7 @@ class _AutoSaveNoteThread(QThread):
 
 
 class _SummarizeNoteThread(QThread):
-    """Genera un riassunto AI della nota corrente tramite Ollama Qwen 2.5 in background."""
+    """Genera un riassunto AI della nota corrente tramite Ollama Qwen 3.5 in background."""
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
 
@@ -4055,8 +4055,8 @@ class _SummarizeNoteThread(QThread):
     def run(self):
         try:
             import requests
-            from core.ai_pipeline import OLLAMA_API_URL, LLMRefiner
-            model = LLMRefiner._detect_best_model() if hasattr(LLMRefiner, "_detect_best_model") else "qwen2.5:3b"
+            from core.ai_pipeline import OLLAMA_API_URL, LLMRefiner, strip_think_blocks
+            model = LLMRefiner.detect_lecture_model() if hasattr(LLMRefiner, "detect_lecture_model") else "qwen3.5:4b"
             payload = {
                 "model": model,
                 "messages": [
@@ -4070,11 +4070,12 @@ class _SummarizeNoteThread(QThread):
                     {"role": "user", "content": self.note_text[:6000]},
                 ],
                 "stream": False,
+                "think": False,
             }
             resp = requests.post(OLLAMA_API_URL, json=payload, timeout=45)
             resp.raise_for_status()
             data = resp.json()
-            summary = (data.get("message", {}).get("content") or "").strip()
+            summary = strip_think_blocks(data.get("message", {}).get("content") or "")
             if not summary:
                 raise ValueError("Risposta vuota dal modello Qwen.")
             self.finished.emit(summary)
@@ -8569,6 +8570,12 @@ class FlowLocalHub(QMainWindow):
             except Exception:
                 pass
             if hasattr(self, "whis_model_combo"):
+                try:
+                    saved_mode = db.get_setting("whis_model_mode", None)
+                    if saved_mode:
+                        self.whis_agent.set_model_mode(saved_mode)
+                except Exception:
+                    pass
                 idx = self.whis_model_combo.findData(self.whis_agent.get_model_mode())
                 if idx >= 0:
                     self.whis_model_combo.setCurrentIndex(idx)
@@ -8617,9 +8624,10 @@ class FlowLocalHub(QMainWindow):
 
         self.whis_model_combo = QComboBox()
         self.whis_model_combo.setMinimumHeight(30)
-        self.whis_model_combo.addItem("Auto (3B/7B)", "auto")
-        self.whis_model_combo.addItem("Rapido (qwen2.5:3b)", "3b")
-        self.whis_model_combo.addItem("Profondo (qwen2.5:7b)", "7b")
+        self.whis_model_combo.addItem("Auto (4B/9B)", "auto")
+        self.whis_model_combo.addItem("qwen3.5:4b (Consigliato - Veloce + Vision)", "qwen3.5:4b")
+        self.whis_model_combo.addItem("qwen3.5:9b (Alta Precisione + Vision)", "qwen3.5:9b")
+        self.whis_model_combo.addItem("qwen3.5:2b (Leggero + Vision)", "qwen3.5:2b")
         if hasattr(self, "whis_agent") and self.whis_agent:
             cur_idx = self.whis_model_combo.findData(self.whis_agent.get_model_mode())
             if cur_idx >= 0:
@@ -8728,6 +8736,11 @@ class FlowLocalHub(QMainWindow):
         mode = self.whis_model_combo.currentData()
         if hasattr(self, "whis_agent") and self.whis_agent:
             self.whis_agent.set_model_mode(mode)
+        try:
+            if mode:
+                db.set_setting("whis_model_mode", str(mode))
+        except Exception:
+            pass
 
     def _on_whis_audio_mode_changed(self):
         if not hasattr(self, "whis_audio_combo") or not self.whis_audio_combo:
@@ -10163,7 +10176,7 @@ class FlowLocalHub(QMainWindow):
 
     def _on_nk_summarize_error(self, err: str):
         self._set_nk_autosave_badge(saved=True)
-        QMessageBox.warning(self, "Errore Riassunto AI", f"Impossibile generare il riassunto con Qwen 2.5:\n{err}")
+        QMessageBox.warning(self, "Errore Riassunto AI", f"Impossibile generare il riassunto con Qwen 3.5:\n{err}")
 
     def _on_nk_new_note_clicked(self):
         self._nk_loading_note = True
@@ -10896,7 +10909,7 @@ class FlowLocalHub(QMainWindow):
             self,
             "Avvia Elaborazione Coda Cloud",
             f"Trovati {total} file audio in attesa.\n\n"
-            f"Verranno sbobinati sequenzialmente con Qwen 2.5 7B, salvati nel DB, "
+            f"Verranno sbobinati sequenzialmente con Qwen 3.5, salvati nel DB, "
             f"esportati in PDF/DOCX e archiviati in processed/.\n\n"
             f"Vuoi procedere ora?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,

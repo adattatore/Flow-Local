@@ -1,8 +1,8 @@
 """
 Core AI Pipeline per FlowLocal
-Faster-Whisper Large-v3-Turbo (CUDA) + Analisi Pause (>1.3s) + Ollama Qwen 2.5
+Faster-Whisper Large-v3-Turbo (CUDA) + Analisi Pause (>1.3s) + Ollama Qwen 3.5 (Multimodale)
 Supporta:
-- Prompt Biasing e Vocabolario tecnico tramite Qwen 2.5
+- Prompt Biasing e Vocabolario tecnico tramite Qwen 3.5
 - Pre-filtro fonetico deterministico e Macro Snippet
 - Riformattazione strutturale e rimozione autocorrezioni
 - Command Mode e Study Mode
@@ -62,8 +62,18 @@ DEVICE = "cuda"
 COMPUTE_TYPE = "float16"
 
 DOUBLE_TAP_TIMEOUT = 0.35
-LLM_MODEL = "qwen2.5:3b"
+LLM_MODEL = "qwen3.5:4b"
+LLM_HIGH_PRECISION_MODEL = "qwen3.5:9b"
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
+
+
+def strip_think_blocks(text: str) -> str:
+    """Rimuove eventuali blocchi di ragionamento <think>...</think> dall'output LLM."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<think>[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 FILLER_WORDS_REGEX = re.compile(
     r'\b(ehm+|uhm+|mhh+|ah+|eh+|vabbè)\b[\.\,\…]*\s*',
@@ -627,7 +637,7 @@ def _preload_ollama_model(model_name: str, keep_alive: str = "10m"):
 
 
 class LLMRefiner:
-    """Stadio 2: Rifinitura semantica, punteggiatura e vocabolario tecnico con Qwen 2.5."""
+    """Stadio 2: Rifinitura semantica, punteggiatura e vocabolario tecnico con Qwen 3.5."""
 
     @classmethod
     def refine(cls, raw_text: str, mode: str = "natural", previous_context: str = "") -> Tuple[str, int]:
@@ -717,6 +727,7 @@ class LLMRefiner:
                 {"role": "user", "content": user_content}
             ],
             "stream": False,
+            "think": False,
             "keep_alive": "30m",
             "options": {
                 "repeat_penalty": 1.15,
@@ -736,7 +747,7 @@ class LLMRefiner:
             )
             with urllib.request.urlopen(req, timeout=req_timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                content = data.get("message", {}).get("content", "").strip()
+                content = strip_think_blocks(data.get("message", {}).get("content", ""))
                 qwen_ms = int((time.time() - t0) * 1000)
 
                 # Rimozione preliminare di qualsiasi tag residuo simile a <trascrizione> (inclusi refusi come </trascrizizione>)
@@ -866,7 +877,7 @@ class LLMRefiner:
 
     @classmethod
     def transform_selection(cls, selected_text: str, voice_command: str) -> str:
-        """Trasforma il testo selezionato applicando l'istruzione vocale dell'utente via Qwen 2.5."""
+        """Trasforma il testo selezionato applicando l'istruzione vocale dell'utente via Qwen 3.5."""
         if not selected_text or not selected_text.strip():
             return selected_text
         if not voice_command or not voice_command.strip():
@@ -897,6 +908,7 @@ class LLMRefiner:
                 {"role": "user", "content": user_content}
             ],
             "stream": False,
+            "think": False,
             "keep_alive": "30m",
             "options": {
                 "repeat_penalty": 1.15,
@@ -915,7 +927,7 @@ class LLMRefiner:
             )
             with urllib.request.urlopen(req, timeout=10.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                content = data.get("message", {}).get("content", "").strip()
+                content = strip_think_blocks(data.get("message", {}).get("content", ""))
 
                 # Pulizia tag residui (inclusi refusi o chiusure XML)
                 refined = re.sub(r"</?(?:testo_selezionato|comando|trascri\w*|output|result)>\s*", "", content, flags=re.IGNORECASE).strip()
@@ -932,21 +944,21 @@ class LLMRefiner:
 
     @classmethod
     def detect_lecture_model(cls) -> str:
-        """Rileva se qwen2.5:7b è presente su Ollama (tramite API /api/tags o CLI 'ollama list'), con fallback su qwen2.5:3b."""
+        """Rileva se qwen3.5:9b è presente su Ollama (tramite API /api/tags o CLI 'ollama list'), con fallback su qwen3.5:4b."""
         try:
             req_tags = urllib.request.Request("http://localhost:11434/api/tags")
             with urllib.request.urlopen(req_tags, timeout=1.2) as resp_tags:
                 models_data = json.loads(resp_tags.read().decode())
                 names = [m.get("name", "") for m in models_data.get("models", [])]
-                if any("qwen2.5:7b" in n for n in names):
-                    return "qwen2.5:7b"
+                if any(LLM_HIGH_PRECISION_MODEL in n for n in names):
+                    return LLM_HIGH_PRECISION_MODEL
         except Exception:
             pass
 
         try:
             res = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=2.0)
-            if res.returncode == 0 and "qwen2.5:7b" in res.stdout:
-                return "qwen2.5:7b"
+            if res.returncode == 0 and LLM_HIGH_PRECISION_MODEL in res.stdout:
+                return LLM_HIGH_PRECISION_MODEL
         except Exception:
             pass
 
@@ -954,7 +966,7 @@ class LLMRefiner:
 
     @classmethod
     def reformat_lecture_block(cls, chunk_text: str, subject_context: str = "") -> str:
-        """Riformatta un blocco di sbobinatura universitaria in Markdown chiaro ed elegante con Qwen 2.5 (preferendo 7B),
+        """Riformatta un blocco di sbobinatura universitaria in Markdown chiaro ed elegante con Qwen 3.5 (preferendo 9B),
         correggendo refusi fonetici e allucinazioni acustiche incompatibili con il contesto accademico."""
         clean_chunk = (chunk_text or "").strip()
         if not clean_chunk:
@@ -980,7 +992,7 @@ class LLMRefiner:
 
         user_content = f"<trascrizione_lezione>\n{clean_chunk}\n</trascrizione_lezione>"
 
-        # Selezione modello: preferisci qwen2.5:7b per qualità della sbobina, fallback su LLM_MODEL (3B)
+        # Selezione modello: preferisci qwen3.5:9b per qualità della sbobina, fallback su LLM_MODEL (4B)
         lecture_model = cls.detect_lecture_model()
         print(f"[FlowLocal Sbobina] Riformattazione blocco con modello: {lecture_model}")
 
@@ -991,6 +1003,7 @@ class LLMRefiner:
                 {"role": "user", "content": user_content}
             ],
             "stream": False,
+            "think": False,
             "keep_alive": "30m",
             "options": {
                 "repeat_penalty": 1.15,
@@ -1008,7 +1021,7 @@ class LLMRefiner:
             )
             with urllib.request.urlopen(req, timeout=50.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                content = (data.get("message", {}).get("content") or "").strip()
+                content = strip_think_blocks(data.get("message", {}).get("content", "") or "")
                 refined = re.sub(r"</?(?:trascrizione_lezione|sbobina|output|result)>\s*", "", content, flags=re.IGNORECASE).strip()
                 refined = refined.rstrip()
                 while refined.endswith('\\'):
@@ -1103,6 +1116,7 @@ class LLMRefiner:
                 {"role": "user", "content": f"<testo_lezione>\n{sample_text}\n</testo_lezione>"}
             ],
             "stream": False,
+            "think": False,
             "options": {
                 "temperature": 0.2,
                 "num_predict": 600
@@ -1117,7 +1131,7 @@ class LLMRefiner:
             )
             with urllib.request.urlopen(req, timeout=30.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                summary = (data.get("message", {}).get("content") or "").strip()
+                summary = strip_think_blocks(data.get("message", {}).get("content") or "")
                 summary = re.sub(r"</?(?:testo_lezione|output|result)>\s*", "", summary, flags=re.IGNORECASE).strip()
                 if summary:
                     return summary
@@ -1156,6 +1170,7 @@ class LLMRefiner:
                 {"role": "user", "content": f"<testo_lezione>\n{sample_text}\n</testo_lezione>"}
             ],
             "stream": False,
+            "think": False,
             "options": {
                 "temperature": 0.25,
                 "num_predict": 1200
@@ -1170,7 +1185,7 @@ class LLMRefiner:
             )
             with urllib.request.urlopen(req, timeout=45.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                content = (data.get("message", {}).get("content") or "").strip()
+                content = strip_think_blocks(data.get("message", {}).get("content") or "")
 
                 json_match = re.search(r'\[[\s\S]*\]', content)
                 if json_match:
@@ -1215,7 +1230,7 @@ class LLMRefiner:
         """
         Individua fino a 3 note/sbobine correlate tramite:
         1. Riferimenti espliciti Wikilink [[Titolo]] presenti nel testo/titolo.
-        2. Auto-linking semantico concettuale interrogando Ollama (qwen2.5:7b se presente, altrimenti modello standard).
+        2. Auto-linking semantico concettuale interrogando Ollama (qwen3.5:9b se presente, altrimenti modello standard).
         Restituisce una lista di dict: [{'id': int, 'title': str, 'reason': str}].
         """
         if not existing_notes_summary:
@@ -1299,6 +1314,7 @@ class LLMRefiner:
                 {"role": "user", "content": user_content}
             ],
             "stream": False,
+            "think": False,
             "options": {
                 "temperature": 0.2,
                 "num_predict": 400
@@ -1313,7 +1329,7 @@ class LLMRefiner:
             )
             with urllib.request.urlopen(req, timeout=12.0) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                content = data.get("message", {}).get("content", "").strip()
+                content = strip_think_blocks(data.get("message", {}).get("content", ""))
 
                 json_match = re.search(r'\[[\s\S]*\]', content)
                 if json_match:
@@ -2692,10 +2708,10 @@ class FlowLocalEngine:
             if curr_chunk:
                 chunks.append(". ".join(curr_chunk) + ("" if curr_chunk[-1].endswith(".") else "."))
 
-            # 4. Gestione dinamica VRAM: scarica il 3B prima di avviare il 7B
+            # 4. Gestione dinamica VRAM: scarica il 4B prima di avviare il 9B
             active_lecture_model = LLMRefiner.detect_lecture_model()
-            if "7b" in active_lecture_model:
-                report("Ottimizzazione VRAM: scaricamento modello 3B per liberare ~2.2 GB...", 42)
+            if "9b" in active_lecture_model:
+                report("Ottimizzazione VRAM: scaricamento modello 4B per liberare VRAM...", 42)
                 _unload_ollama_model(LLM_MODEL)
 
             total_chunks = len(chunks)
@@ -2752,11 +2768,11 @@ class FlowLocalEngine:
                 except Exception:
                     pass
 
-            # Ripristino dinamico VRAM: scarica 7B e ricarica 3B per dettatura rapida push-to-talk
+            # Ripristino dinamico VRAM: scarica 9B e ricarica 4B per dettatura rapida push-to-talk
             try:
                 active_model = LLMRefiner.detect_lecture_model()
-                if "7b" in active_model:
-                    _unload_ollama_model("qwen2.5:7b")
+                if "9b" in active_model:
+                    _unload_ollama_model(LLM_HIGH_PRECISION_MODEL)
                 _preload_ollama_model(LLM_MODEL, "10m")
             except Exception:
                 pass

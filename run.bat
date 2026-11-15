@@ -1,5 +1,5 @@
 @echo off
-title FlowLocal - AI Voice Typing (Whisper + Qwen 2.5)
+title FlowLocal - AI Voice Typing (Whisper + Qwen 3.5)
 cd /d "%~dp0"
 
 :: Avvia Ollama in background se non è già attivo

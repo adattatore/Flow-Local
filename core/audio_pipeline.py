@@ -50,8 +50,17 @@ COMPUTE_TYPE = "float16"
 PRE_BUFFER_CHUNKS = 7  # ~350ms pre-buffer per non perdere l'inizio
 DOUBLE_TAP_TIMEOUT = 0.35
 
-LLM_MODEL = "qwen2.5:3b"
+LLM_MODEL = "qwen3.5:4b"
 OLLAMA_API_URL = "http://localhost:11434/api/chat"
+
+
+def strip_think_blocks(text: str) -> str:
+    """Rimuove eventuali blocchi di ragionamento <think>...</think> dall'output LLM."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"<think>[\s\S]*?</think>", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<think>[\s\S]*$", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
 
 DEFAULT_WHISPER_INITIAL_PROMPT = (
     "FlowLocal, FlowType, FlowStudy, Whis, Ollama, Qwen, Faster-Whisper, "
@@ -128,7 +137,7 @@ class WindowsInjector:
 
 
 class LLMRefiner:
-    """Stadio 2: Rifinitura semantica, punteggiatura e vocabolario tecnico con Qwen 2.5."""
+    """Stadio 2: Rifinitura semantica, punteggiatura e vocabolario tecnico con Qwen 3.5."""
 
     @classmethod
     def refine(cls, raw_text: str) -> str:
@@ -165,6 +174,7 @@ class LLMRefiner:
                 {"role": "user", "content": f"Testo pronunciato da trascrivere: {pre_cleaned}"}
             ],
             "stream": False,
+            "think": False,
             "keep_alive": "30m",
             "options": {
                 "temperature": 0.0,
@@ -180,7 +190,7 @@ class LLMRefiner:
             )
             with urllib.request.urlopen(req, timeout=3.5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                refined = data.get("message", {}).get("content", "").strip()
+                refined = strip_think_blocks(data.get("message", {}).get("content", ""))
                 if refined.startswith('"') and refined.endswith('"'):
                     refined = refined[1:-1].strip()
                 if refined:

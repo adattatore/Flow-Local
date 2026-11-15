@@ -90,7 +90,7 @@ class WhisHUD(QWidget):
         self.worker: Optional[WhisStreamWorker] = None
         self._is_animating = False
         self._current_response_text = ""
-        self._active_model_name = "qwen2.5:3b"
+        self._active_model_name = "qwen3.5:4b"
         self._last_metadata = {}
         self.wake_listener = None
 

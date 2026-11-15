@@ -181,12 +181,31 @@ class DatabaseManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_query TEXT NOT NULL,
                 whis_response TEXT NOT NULL,
-                model_used TEXT DEFAULT 'qwen2.5:3b',
+                model_used TEXT DEFAULT 'qwen3.5:4b',
                 clipboard_context TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_whis_created_at ON whis_history(created_at);")
+
+        # Migrazione silenziosa modelli legacy (qwen2.5 -> qwen3.5:4b) in app_settings
+        try:
+            cursor.execute(
+                "UPDATE app_settings SET value = 'qwen3.5:4b', updated_at = CURRENT_TIMESTAMP "
+                "WHERE LOWER(value) LIKE '%qwen2.5%';"
+            )
+            cursor.execute(
+                "UPDATE app_settings SET value = 'qwen3.5:4b', updated_at = CURRENT_TIMESTAMP "
+                "WHERE key IN ('whis_model_mode', 'whis_model', 'llm_model', 'vision_model') "
+                "AND LOWER(value) IN ('3b', '1.5b', 'rapido');"
+            )
+            cursor.execute(
+                "UPDATE app_settings SET value = 'qwen3.5:9b', updated_at = CURRENT_TIMESTAMP "
+                "WHERE key IN ('whis_model_mode', 'whis_model', 'llm_model', 'vision_model') "
+                "AND LOWER(value) IN ('7b', 'profondo');"
+            )
+        except Exception:
+            pass
 
         # 9. Tabella Eventi Calendario FlowTime (Local-First + Sync Google opzionale)
         cursor.execute("""
@@ -1531,7 +1550,7 @@ class DatabaseManager:
         }
 
     # --- CRONOLOGIA INTERAZIONI WHIS ---
-    def add_whis_interaction(self, user_query: str, whis_response: str, model_used: str = "qwen2.5:3b", clipboard_context: str = "") -> int:
+    def add_whis_interaction(self, user_query: str, whis_response: str, model_used: str = "qwen3.5:4b", clipboard_context: str = "") -> int:
         """Salva una conversazione/scambio con l'assistente Whis."""
         conn = self._get_connection()
         cursor = conn.cursor()
