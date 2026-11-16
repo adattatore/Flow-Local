@@ -70,7 +70,7 @@
       --text-main: #EDF2F4;
       --text-muted: #A3B4B9;
       --text-dim: #73848A;
-      --radius: 6px;
+      --radius: 8px;
     }
 
     [data-theme="chiaro"] {
@@ -95,30 +95,27 @@
       background: var(--bg-canvas);
       color: var(--text-main);
       min-height: 100vh;
+      min-height: 100dvh;
       display: flex;
       flex-direction: column;
       padding-top: var(--safe-top);
       overflow-x: hidden;
     }
 
-    svg.icon {
-      width: 18px;
-      height: 18px;
-      stroke: currentColor;
-      stroke-width: 1.9;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      fill: none;
+    /* GLOBAL SVG FIX: zero clipping */
+    svg, svg.icon {
       flex-shrink: 0;
+      display: inline-block;
+      vertical-align: middle;
+      overflow: visible;
     }
-    svg.icon-lg { width: 22px; height: 22px; }
-    svg.icon-sm { width: 15px; height: 15px; }
 
     /* APP SHELL */
     .app-shell {
       display: flex;
       flex: 1;
       min-height: 100vh;
+      min-height: 100dvh;
     }
 
     /* SIDEBAR RAIL (TABLET / DESKTOP >= 768px) */
@@ -185,10 +182,20 @@
       display: flex;
       flex-direction: column;
       min-width: 0;
-      padding-bottom: calc(74px + var(--safe-bottom));
+      padding-bottom: calc(68px + var(--safe-bottom));
     }
 
-    .topbar {
+    body.editor-fullscreen .main-area {
+      padding-bottom: var(--safe-bottom);
+    }
+    body.editor-fullscreen .bottom-nav {
+      display: none !important;
+    }
+    body.editor-fullscreen .global-topbar {
+      display: none !important;
+    }
+
+    .global-topbar {
       position: sticky;
       top: 0;
       z-index: 30;
@@ -196,20 +203,46 @@
       align-items: center;
       justify-content: space-between;
       gap: 10px;
-      padding: 12px 16px;
+      padding: 10px 14px;
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
     }
 
     .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
     .topbar-title { font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .topbar-actions { display: flex; align-items: center; gap: 8px; }
+    .topbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+    .icon-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg-input);
+      color: var(--text-main);
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    .icon-btn:hover { background: var(--bg-card-hover); }
+    .icon-btn.ghost {
+      background: transparent;
+      border-color: transparent;
+    }
+    .icon-btn.ghost:hover { background: var(--bg-input); }
+    .icon-btn.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: rgba(99, 102, 241, 0.35);
+    }
 
     .pill-status {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 5px 10px;
+      padding: 6px 10px;
       border-radius: 999px;
       background: var(--bg-input);
       border: 1px solid var(--border);
@@ -217,22 +250,28 @@
       font-weight: 600;
       color: var(--text-muted);
       cursor: pointer;
+      white-space: nowrap;
     }
-    .pill-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
+    .pill-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
     .pill-dot.ok { background: var(--success); }
     .pill-dot.warn { background: var(--warning); }
 
     .view-container {
-      padding: 16px;
+      padding: 14px;
       max-width: 1120px;
       width: 100%;
       margin: 0 auto;
       display: flex;
       flex-direction: column;
       gap: 14px;
+      flex: 1;
+    }
+    body.editor-fullscreen .view-container {
+      padding: 0;
+      max-width: 100%;
     }
 
-    .view { display: none; flex-direction: column; gap: 14px; }
+    .view { display: none; flex-direction: column; gap: 14px; flex: 1; }
     .view.active { display: flex; }
 
     /* CARDS, BUTTONS, INPUTS */
@@ -251,18 +290,7 @@
 
     .grid-2 { display: grid; grid-template-columns: 1fr; gap: 14px; }
     @media (min-width: 860px) {
-      .grid-2 { grid-template-columns: 320px 1fr; }
-    }
-    .ws-switcher { width: 100%; padding: 8px 10px; border-radius: 8px; background: var(--bg-input); border: 1px solid var(--border); color: var(--text-main); font-weight: 600; font-size: 13px; }
-    .tab-strip { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
-    .tab-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px 8px 0 0; background: var(--bg-input); border: 1px solid transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; white-space: nowrap; }
-    .tab-pill.active { background: var(--bg-surface); color: var(--text-main); border-color: var(--border); font-weight: 600; }
-    .tab-close { background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 0 2px; }
-    .editor-panes-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
-    .split-only-btn { display: none; }
-    @media (min-width: 900px) {
-      .split-only-btn { display: inline-flex; }
-      .editor-panes-grid.split-active { grid-template-columns: 1fr 1fr; }
+      .grid-2 { grid-template-columns: 1fr 1fr; }
     }
 
     .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -283,6 +311,7 @@
       cursor: pointer;
       text-decoration: none;
       transition: opacity 0.15s, background 0.15s;
+      white-space: nowrap;
     }
     .btn:hover { background: var(--bg-card-hover); }
     .btn:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -299,7 +328,7 @@
     [data-theme="chiaro"] .btn-danger { color: #B91C1C; }
     .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
 
-    input[type="text"], input[type="password"], input[type="date"], input[type="number"], select, textarea {
+    input[type="text"], input[type="password"], input[type="date"], input[type="time"], input[type="number"], select, textarea {
       width: 100%;
       padding: 10px 12px;
       border-radius: 10px;
@@ -313,54 +342,306 @@
     input:focus, select:focus, textarea:focus { border-color: var(--accent); }
     textarea { resize: vertical; min-height: 150px; line-height: 1.55; }
 
-    /* SUB-PILLS */
-    .seg-bar {
-      display: inline-flex;
-      gap: 4px;
-      padding: 4px;
-      border-radius: 12px;
+    /* SLIDE-OVER DRAWER (SAMSUNG NOTES STYLE) */
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      background: rgba(0, 0, 0, 0.55);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.22s ease;
+    }
+    .drawer-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .side-drawer {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      z-index: 90;
+      width: 82%;
+      max-width: 310px;
       background: var(--bg-surface);
-      border: 1px solid var(--border);
-      flex-wrap: wrap;
-    }
-    .seg-btn {
-      padding: 7px 12px;
-      border-radius: 8px;
-      border: none;
-      background: transparent;
-      color: var(--text-muted);
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
+      border-right: 1px solid var(--border);
+      padding: calc(14px + var(--safe-top)) 12px calc(18px + var(--safe-bottom));
+      display: flex;
+      flex-direction: column;
       gap: 6px;
+      transform: translateX(-104%);
+      transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+      overflow-y: auto;
     }
-    .seg-btn.active { background: var(--accent-soft); color: var(--accent); }
-
-    /* NOTES LIST & EDITOR */
-    .note-item {
+    .side-drawer.open {
+      transform: translateX(0);
+    }
+    .drawer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 4px 12px;
+    }
+    .drawer-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
       padding: 10px 12px;
       border-radius: 10px;
+      border: none;
+      background: transparent;
+      color: var(--text-main);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+    }
+    .drawer-item:hover { background: var(--bg-card-hover); }
+    .drawer-item.active { background: var(--accent-soft); color: var(--accent); }
+    .drawer-item-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .drawer-item-left span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .drawer-count {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .drawer-divider {
+      border: none;
+      border-top: 1px dashed var(--border);
+      margin: 8px 4px;
+    }
+    .drawer-section-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-dim);
+      padding: 4px 12px;
+    }
+    .folder-children {
+      padding-left: 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .folder-chevron {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .folder-chevron:hover { background: var(--bg-input); }
+
+    /* FLOWNOTES: LIST VIEW & GRID */
+    .notes-list-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .notes-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 10px;
+    }
+    .notes-grid.list-mode {
+      grid-template-columns: 1fr;
+    }
+    .note-card {
+      padding: 12px;
+      border-radius: 12px;
       border: 1px solid var(--border);
-      background: var(--bg-surface);
+      background: var(--bg-card);
       cursor: pointer;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
+      transition: border-color 0.15s, background 0.15s;
     }
-    .note-item:hover { border-color: var(--accent); }
-    .note-item.active { border-color: var(--accent); background: var(--accent-soft); }
-    .note-item-title { font-weight: 700; font-size: 14px; }
-    .note-item-meta { font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between; gap: 8px; }
+    .note-card:hover { border-color: var(--accent); background: var(--bg-card-hover); }
+    .note-card-title {
+      font-weight: 700;
+      font-size: 14px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .note-card-snippet {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.4;
+    }
+    .note-card-meta {
+      font-size: 11px;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-top: auto;
+    }
+    .subject-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 700;
+      max-width: 115px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* FAB */
+    .fab-btn {
+      position: fixed;
+      right: 18px;
+      bottom: calc(78px + var(--safe-bottom));
+      z-index: 35;
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: none;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #FFFFFF;
+      box-shadow: 0 8px 24px rgba(99, 102, 241, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    @media (min-width: 768px) {
+      .fab-btn { bottom: 24px; right: 28px; }
+    }
+
+    /* FULLSCREEN NOTE EDITOR */
+    .note-editor-shell {
+      display: none;
+      flex-direction: column;
+      height: 100%;
+      min-height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
+      background: var(--bg-canvas);
+    }
+    .note-editor-shell.active {
+      display: flex;
+    }
+    .editor-topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .editor-title-input {
+      flex: 1;
+      min-width: 0;
+      background: transparent !important;
+      border: none !important;
+      padding: 6px 4px !important;
+      font-size: 16px !important;
+      font-weight: 700 !important;
+      color: var(--text-main) !important;
+    }
+    .autosave-badge {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .autosave-badge.saved { color: var(--success); }
+
+    .editor-actions-right {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .editor-more-menu {
+      position: absolute;
+      top: 42px;
+      right: 0;
+      z-index: 60;
+      min-width: 225px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 6px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .editor-more-menu.open { display: flex; }
+    .menu-action {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 10px;
+      border: none;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--text-main);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+    }
+    .menu-action:hover { background: var(--bg-card-hover); }
+    .menu-action.danger { color: #FCA5A5; }
+    [data-theme="chiaro"] .menu-action.danger { color: #DC2626; }
+
+    .editor-body-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 10px 14px 20px;
+      gap: 10px;
+    }
+    .editor-textarea {
+      flex: 1;
+      width: 100%;
+      min-height: calc(100dvh - 140px);
+      background: transparent !important;
+      border: none !important;
+      padding: 4px 0 !important;
+      font-size: 15.5px !important;
+      line-height: 1.65 !important;
+      resize: none !important;
+    }
 
     .md-preview {
+      flex: 1;
       background: var(--bg-surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 12px;
       padding: 14px;
       line-height: 1.65;
-      font-size: 14.5px;
+      font-size: 15px;
       overflow-x: auto;
       user-select: text;
     }
@@ -384,30 +665,73 @@
       margin: 0 2px;
     }
 
-    /* RECORDER / MODALITA AULA */
+    /* RECORDER / MODALITA AULA DRAWER IN EDITOR */
     .aula-panel {
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 14px;
+      padding: 12px;
       background: var(--bg-surface);
-      display: flex;
+      display: none;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
     }
+    .aula-panel.open { display: flex; }
     .aula-panel.recording {
       background: #04060C;
       border-color: var(--danger);
       color: #E2E8F0;
     }
-    .rec-timer { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+    .rec-timer { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
 
-    /* POMODORO RING & PROGRESS */
+    /* FLOWTIME CALENDAR */
+    .cal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .cal-weekdays, .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+    }
+    .cal-weekday {
+      text-align: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-dim);
+      padding: 4px 0;
+    }
+    .cal-day {
+      min-height: 42px;
+      border-radius: 9px;
+      border: 1px solid transparent;
+      background: var(--bg-surface);
+      color: var(--text-main);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      padding: 4px 2px;
+    }
+    .cal-day.other-month { opacity: 0.35; }
+    .cal-day.today { border-color: var(--accent-2); }
+    .cal-day.selected { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+    .cal-dots { display: flex; gap: 3px; height: 6px; align-items: center; }
+    .cal-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+    .cal-dot.exam { background: var(--warning); }
+
+    /* POMODORO & PROGRESS */
     .pomo-display {
-      font-size: 46px;
+      font-size: 40px;
       font-weight: 800;
       font-variant-numeric: tabular-nums;
       text-align: center;
-      padding: 14px 0;
+      padding: 8px 0;
     }
     .progress-track {
       width: 100%;
@@ -422,7 +746,7 @@
       transition: width 0.25s;
     }
 
-    /* RSVP MODAL */
+    /* MODALS */
     .modal-backdrop {
       position: fixed;
       inset: 0;
@@ -436,14 +760,16 @@
     .modal-backdrop.open { display: flex; }
     .modal-box {
       width: 100%;
-      max-width: 560px;
+      max-width: 520px;
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 16px;
       padding: 18px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 12px;
+      max-height: 90dvh;
+      overflow-y: auto;
     }
     .rsvp-stage {
       min-height: 120px;
@@ -461,7 +787,7 @@
     }
     .rsvp-orp { color: var(--danger); }
 
-    /* BOTTOM NAV (MOBILE < 768px) */
+    /* BOTTOM NAV (MOBILE < 768px) — ONLY 3 TABS */
     .bottom-nav {
       position: fixed;
       bottom: 0;
@@ -472,9 +798,11 @@
       border-top: 1px solid var(--border);
       display: flex;
       justify-content: space-around;
-      padding: 6px 4px calc(6px + var(--safe-bottom));
+      padding: 6px 8px calc(6px + var(--safe-bottom));
     }
     .bnav-btn {
+      flex: 1;
+      max-width: 120px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -484,7 +812,7 @@
       color: var(--text-muted);
       font-size: 11px;
       font-weight: 600;
-      padding: 5px 10px;
+      padding: 6px 10px;
       border-radius: 10px;
       cursor: pointer;
     }
@@ -513,13 +841,65 @@
       font-weight: 600;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
       display: none;
+      max-width: 90vw;
+      text-align: center;
     }
     .toast.show { display: block; }
   </style>
 </head>
 <body>
+  <!-- SLIDE-OVER DRAWER (SAMSUNG NOTES STYLE) -->
+  <div class="drawer-backdrop" id="drawerBackdrop" onclick="app.closeDrawer()"></div>
+  <aside class="side-drawer" id="sideDrawer" aria-label="Menu Cartelle FlowNotes">
+    <div class="drawer-header">
+      <div class="row" style="gap:10px;">
+        <div class="brand-orb"></div>
+        <div>
+          <div class="brand-name">FlowNotes</div>
+          <div class="brand-sub">Archivio &amp; Materie</div>
+        </div>
+      </div>
+      <button class="icon-btn" onclick="app.closeDrawer(); app.switchEnv('settings');" title="Impostazioni">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
+      </button>
+    </div>
+
+    <button class="drawer-item active" id="drawerAllBtn" onclick="app.selectFolderFilter('all')">
+      <span class="drawer-item-left">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        <span>Tutte le note</span>
+      </span>
+      <span class="drawer-count" id="drawerAllCount">0</span>
+    </button>
+
+    <button class="drawer-item" id="drawerGroupsBtn" onclick="app.selectFolderFilter('groups')">
+      <span class="drawer-item-left">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <span>Note condivise (FlowGroups)</span>
+      </span>
+      <span class="drawer-count" id="drawerGroupsCount">0</span>
+    </button>
+
+    <button class="drawer-item" id="drawerTrashBtn" onclick="app.selectFolderFilter('trash')">
+      <span class="drawer-item-left">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        <span>Cestino</span>
+      </span>
+      <span class="drawer-count" id="drawerTrashCount">0</span>
+    </button>
+
+    <hr class="drawer-divider">
+    <div class="drawer-section-title">Cartelle</div>
+    <div id="drawerFoldersTree" style="display:flex; flex-direction:column; gap:2px;"></div>
+
+    <button class="btn btn-sm" style="margin-top:8px; width:100%;" onclick="app.createFolderPrompt()">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      + Nuova Cartella / Materia
+    </button>
+  </aside>
+
   <div class="app-shell">
-    <!-- SIDEBAR RAIL (TABLET / DESKTOP) -->
+    <!-- SIDEBAR RAIL (TABLET / DESKTOP >= 768px) -->
     <aside class="sidebar-rail">
       <div class="brand-row">
         <div class="brand-orb"></div>
@@ -529,243 +909,239 @@
         </div>
       </div>
       <button class="nav-btn active" data-nav="flownotes" onclick="app.switchEnv('flownotes')">
-        <svg class="icon"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
         <span>FlowNotes</span>
       </button>
-      <button class="nav-btn" data-nav="flowtype" onclick="app.switchEnv('flowtype')">
-        <svg class="icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
-        <span>FlowType</span>
-      </button>
       <button class="nav-btn" data-nav="flowtime" onclick="app.switchEnv('flowtime')">
-        <svg class="icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
         <span>FlowTime</span>
       </button>
       <button class="nav-btn" data-nav="whis" onclick="app.switchEnv('whis')">
-        <svg class="icon"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
         <span>Whis</span>
       </button>
       <div style="flex:1"></div>
       <button class="nav-btn" data-nav="settings" onclick="app.switchEnv('settings')">
-        <svg class="icon"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
         <span>Impostazioni</span>
       </button>
     </aside>
 
     <!-- MAIN WORKSPACE -->
     <div class="main-area">
-      <header class="topbar">
+      <header class="global-topbar">
         <div class="topbar-left">
-          <div class="brand-orb mobile-brand"></div>
-          <div class="topbar-title" id="topbarTitle">FlowNotes</div>
+          <button class="icon-btn" id="drawerTriggerBtn" onclick="app.openDrawer()" title="Menu Cartelle">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <div class="topbar-title" id="topbarTitle">Tutte le note</div>
         </div>
         <div class="topbar-actions">
-          <button class="pill-status" onclick="app.syncAllWithDrive()" title="Sincronizza con Google Drive">
+          <button class="pill-status" onclick="app.syncAllWithDrive(true)" title="Sincronizza con Google Drive">
             <span class="pill-dot" id="driveDot"></span>
             <span id="driveStatusText">Drive Offline</span>
           </button>
-          <button class="btn btn-sm" onclick="app.switchEnv('settings')" title="Impostazioni">
-            <svg class="icon icon-sm"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
+          <button class="icon-btn" onclick="app.switchEnv('settings')" title="Impostazioni">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
           </button>
         </div>
       </header>
 
       <main class="view-container">
-        <!-- 1. FLOWNOTES -->
+        <!-- 1. FLOWNOTES (LIST VIEW + FULLSCREEN EDITOR + FLOWGROUPS) -->
         <section class="view active" id="view-flownotes">
-          <div class="row" style="justify-content: space-between;">
-            <div class="seg-bar">
-              <button class="seg-btn active" data-fntab="notes" onclick="app.switchNotesTab('notes')">
-                <svg class="icon icon-sm"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                Quaderno
-              </button>
-              <button class="seg-btn" data-fntab="aula" onclick="app.switchNotesTab('aula')">
-                <svg class="icon icon-sm"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
-                Registra Lezione
-              </button>
-              <button class="seg-btn" data-fntab="groups" onclick="app.switchNotesTab('groups')">
-                <svg class="icon icon-sm"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                FlowGroups
-              </button>
+          <!-- A) VISTA LISTA / GRIGLIA -->
+          <div id="fnListContainer" style="display:flex; flex-direction:column; gap:12px;">
+            <div class="notes-list-header">
+              <div class="row grow" style="gap:8px; flex-wrap:nowrap;">
+                <input type="text" id="notesSearchInput" placeholder="Cerca note per titolo, materia o testo..." oninput="app.renderNotesList()">
+                <button class="icon-btn" id="layoutToggleBtn" onclick="app.toggleNotesLayout()" title="Cambia vista Griglia / Lista">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                </button>
+              </div>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="app.newNote()">
-              <svg class="icon icon-sm"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Nuova Nota
+            <div class="row" style="justify-content:space-between;">
+              <span class="muted" id="notesCountLbl">0 note</span>
+              <button class="btn btn-sm btn-danger" id="emptyTrashBtn" style="display:none;" onclick="app.emptyTrash()">Svuota Cestino</button>
+            </div>
+            <div id="notesListBox" class="notes-grid"></div>
+            <button class="fab-btn" id="newNoteFab" onclick="app.createNewNote()" title="Nuova Nota">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             </button>
           </div>
 
-          <!-- Subtab: Quaderno & Editor -->
-          <div id="fntab-notes" class="grid-2">
-            <div class="card">
-              <select id="pwaWorkspaceSwitcher" class="ws-switcher" onchange="app.switchWorkspace(this.value)">
-                <option value="local">Il mio Quaderno (Locale)</option>
-              </select>
-              <div class="card-header">
-                <div class="card-title" id="sidebarArchiveTitle">Archivio Note</div>
-                <span class="muted" id="notesCountLbl">0 note</span>
-              </div>
-              <input type="text" id="notesSearchInput" placeholder="Cerca per titolo, materia o contenuto..." oninput="app.renderNotesList()">
-              <div id="notesListBox" style="display:flex; flex-direction:column; gap:8px; max-height: 460px; overflow-y:auto;"></div>
-            </div>
-
-            <div class="card">
-              <div class="row" style="justify-content: space-between; align-items: center;">
-                <div id="pwaTabStrip" class="tab-strip grow"></div>
-                <div class="row" style="gap: 4px;">
-                  <button class="btn btn-sm" onclick="app.openPwaNewTab()" title="Nuova scheda">+</button>
-                  <button class="btn btn-sm split-only-btn" id="pwaSplitBtn" onclick="app.togglePwaSplitView()" title="Split View affiancata">Split View</button>
-                </div>
-              </div>
-              <div id="pwaEditorPanesGrid" class="editor-panes-grid">
-                <div style="display:flex; flex-direction:column; gap:10px;">
-                  <div class="card-header">
-                    <input type="text" id="noteTitleInput" placeholder="Titolo della nota..." class="grow" style="font-weight:700;">
-                    <input type="text" id="noteSubjectInput" placeholder="Materia" style="width: 140px;">
-                  </div>
-                  <div class="row">
-                    <button class="btn btn-sm" id="togglePreviewBtn" onclick="app.toggleNotePreview()">
-                      <svg class="icon icon-sm"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                      Anteprima
-                    </button>
-                    <button class="btn btn-sm" onclick="app.openRsvp()">
-                      <svg class="icon icon-sm"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                      RSVP
-                    </button>
-                    <label class="btn btn-sm" title="OCR da Fotocamera o Screenshot">
-                      <svg class="icon icon-sm"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                      OCR Foto
-                      <input type="file" id="ocrImageInput" accept="image/*" capture="environment" style="display:none" onchange="app.runOcrFromFile(event)">
-                    </label>
-                    <button class="btn btn-sm btn-primary" onclick="app.saveCurrentNote(true)">
-                      <svg class="icon icon-sm"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
-                      Salva
-                    </button>
-                    <button class="btn btn-sm btn-danger" onclick="app.deleteCurrentNote()" title="Elimina nota">
-                      <svg class="icon icon-sm"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                    </button>
-                  </div>
-
-                  <div id="audioSyncWrap" style="display:none;">
-                    <audio id="noteAudioPlayer" controls style="width:100%; height:36px;"></audio>
-                  </div>
-
-                  <textarea id="noteBodyInput" placeholder="Scrivi in Markdown o LaTeX ($E = mc^2$)..." oninput="app.scheduleAutoSave()"></textarea>
-                  <div id="notePreviewBox" class="md-preview" style="display:none;"></div>
-                </div>
-                <div id="pwaSplitPane" style="display:none; flex-direction:column; gap:8px; border-left:1px solid var(--border); padding-left:12px;">
-                  <div class="card-header">
-                    <strong id="pwaSplitTitle" style="font-size:13px;">Pannello Affiancato</strong>
-                    <button class="btn btn-sm" onclick="app.togglePwaSplitView()">Chiudi</button>
-                  </div>
-                  <textarea id="pwaSplitBody" placeholder="Appunti affiancati o nota di confronto..." style="min-height: 280px;"></textarea>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Subtab: Registra Lezione (Modalita Aula + Wake Lock + Gemini In-Loco) -->
-          <div id="fntab-aula" class="card" style="display:none;">
+          <!-- B) VISTA FLOWGROUPS (NOTE CONDIVISE) -->
+          <div id="fnGroupsContainer" class="card" style="display:none;">
             <div class="card-header">
               <div class="card-title">
-                <svg class="icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
-                Modalita Aula — Sbobinatura In-Loco
-              </div>
-              <span class="muted" id="wakeLockStatusLbl">Wake Lock: Pronto</span>
-            </div>
-            <p class="muted">Registra la lezione mantenendo lo schermo attivo (Screen Wake Lock). Al termine, la PWA elabora la sbobina Markdown + LaTeX direttamente tramite la tua chiave Gemini API.</p>
-            <div class="row">
-              <input type="text" id="aulaTitleInput" placeholder="Titolo lezione (es. Lezione 05 - Termodinamica)" class="grow">
-              <input type="text" id="aulaSubjectInput" placeholder="Materia" style="width:160px;">
-            </div>
-            <div class="aula-panel" id="aulaPanel">
-              <div class="row" style="justify-content: space-between;">
-                <div class="rec-timer" id="aulaTimerLbl">00:00:00</div>
-                <label class="row" style="font-size:13px; cursor:pointer;">
-                  <input type="checkbox" id="wakeLockToggle" checked style="width:auto;">
-                  <span>Schermo sempre attivo</span>
-                </label>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                FlowGroups (Drive Condiviso)
               </div>
               <div class="row">
-                <button class="btn btn-primary" id="aulaStartBtn" onclick="app.startAulaRecording()">
-                  <svg class="icon icon-sm"><circle cx="12" cy="12" r="6"/></svg>
-                  Avvia Registrazione
-                </button>
-                <button class="btn btn-danger" id="aulaStopBtn" onclick="app.stopAulaRecording()" disabled>
-                  <svg class="icon icon-sm"><rect x="6" y="6" width="12" height="12"/></svg>
-                  Termina ed Elabora In-Loco
-                </button>
-              </div>
-              <div class="muted" id="aulaStatusMsg">Pronto per registrare.</div>
-            </div>
-          </div>
-
-          <!-- Subtab: FlowGroups -->
-          <div id="fntab-groups" class="card" style="display:none;">
-            <div class="card-header">
-              <div class="card-title">
-                <svg class="icon"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
-                FlowGroups (Google Drive API + Picker)
-              </div>
-              <div class="row">
-                <button class="btn btn-sm btn-primary" onclick="app.openGooglePickerForGroup()">
-                  <svg class="icon icon-sm"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                  Seleziona con Google Picker
-                </button>
+                <button class="btn btn-sm btn-primary" onclick="app.openGooglePickerForGroup()">Seleziona con Picker</button>
                 <button class="btn btn-sm" onclick="app.joinGroupByPrompt()">Unisciti con ID/Link</button>
               </div>
             </div>
             <div class="row">
               <select id="pwaGroupSelect" class="grow" onchange="app.loadSelectedGroupNotes()"></select>
               <button class="btn btn-sm" onclick="app.loadSelectedGroupNotes()">Aggiorna</button>
-              <button class="btn btn-sm btn-primary" onclick="app.publishActiveNoteToGroup()">Pubblica Nota Corrente</button>
             </div>
             <div id="pwaGroupNotesList" style="display:flex; flex-direction:column; gap:8px;"></div>
           </div>
-        </section>
 
-        <!-- 2. FLOWTYPE (DETTATURA IN-LOCO) -->
-        <section class="view" id="view-flowtype">
-          <div class="card">
-            <div class="card-header">
-              <div class="card-title">
-                <svg class="icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
-                FlowType — Dettatura Vocale In-Loco
+          <!-- C) VISTA EDITOR FULLSCREEN (90% SCHERMO) -->
+          <div id="fnEditorContainer" class="note-editor-shell">
+            <div class="editor-topbar">
+              <button class="icon-btn ghost" onclick="app.closeEditor()" title="Torna alla lista">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+              </button>
+              <input type="text" id="noteTitleInput" class="editor-title-input" placeholder="Titolo nota..." oninput="app.scheduleAutoSave()">
+              <span class="autosave-badge" id="autoSaveLbl">Salvato</span>
+
+              <div class="editor-actions-right">
+                <button class="icon-btn ghost" id="togglePreviewBtn" onclick="app.toggleNotePreview()" title="Vista Studio (Markdown/KaTeX)">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+                <button class="icon-btn ghost" onclick="app.openRsvp()" title="RSVP Speed-Reading">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                </button>
+                <button class="icon-btn ghost" id="toggleRecordBtn" onclick="app.toggleAulaBar()" title="Registra / Detta in nota">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                </button>
+                <button class="icon-btn ghost" id="moreMenuBtn" onclick="app.toggleEditorMoreMenu(event)" title="Altre azioni">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+                </button>
+
+                <div class="editor-more-menu" id="editorMoreMenu">
+                  <label class="menu-action" style="cursor:pointer;">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    <span>Scatta Foto / OCR LaTeX</span>
+                    <input type="file" id="ocrImageInput" accept="image/*" capture="environment" style="display:none" onchange="app.runOcrFromFile(event)">
+                  </label>
+                  <button class="menu-action" onclick="app.openFolderPickerForNote()">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                    <span>Cambia Materia / Cartella</span>
+                  </button>
+                  <button class="menu-action" onclick="app.publishActiveNoteToGroup()">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                    <span>Pubblica in FlowGroup</span>
+                  </button>
+                  <button class="menu-action" onclick="app.insertTimestampMarker()">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span>Inserisci [HH:MM:SS]</span>
+                  </button>
+                  <button class="menu-action" onclick="app.exportActiveNoteMd()">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    <span>Esporta Markdown (.md)</span>
+                  </button>
+                  <button class="menu-action" id="restoreNoteBtn" style="display:none;" onclick="app.restoreCurrentNote()">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                    <span>Ripristina dal Cestino</span>
+                  </button>
+                  <button class="menu-action danger" onclick="app.deleteCurrentNote()">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <span id="deleteNoteMenuLbl">Sposta nel Cestino</span>
+                  </button>
+                </div>
               </div>
-              <select id="flowtypeModeSelect" style="width:auto;">
-                <option value="study_latex">Studio / LaTeX</option>
-                <option value="natural">Naturale</option>
-                <option value="formal">Formale</option>
-                <option value="code">Code (Italiano + Tech)</option>
-              </select>
             </div>
-            <div class="row">
-              <button class="btn btn-primary" id="ftStartBtn" onclick="app.startDictation()">
-                <svg class="icon icon-sm"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/></svg>
-                Avvia Dettatura
-              </button>
-              <button class="btn btn-danger" id="ftStopBtn" onclick="app.stopDictation()" disabled>
-                <svg class="icon icon-sm"><rect x="6" y="6" width="12" height="12"/></svg>
-                Stop &amp; Raffina
-              </button>
-              <span class="muted" id="ftStatusLbl">Usa Gemini Audio o fallback Web Speech API.</span>
-            </div>
-            <textarea id="ftOutputText" placeholder="Il testo dettato e raffinato apparira qui..."></textarea>
-            <div class="row">
-              <button class="btn btn-sm" onclick="app.copyFlowType()">Copia Testo</button>
-              <button class="btn btn-sm btn-primary" onclick="app.sendFlowTypeToNotes()">Salva come Nota FlowNotes</button>
+
+            <div class="editor-body-wrap">
+              <!-- Barra compatta Registra / Detta (Modalita Aula Wake Lock) -->
+              <div class="aula-panel" id="aulaPanel">
+                <div class="row" style="justify-content:space-between;">
+                  <div class="row" style="gap:8px;">
+                    <span class="rec-timer" id="aulaTimerLbl">00:00:00</span>
+                    <span class="muted" id="wakeLockStatusLbl">Wake Lock: Pronto</span>
+                  </div>
+                  <label class="row" style="font-size:12px; cursor:pointer; gap:5px;">
+                    <input type="checkbox" id="wakeLockToggle" checked style="width:auto;">
+                    <span>Schermo attivo</span>
+                  </label>
+                </div>
+                <div class="row">
+                  <select id="dictateModeSelect" style="width:auto; padding:6px 10px; font-size:12px;">
+                    <option value="aula">Modalità Aula (Sbobina)</option>
+                    <option value="study_latex">Dettatura Studio / LaTeX</option>
+                    <option value="natural">Dettatura Naturale</option>
+                    <option value="code">Dettatura Code (IT+Tech)</option>
+                  </select>
+                  <button class="btn btn-primary btn-sm" id="aulaStartBtn" onclick="app.startNoteRecording()">Avvia</button>
+                  <button class="btn btn-danger btn-sm" id="aulaStopBtn" onclick="app.stopNoteRecording()" disabled>Termina &amp; Inserisci</button>
+                </div>
+                <div class="muted" id="aulaStatusMsg">Registra o detta direttamente in questa nota.</div>
+              </div>
+
+              <div id="audioSyncWrap" style="display:none;">
+                <audio id="noteAudioPlayer" controls style="width:100%; height:36px;"></audio>
+              </div>
+
+              <textarea id="noteBodyInput" class="editor-textarea" placeholder="Scrivi in Markdown o LaTeX ($E = mc^2$)..." oninput="app.scheduleAutoSave()"></textarea>
+              <div id="notePreviewBox" class="md-preview" style="display:none;"></div>
             </div>
           </div>
         </section>
 
-        <!-- 3. FLOWTIME (POMODORO + EXAM COUNTDOWN) -->
+        <!-- 2. FLOWTIME (CALENDARIO + AGENDA + ESAMI + POMODORO) -->
         <section class="view" id="view-flowtime">
+          <!-- Calendario & Agenda -->
+          <div class="card">
+            <div class="cal-header">
+              <div class="card-title">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span id="calMonthLbl">Calendario</span>
+              </div>
+              <div class="row" style="gap:6px;">
+                <button class="icon-btn" onclick="app.shiftCalMonth(-1)" title="Mese precedente">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                </button>
+                <button class="icon-btn" onclick="app.shiftCalMonth(1)" title="Mese successivo">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+                <button class="btn btn-sm btn-primary" onclick="app.openEventModal()">+ Evento</button>
+              </div>
+            </div>
+
+            <div class="cal-weekdays">
+              <div class="cal-weekday">Lun</div>
+              <div class="cal-weekday">Mar</div>
+              <div class="cal-weekday">Mer</div>
+              <div class="cal-weekday">Gio</div>
+              <div class="cal-weekday">Ven</div>
+              <div class="cal-weekday">Sab</div>
+              <div class="cal-weekday">Dom</div>
+            </div>
+            <div class="cal-grid" id="calGrid"></div>
+
+            <hr class="drawer-divider" style="margin:4px 0;">
+            <div class="row" style="justify-content:space-between;">
+              <strong id="agendaDayLbl" style="font-size:13px;">Agenda del giorno</strong>
+              <span class="muted" id="agendaCountLbl">0 impegni</span>
+            </div>
+            <div id="agendaListBox" style="display:flex; flex-direction:column; gap:8px;"></div>
+          </div>
+
           <div class="grid-2">
+            <!-- Prossimi Esami -->
             <div class="card">
               <div class="card-header">
                 <div class="card-title">
-                  <svg class="icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                  Prossimi Esami
+                </div>
+                <button class="btn btn-sm btn-primary" onclick="app.addExamPrompt()">+ Esame</button>
+              </div>
+              <div id="examsListBox" style="display:flex; flex-direction:column; gap:10px;"></div>
+            </div>
+
+            <!-- Pomodoro Focus -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                   Pomodoro Focus
                 </div>
-                <select id="pomoSubjectSelect" style="width:170px;"></select>
+                <select id="pomoSubjectSelect" style="width:160px;"></select>
               </div>
               <div class="row" style="justify-content:center;">
                 <button class="btn btn-sm" onclick="app.setPomoPreset(25, 5)">25m / 5m</button>
@@ -778,48 +1154,48 @@
               </div>
               <div class="muted" id="pomoWeeklyLbl" style="text-align:center;">0 min studiati questa settimana</div>
             </div>
-
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">
-                  <svg class="icon"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
-                  Prossimi Esami
-                </div>
-                <button class="btn btn-sm btn-primary" onclick="app.addExamPrompt()">+ Aggiungi Esame</button>
-              </div>
-              <div id="examsListBox" style="display:flex; flex-direction:column; gap:10px;"></div>
-            </div>
           </div>
         </section>
 
-        <!-- 4. WHIS (ASSISTENTE STUDIO IN-LOCO) -->
+        <!-- 3. WHIS (ASSISTENTE STUDIO IN-LOCO) -->
         <section class="view" id="view-whis">
-          <div class="card">
+          <div class="card" style="flex:1;">
             <div class="card-header">
               <div class="card-title">
-                <svg class="icon"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
                 Whis — Assistente Studio In-Loco
               </div>
-              <span class="muted">Basato sulle tue note in IndexedDB</span>
+              <span class="muted">Basato sulle tue note</span>
             </div>
-            <div id="whisChatBox" style="display:flex; flex-direction:column; gap:10px; min-height:240px; max-height:420px; overflow-y:auto;"></div>
+            <div id="whisChatBox" style="display:flex; flex-direction:column; gap:10px; min-height:260px; flex:1; max-height:58dvh; overflow-y:auto;"></div>
             <div class="row">
-              <input type="text" id="whisPromptInput" class="grow" placeholder="Chiedi a Whis di spiegare un concetto delle tue note..." onkeydown="if(event.key==='Enter') app.askWhis()">
+              <input type="text" id="whisPromptInput" class="grow" placeholder="Chiedi a Whis un concetto delle tue note..." onkeydown="if(event.key==='Enter') app.askWhis()">
               <button class="btn btn-primary" onclick="app.askWhis()">Invia</button>
             </div>
           </div>
         </section>
 
-        <!-- 5. IMPOSTAZIONI -->
+        <!-- 4. IMPOSTAZIONI -->
         <section class="view" id="view-settings">
           <div class="grid-2">
             <div class="card">
-              <div class="card-title">Gemini API Key (BYOK In-Loco)</div>
-              <p class="muted">Necessaria per sbobine audio, dettatura multimodale, OCR foto e Whis direttamente dal dispositivo.</p>
-              <input type="password" id="geminiKeyInput" placeholder="Incolla la tua Gemini API Key (AIza...)">
+              <div class="card-title">Google Drive Sync Automatico (FlowLocal_Sync)</div>
+              <p class="muted">Collega lo stesso account Google Drive del PC per sincronizzare automaticamente note, cartelle, calendario, esami e Gemini API Key.</p>
+              <input type="text" id="googleClientIdInput" placeholder="Google OAuth Client ID (.apps.googleusercontent.com)">
+              <input type="text" id="googlePickerKeyInput" placeholder="Google API Key per Picker (opzionale)">
               <div class="row">
-                <button class="btn btn-primary btn-sm" onclick="app.saveSettings()">Salva Chiave</button>
-                <a class="btn btn-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Ottieni Chiave Gratuita su AI Studio</a>
+                <button class="btn btn-primary btn-sm" onclick="app.connectGoogleDrive()">Connetti Google Drive</button>
+                <button class="btn btn-sm" onclick="app.syncAllWithDrive(true)">Sincronizza Ora</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Gemini API Key (Sync Automatico o Manuale)</div>
+              <p class="muted" id="geminiSyncHint">Se hai salvato la chiave su FlowLocal PC e connesso Drive, viene importata automaticamente da user_config.json.</p>
+              <input type="password" id="geminiKeyInput" placeholder="AIza... (compilata automaticamente da Drive)">
+              <div class="row">
+                <button class="btn btn-primary btn-sm" onclick="app.saveSettings()">Salva Impostazioni</button>
+                <a class="btn btn-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">AI Studio</a>
               </div>
             </div>
 
@@ -832,37 +1208,23 @@
                 <option value="chiaro">Chiaro</option>
               </select>
             </div>
-
-            <div class="card">
-              <div class="card-title">Google Drive &amp; Google Picker (drive.file)</div>
-              <input type="text" id="googleClientIdInput" placeholder="Google OAuth Client ID (.apps.googleusercontent.com)">
-              <input type="text" id="googlePickerKeyInput" placeholder="Google API Key per Picker (opzionale per sfogliare gruppi)">
-              <div class="row">
-                <button class="btn btn-primary btn-sm" onclick="app.connectGoogleDrive()">Connetti Google Drive</button>
-                <button class="btn btn-sm" onclick="app.syncAllWithDrive()">Sincronizza library.json &amp; user_state.json</button>
-              </div>
-            </div>
           </div>
         </section>
       </main>
     </div>
 
-    <!-- BOTTOM NAVIGATION (MOBILE < 768px) -->
+    <!-- BOTTOM NAVIGATION (MOBILE < 768px) — ONLY 3 ITEMS -->
     <nav class="bottom-nav">
       <button class="bnav-btn active" data-nav="flownotes" onclick="app.switchEnv('flownotes')">
-        <svg class="icon"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
         <span>FlowNotes</span>
       </button>
-      <button class="bnav-btn" data-nav="flowtype" onclick="app.switchEnv('flowtype')">
-        <svg class="icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
-        <span>FlowType</span>
-      </button>
       <button class="bnav-btn" data-nav="flowtime" onclick="app.switchEnv('flowtime')">
-        <svg class="icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
         <span>FlowTime</span>
       </button>
       <button class="bnav-btn" data-nav="whis" onclick="app.switchEnv('whis')">
-        <svg class="icon"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
         <span>Whis</span>
       </button>
     </nav>
@@ -877,7 +1239,7 @@
       </div>
       <div class="rsvp-stage" id="rsvpStage">Pronto</div>
       <div class="row">
-        <span class="muted">Velocita: <strong id="rsvpWpmLbl">300</strong> WPM</span>
+        <span class="muted">Velocità: <strong id="rsvpWpmLbl">300</strong> WPM</span>
         <input type="range" id="rsvpWpmSlider" min="150" max="700" step="25" value="300" class="grow" oninput="app.setRsvpWpm(this.value)">
       </div>
       <div class="row" style="justify-content:center;">
@@ -887,19 +1249,71 @@
     </div>
   </div>
 
+  <!-- NUOVO EVENTO CALENDARIO MODAL -->
+  <div class="modal-backdrop" id="eventModal">
+    <div class="modal-box">
+      <div class="card-header">
+        <div class="card-title">Nuovo Evento / Impegno</div>
+        <button class="btn btn-sm" onclick="app.closeEventModal()">Chiudi</button>
+      </div>
+      <input type="text" id="evTitleInput" placeholder="Titolo (es. Lezione Controlli / Ripasso)">
+      <div class="row">
+        <input type="date" id="evDateInput" class="grow">
+        <input type="time" id="evTimeInput" style="width:130px;">
+      </div>
+      <div class="row">
+        <select id="evCategorySelect" class="grow">
+          <option value="Studio">Studio</option>
+          <option value="Lezione">Lezione</option>
+          <option value="Esame">Esame</option>
+          <option value="Personale">Personale</option>
+        </select>
+        <input type="text" id="evSubjectInput" placeholder="Materia" class="grow">
+      </div>
+      <button class="btn btn-primary" onclick="app.saveNewEvent()">Salva Evento</button>
+    </div>
+  </div>
+
+  <!-- CAMBIA MATERIA / CARTELLA MODAL -->
+  <div class="modal-backdrop" id="folderPickerModal">
+    <div class="modal-box">
+      <div class="card-header">
+        <div class="card-title">Sposta in Materia / Cartella</div>
+        <button class="btn btn-sm" onclick="document.getElementById('folderPickerModal').classList.remove('open')">Chiudi</button>
+      </div>
+      <select id="moveNoteFolderSelect"></select>
+      <button class="btn btn-primary" onclick="app.applyNoteFolderMove()">Conferma</button>
+    </div>
+  </div>
+
   <div class="toast" id="toastBox"></div>
 
   <script>
     const DB_NAME = 'FlowLocalMobileDB';
-    const DB_VERSION = 2;
+    const DB_VERSION = 3;
     const LOCK_TTL_MS = 30 * 60 * 1000;
+    const SYNC_OBF_SECRET = 'FlowLocalSyncKey2026';
 
-    const FLOWTYPE_PROMPTS = {
+    const DICTATION_PROMPTS = {
       study_latex: "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. Non rispondere mai alle domande nel testo, non completare frasi interrotte e non aggiungere concetti non pronunciati. Correggi punteggiatura e refusi in italiano mantenendo eventuali formule matematiche o fisiche in LaTeX ($...$). Restituisci SOLO il testo rifinito senza tag.",
       natural: "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. Non rispondere mai alle domande nel testo. Pulisci disfluenze e punteggiatura mantenendo il tono naturale in italiano e convertendo formule matematiche in LaTeX ($...$). Restituisci SOLO il testo rifinito senza tag.",
-      formal: "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. Riformula in registro formale accademico senza aggiungere concetti non detti e convertendo formule in LaTeX ($...$). Restituisci SOLO il testo rifinito senza tag.",
       code: "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. NON tradurre mai il discorso dell'utente in inglese: mantieni tutta la frase in italiano corretto lasciando in inglese solo i termini tecnici informatici pronunciati. Converti formule in LaTeX ($...$). Restituisci SOLO il testo rifinito senza tag."
     };
+
+    function deobfuscateSyncSecret(b64, secret = SYNC_OBF_SECRET) {
+      if (!b64) return '';
+      try {
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        const enc = new TextEncoder().encode(secret);
+        for (let i = 0; i < bin.length; i++) {
+          bytes[i] = bin.charCodeAt(i) ^ enc[i % enc.length];
+        }
+        return new TextDecoder().decode(bytes);
+      } catch {
+        return '';
+      }
+    }
 
     const app = {
       db: null,
@@ -907,10 +1321,23 @@
       exams: [],
       folders: [],
       groups: [],
+      events: [],
       weeklyStudy: [],
+
+      // FlowNotes navigation & editor state
+      activeFolderFilter: 'all', // 'all' | 'groups' | 'trash' | 'folder:<id>' | 'subject:<name>'
+      expandedFolders: new Set(),
+      notesGridMode: true,
       activeNoteId: null,
+      editorOpen: false,
       previewMode: false,
       autoSaveTimer: null,
+      driveSyncTimer: null,
+
+      // Calendar state
+      calYear: new Date().getFullYear(),
+      calMonth: new Date().getMonth(),
+      selectedDate: new Date().toISOString().slice(0, 10),
 
       // Auth & Settings
       geminiKey: localStorage.getItem('fl_gemini_key') || '',
@@ -927,11 +1354,6 @@
       aulaStartTs: 0,
       aulaTimerInt: null,
       wakeLock: null,
-
-      // Dictation
-      isDictating: false,
-      dictRecorder: null,
-      dictChunks: [],
       speechRec: null,
 
       // Pomodoro
@@ -957,11 +1379,21 @@
 
         await this.openIDB();
         await this.loadFromIDB();
+        this.renderDrawer();
         this.renderNotesList();
         this.renderGroupSelect();
+        this.renderCalendar();
         this.renderExams();
         this.renderSubjects();
         this.updateDrivePill();
+
+        document.addEventListener('click', (e) => {
+          const menu = document.getElementById('editorMoreMenu');
+          const btn = document.getElementById('moreMenuBtn');
+          if (menu && menu.classList.contains('open') && !menu.contains(e.target) && !btn.contains(e.target)) {
+            menu.classList.remove('open');
+          }
+        });
 
         document.addEventListener('visibilitychange', async () => {
           if (document.visibilityState === 'visible' && this.isRecordingAula && document.getElementById('wakeLockToggle').checked) {
@@ -971,6 +1403,11 @@
 
         if ('serviceWorker' in navigator) {
           navigator.serviceWorker.register('./sw.js').catch(() => {});
+        }
+
+        // Sync automatico all'apertura della PWA se Drive è già connesso
+        if (this.accessToken && Date.now() < this.tokenExpiry) {
+          this.syncAllWithDrive(false);
         }
       },
 
@@ -1002,18 +1439,175 @@
       },
 
       switchEnv(env) {
+        if (this.editorOpen && env !== 'flownotes') {
+          this.closeEditor(true);
+        }
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
         document.getElementById(`view-${env}`).classList.add('active');
         document.querySelectorAll('[data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === env));
-        const titles = { flownotes: 'FlowNotes', flowtype: 'FlowType', flowtime: 'FlowTime', whis: 'Whis', settings: 'Impostazioni' };
+        document.getElementById('drawerTriggerBtn').style.display = (env === 'flownotes') ? 'inline-flex' : 'none';
+        const titles = {
+          flownotes: this.getActiveFolderTitle(),
+          flowtime: 'FlowTime',
+          whis: 'Whis',
+          settings: 'Impostazioni'
+        };
         document.getElementById('topbarTitle').textContent = titles[env] || 'FlowLocal';
       },
 
-      switchNotesTab(tab) {
-        document.querySelectorAll('[data-fntab]').forEach(b => b.classList.toggle('active', b.dataset.fntab === tab));
-        ['notes', 'aula', 'groups'].forEach(t => {
-          document.getElementById(`fntab-${t}`).style.display = (t === tab) ? (t === 'notes' ? 'grid' : 'flex') : 'none';
+      // ---------------- DRAWER & FOLDERS ----------------
+      openDrawer() {
+        this.renderDrawer();
+        document.getElementById('sideDrawer').classList.add('open');
+        document.getElementById('drawerBackdrop').classList.add('open');
+      },
+      closeDrawer() {
+        document.getElementById('sideDrawer').classList.remove('open');
+        document.getElementById('drawerBackdrop').classList.remove('open');
+      },
+
+      getActiveFolderTitle() {
+        if (this.activeFolderFilter === 'all') return 'Tutte le note';
+        if (this.activeFolderFilter === 'groups') return 'Note condivise';
+        if (this.activeFolderFilter === 'trash') return 'Cestino';
+        if (this.activeFolderFilter.startsWith('folder:')) {
+          const fid = this.activeFolderFilter.slice(7);
+          const f = this.folders.find(x => String(x.id) === String(fid));
+          return f ? f.name : 'Cartella';
+        }
+        if (this.activeFolderFilter.startsWith('subject:')) {
+          return this.activeFolderFilter.slice(8);
+        }
+        return 'FlowNotes';
+      },
+
+      selectFolderFilter(filter) {
+        this.activeFolderFilter = filter;
+        this.closeDrawer();
+        this.switchEnv('flownotes');
+        const showGroups = filter === 'groups';
+        document.getElementById('fnListContainer').style.display = showGroups ? 'none' : 'flex';
+        document.getElementById('fnGroupsContainer').style.display = showGroups ? 'flex' : 'none';
+        document.getElementById('emptyTrashBtn').style.display = (filter === 'trash') ? 'inline-flex' : 'none';
+        document.getElementById('topbarTitle').textContent = this.getActiveFolderTitle();
+        this.renderDrawer();
+        if (!showGroups) this.renderNotesList();
+      },
+
+      toggleFolderExpand(fid, ev) {
+        ev.stopPropagation();
+        const key = String(fid);
+        if (this.expandedFolders.has(key)) this.expandedFolders.delete(key);
+        else this.expandedFolders.add(key);
+        this.renderDrawer();
+      },
+
+      renderDrawer() {
+        const activeNotes = this.notes.filter(n => !n.trashed);
+        const trashedNotes = this.notes.filter(n => n.trashed);
+        document.getElementById('drawerAllCount').textContent = activeNotes.length;
+        document.getElementById('drawerGroupsCount').textContent = (this.groups || []).length;
+        document.getElementById('drawerTrashCount').textContent = trashedNotes.length;
+
+        document.getElementById('drawerAllBtn').classList.toggle('active', this.activeFolderFilter === 'all');
+        document.getElementById('drawerGroupsBtn').classList.toggle('active', this.activeFolderFilter === 'groups');
+        document.getElementById('drawerTrashBtn').classList.toggle('active', this.activeFolderFilter === 'trash');
+
+        const treeEl = document.getElementById('drawerFoldersTree');
+        treeEl.innerHTML = '';
+
+        // Costruisci albero materie/sottocartelle da this.folders + materie presenti nelle note
+        const folderMap = new Map();
+        (this.folders || []).forEach(f => {
+          folderMap.set(String(f.id), { ...f, children: [] });
         });
+        const roots = [];
+        folderMap.forEach(f => {
+          if (f.parent_id && folderMap.has(String(f.parent_id))) {
+            folderMap.get(String(f.parent_id)).children.push(f);
+          } else {
+            roots.push(f);
+          }
+        });
+
+        // Aggiungi eventuali materie usate nelle note ma non in folders
+        const knownNames = new Set(roots.map(r => (r.name || '').toLowerCase()));
+        activeNotes.forEach(n => {
+          const s = (n.subject || 'Generale').trim();
+          if (s && !knownNames.has(s.toLowerCase())) {
+            knownNames.add(s.toLowerCase());
+            roots.push({ id: 'subj_' + s, name: s, color: '#6366F1', virtualSubject: s, children: [] });
+          }
+        });
+
+        const countForFolder = (f) => {
+          const childIds = new Set([String(f.id), ...(f.children || []).map(c => String(c.id))]);
+          return activeNotes.filter(n => {
+            if (n.folder_id && childIds.has(String(n.folder_id))) return true;
+            return (n.subject || 'Generale').toLowerCase() === (f.name || '').toLowerCase();
+          }).length;
+        };
+
+        roots.forEach(r => {
+          const filterKey = r.virtualSubject ? `subject:${r.virtualSubject}` : `folder:${r.id}`;
+          const hasChildren = r.children && r.children.length > 0;
+          const isExp = this.expandedFolders.has(String(r.id));
+          const btn = document.createElement('button');
+          btn.className = 'drawer-item' + (this.activeFolderFilter === filterKey ? ' active' : '');
+          btn.onclick = () => this.selectFolderFilter(filterKey);
+          const color = r.color || '#6366F1';
+          btn.innerHTML = `
+            <span class="drawer-item-left">
+              ${hasChildren ? `<span class="folder-chevron" onclick="app.toggleFolderExpand('${r.id}', event)">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${isExp ? '<polyline points="6 9 12 15 18 9"/>' : '<polyline points="9 18 15 12 9 6"/>'}</svg>
+              </span>` : '<span style="width:10px;"></span>'}
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="${this.esc(color)}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <span>${this.esc(r.name)}</span>
+            </span>
+            <span class="drawer-count">${countForFolder(r)}</span>`;
+          treeEl.appendChild(btn);
+
+          if (hasChildren && isExp) {
+            const subWrap = document.createElement('div');
+            subWrap.className = 'folder-children';
+            r.children.forEach(c => {
+              const cKey = `folder:${c.id}`;
+              const cCount = activeNotes.filter(n => String(n.folder_id) === String(c.id) || ((n.subject || '').toLowerCase() === r.name.toLowerCase() && (n.topic || '').toLowerCase() === c.name.toLowerCase())).length;
+              const cBtn = document.createElement('button');
+              cBtn.className = 'drawer-item' + (this.activeFolderFilter === cKey ? ' active' : '');
+              cBtn.onclick = () => this.selectFolderFilter(cKey);
+              cBtn.innerHTML = `
+                <span class="drawer-item-left">
+                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="${this.esc(c.color || color)}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                  <span>${this.esc(c.name)}</span>
+                </span>
+                <span class="drawer-count">${cCount}</span>`;
+              subWrap.appendChild(cBtn);
+            });
+            treeEl.appendChild(subWrap);
+          }
+        });
+      },
+
+      async createFolderPrompt() {
+        const name = prompt('Nome nuova Materia o Sottocartella:');
+        if (!name || !name.trim()) return;
+        let parentId = null;
+        if (this.activeFolderFilter.startsWith('folder:')) {
+          const cur = this.folders.find(f => String(f.id) === this.activeFolderFilter.slice(7));
+          if (cur && !cur.parent_id && confirm(`Creare "${name.trim()}" come sottocartella di "${cur.name}"?`)) {
+            parentId = cur.id;
+            this.expandedFolders.add(String(cur.id));
+          }
+        }
+        const palette = ['#6366F1', '#0EA5E9', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6'];
+        const color = palette[this.folders.length % palette.length];
+        this.folders.push({ id: 'fld_' + Date.now(), name: name.trim(), parent_id: parentId, color, profile: 'Alessandro' });
+        await this.idbSet('folders', this.folders);
+        this.renderDrawer();
+        this.renderSubjects();
+        this.scheduleDriveSync();
+        this.showToast(`Cartella "${name.trim()}" creata`);
       },
 
       // ---------------- INDEXEDDB ----------------
@@ -1051,27 +1645,137 @@
       async loadFromIDB() {
         this.notes = (await this.idbGet('notes')) || [];
         this.exams = (await this.idbGet('exams')) || [];
-        this.folders = (await this.idbGet('folders')) || [{ id: 1, name: 'Generale' }];
+        this.folders = (await this.idbGet('folders')) || [{ id: 1, name: 'Generale', parent_id: null, color: '#6366F1' }];
         this.weeklyStudy = (await this.idbGet('weeklyStudy')) || [];
+        this.events = (await this.idbGet('events')) || [];
       },
 
-      // ---------------- FLOWNOTES CRUD & PREVIEW ----------------
-      newNote() {
-        this.activeNoteId = null;
-        document.getElementById('noteTitleInput').value = '';
-        document.getElementById('noteSubjectInput').value = 'Generale';
-        document.getElementById('noteBodyInput').value = '';
-        document.getElementById('audioSyncWrap').style.display = 'none';
-        if (this.previewMode) this.renderMarkdownPreview();
+      // ---------------- FLOWNOTES LIST & FULLSCREEN EDITOR ----------------
+      toggleNotesLayout() {
+        this.notesGridMode = !this.notesGridMode;
+        document.getElementById('notesListBox').classList.toggle('list-mode', !this.notesGridMode);
       },
 
-      selectNote(id) {
+      getFilteredNotes() {
+        const q = (document.getElementById('notesSearchInput').value || '').toLowerCase();
+        const isTrash = this.activeFolderFilter === 'trash';
+        let list = this.notes.filter(n => Boolean(n.trashed) === isTrash);
+
+        if (this.activeFolderFilter.startsWith('folder:')) {
+          const fid = this.activeFolderFilter.slice(7);
+          const f = this.folders.find(x => String(x.id) === String(fid));
+          const childIds = new Set([String(fid), ...this.folders.filter(c => String(c.parent_id) === String(fid)).map(c => String(c.id))]);
+          list = list.filter(n => {
+            if (n.folder_id && childIds.has(String(n.folder_id))) return true;
+            if (f && !f.parent_id && (n.subject || 'Generale').toLowerCase() === f.name.toLowerCase()) return true;
+            if (f && f.parent_id) {
+              const parent = this.folders.find(p => String(p.id) === String(f.parent_id));
+              return parent && (n.subject || '').toLowerCase() === parent.name.toLowerCase() && (n.topic || '').toLowerCase() === f.name.toLowerCase();
+            }
+            return false;
+          });
+        } else if (this.activeFolderFilter.startsWith('subject:')) {
+          const subj = this.activeFolderFilter.slice(8).toLowerCase();
+          list = list.filter(n => (n.subject || 'Generale').toLowerCase() === subj);
+        }
+
+        if (q) {
+          list = list.filter(n =>
+            (n.title || '').toLowerCase().includes(q) ||
+            (n.subject || '').toLowerCase().includes(q) ||
+            (n.content_markdown || '').toLowerCase().includes(q)
+          );
+        }
+        return list;
+      },
+
+      renderNotesList() {
+        const filtered = this.getFilteredNotes();
+        document.getElementById('notesCountLbl').textContent = `${filtered.length} ${filtered.length === 1 ? 'nota' : 'note'}`;
+        const box = document.getElementById('notesListBox');
+        box.innerHTML = '';
+        if (!filtered.length) {
+          box.innerHTML = `<div class="muted" style="grid-column:1/-1; padding:24px; text-align:center;">Nessuna nota qui. Tocca + per creare un nuovo appunto.</div>`;
+          return;
+        }
+        filtered.forEach(n => {
+          const div = document.createElement('div');
+          div.className = 'note-card';
+          div.onclick = () => this.openNoteEditor(n.id);
+          const snippet = (n.content_markdown || '').replace(/[#*`$]/g, '').trim().slice(0, 110) || 'Nota vuota';
+          div.innerHTML = `
+            <div class="note-card-title">${this.esc(n.title || 'Senza titolo')}</div>
+            <div class="note-card-snippet">${this.esc(snippet)}</div>
+            <div class="note-card-meta">
+              <span class="subject-chip">${this.esc(n.subject || 'Generale')}</span>
+              <span>${(n.updated_at || n.created_at || '').slice(0, 10)}</span>
+            </div>`;
+          box.appendChild(div);
+        });
+      },
+
+      createNewNote() {
+        let defaultSubj = 'Generale';
+        let defaultTopic = 'Generale';
+        let defaultFolderId = null;
+        if (this.activeFolderFilter.startsWith('folder:')) {
+          const fid = this.activeFolderFilter.slice(7);
+          const f = this.folders.find(x => String(x.id) === String(fid));
+          if (f) {
+            defaultFolderId = f.id;
+            if (f.parent_id) {
+              const p = this.folders.find(x => String(x.id) === String(f.parent_id));
+              defaultSubj = p ? p.name : f.name;
+              defaultTopic = f.name;
+            } else {
+              defaultSubj = f.name;
+            }
+          }
+        } else if (this.activeFolderFilter.startsWith('subject:')) {
+          defaultSubj = this.activeFolderFilter.slice(8);
+        }
+
+        const id = 'pwa_' + Date.now();
+        const now = new Date().toISOString();
+        const newNote = {
+          id,
+          title: '',
+          subject: defaultSubj,
+          topic: defaultTopic,
+          folder_id: defaultFolderId,
+          content_markdown: '',
+          created_at: now,
+          updated_at: now,
+          is_studied: 0,
+          trashed: false
+        };
+        this.notes.unshift(newNote);
+        this.idbSet('notes', this.notes);
+        this.openNoteEditor(id);
+      },
+
+      openNoteEditor(id) {
         const n = this.notes.find(x => String(x.id) === String(id));
         if (!n) return;
         this.activeNoteId = n.id;
+        this.editorOpen = true;
+        this.previewMode = false;
+        document.body.classList.add('editor-fullscreen');
+        document.getElementById('fnListContainer').style.display = 'none';
+        document.getElementById('fnGroupsContainer').style.display = 'none';
+        document.getElementById('fnEditorContainer').classList.add('active');
+
         document.getElementById('noteTitleInput').value = n.title || '';
-        document.getElementById('noteSubjectInput').value = n.subject || 'Generale';
         document.getElementById('noteBodyInput').value = n.content_markdown || '';
+        document.getElementById('noteBodyInput').style.display = 'block';
+        document.getElementById('notePreviewBox').style.display = 'none';
+        document.getElementById('togglePreviewBtn').classList.remove('active');
+        document.getElementById('autoSaveLbl').textContent = 'Salvato';
+        document.getElementById('autoSaveLbl').className = 'autosave-badge saved';
+
+        document.getElementById('restoreNoteBtn').style.display = n.trashed ? 'flex' : 'none';
+        document.getElementById('deleteNoteMenuLbl').textContent = n.trashed ? 'Elimina definitivamente' : 'Sposta nel Cestino';
+
         const aw = document.getElementById('audioSyncWrap');
         const ap = document.getElementById('noteAudioPlayer');
         if (n.audio_url) {
@@ -1080,67 +1784,175 @@
         } else {
           aw.style.display = 'none';
         }
-        this.renderNotesList();
-        if (this.previewMode) this.renderMarkdownPreview();
-        this.ensurePwaTabForNote(n);
+      },
+
+      async closeEditor(skipSwitch = false) {
+        clearTimeout(this.autoSaveTimer);
+        await this.saveCurrentNote(false);
+        this.editorOpen = false;
+        this.activeNoteId = null;
+        document.body.classList.remove('editor-fullscreen');
+        document.getElementById('fnEditorContainer').classList.remove('active');
+        document.getElementById('aulaPanel').classList.remove('open');
+        if (!skipSwitch) {
+          const showGroups = this.activeFolderFilter === 'groups';
+          document.getElementById('fnListContainer').style.display = showGroups ? 'none' : 'flex';
+          document.getElementById('fnGroupsContainer').style.display = showGroups ? 'flex' : 'none';
+          this.renderDrawer();
+          this.renderNotesList();
+        }
       },
 
       scheduleAutoSave() {
+        const lbl = document.getElementById('autoSaveLbl');
+        lbl.textContent = 'Modifica...';
+        lbl.className = 'autosave-badge';
         clearTimeout(this.autoSaveTimer);
-        this.autoSaveTimer = setTimeout(() => this.saveCurrentNote(false), 900);
+        this.autoSaveTimer = setTimeout(() => this.saveCurrentNote(true), 600);
       },
 
-      async saveCurrentNote(notify) {
+      async saveCurrentNote(syncDrive = true) {
+        if (!this.activeNoteId) return;
+        const idx = this.notes.findIndex(x => String(x.id) === String(this.activeNoteId));
+        if (idx < 0) return;
+
         const title = document.getElementById('noteTitleInput').value.trim() || 'Appunto senza titolo';
-        const subject = document.getElementById('noteSubjectInput').value.trim() || 'Generale';
         const body = document.getElementById('noteBodyInput').value;
-        if (!this.activeNoteId && !body.trim() && title === 'Appunto senza titolo') return;
-        if (this.activeNoteId) {
-          const idx = this.notes.findIndex(x => String(x.id) === String(this.activeNoteId));
-          if (idx >= 0) {
-            this.notes[idx] = { ...this.notes[idx], title, subject, content_markdown: body, updated_at: new Date().toISOString() };
-          }
-        } else {
-          const id = 'pwa_' + Date.now();
-          this.activeNoteId = id;
-          this.notes.unshift({ id, title, subject, content_markdown: body, created_at: new Date().toISOString(), is_studied: 0 });
+        const cur = this.notes[idx];
+
+        // Se la nota è vuota e mai modificata, mantieni titolo vuoto finché non chiude
+        const isEdited = title !== (cur.title || '') || body !== (cur.content_markdown || '');
+        if (!isEdited && cur.title) {
+          document.getElementById('autoSaveLbl').textContent = 'Salvato';
+          document.getElementById('autoSaveLbl').className = 'autosave-badge saved';
+          return;
         }
+
+        const isDesktopNote = !String(cur.id).startsWith('pwa_');
+        this.notes[idx] = {
+          ...cur,
+          title,
+          content_markdown: body,
+          updated_at: new Date().toISOString(),
+          ...(isDesktopNote ? { source: 'pwa_edited' } : {})
+        };
         await this.idbSet('notes', this.notes);
-        this.renderNotesList();
-        if (notify) this.showToast('Nota salvata in locale');
+        const lbl = document.getElementById('autoSaveLbl');
+        lbl.textContent = 'Salvato';
+        lbl.className = 'autosave-badge saved';
+        if (syncDrive) this.scheduleDriveSync();
+      },
+
+      toggleEditorMoreMenu(ev) {
+        ev.stopPropagation();
+        document.getElementById('editorMoreMenu').classList.toggle('open');
       },
 
       async deleteCurrentNote() {
+        document.getElementById('editorMoreMenu').classList.remove('open');
         if (!this.activeNoteId) return;
-        this.notes = this.notes.filter(x => String(x.id) !== String(this.activeNoteId));
+        const idx = this.notes.findIndex(x => String(x.id) === String(this.activeNoteId));
+        if (idx < 0) return;
+        if (this.notes[idx].trashed) {
+          this.notes.splice(idx, 1);
+          this.showToast('Nota eliminata definitivamente');
+        } else {
+          this.notes[idx].trashed = true;
+          this.notes[idx].updated_at = new Date().toISOString();
+          this.showToast('Spostata nel Cestino');
+        }
         await this.idbSet('notes', this.notes);
-        this.newNote();
-        this.renderNotesList();
-        this.showToast('Nota eliminata');
+        this.scheduleDriveSync();
+        await this.closeEditor();
       },
 
-      renderNotesList() {
-        const q = (document.getElementById('notesSearchInput').value || '').toLowerCase();
-        const filtered = this.notes.filter(n =>
-          (n.title || '').toLowerCase().includes(q) ||
-          (n.subject || '').toLowerCase().includes(q) ||
-          (n.content_markdown || '').toLowerCase().includes(q)
-        );
-        document.getElementById('notesCountLbl').textContent = `${filtered.length} note`;
-        const box = document.getElementById('notesListBox');
-        box.innerHTML = '';
-        filtered.forEach(n => {
-          const div = document.createElement('div');
-          div.className = 'note-item' + (String(n.id) === String(this.activeNoteId) ? ' active' : '');
-          div.onclick = () => this.selectNote(n.id);
-          div.innerHTML = `<div class="note-item-title">${this.esc(n.title || 'Senza titolo')}</div>
-            <div class="note-item-meta"><span>${this.esc(n.subject || 'Generale')}</span><span>${(n.created_at || '').slice(0, 10)}</span></div>`;
-          box.appendChild(div);
+      async restoreCurrentNote() {
+        document.getElementById('editorMoreMenu').classList.remove('open');
+        const idx = this.notes.findIndex(x => String(x.id) === String(this.activeNoteId));
+        if (idx >= 0) {
+          this.notes[idx].trashed = false;
+          await this.idbSet('notes', this.notes);
+          this.showToast('Nota ripristinata');
+          await this.closeEditor();
+        }
+      },
+
+      async emptyTrash() {
+        if (!confirm('Eliminare definitivamente tutte le note nel Cestino?')) return;
+        this.notes = this.notes.filter(n => !n.trashed);
+        await this.idbSet('notes', this.notes);
+        this.renderDrawer();
+        this.renderNotesList();
+        this.showToast('Cestino svuotato');
+      },
+
+      openFolderPickerForNote() {
+        document.getElementById('editorMoreMenu').classList.remove('open');
+        const sel = document.getElementById('moveNoteFolderSelect');
+        sel.innerHTML = '<option value="Generale">Generale</option>';
+        (this.folders || []).forEach(f => {
+          const opt = document.createElement('option');
+          opt.value = String(f.id);
+          opt.textContent = f.parent_id ? `↳ ${f.name}` : f.name;
+          sel.appendChild(opt);
         });
+        document.getElementById('folderPickerModal').classList.add('open');
+      },
+
+      async applyNoteFolderMove() {
+        const val = document.getElementById('moveNoteFolderSelect').value;
+        const idx = this.notes.findIndex(x => String(x.id) === String(this.activeNoteId));
+        if (idx >= 0) {
+          const f = this.folders.find(x => String(x.id) === val);
+          if (f) {
+            this.notes[idx].folder_id = f.id;
+            if (f.parent_id) {
+              const p = this.folders.find(x => String(x.id) === String(f.parent_id));
+              this.notes[idx].subject = p ? p.name : f.name;
+              this.notes[idx].topic = f.name;
+            } else {
+              this.notes[idx].subject = f.name;
+            }
+          } else {
+            this.notes[idx].subject = 'Generale';
+            this.notes[idx].folder_id = null;
+          }
+          await this.idbSet('notes', this.notes);
+          this.scheduleDriveSync();
+          this.showToast(`Spostata in ${this.notes[idx].subject}`);
+        }
+        document.getElementById('folderPickerModal').classList.remove('open');
+      },
+
+      insertTimestampMarker() {
+        document.getElementById('editorMoreMenu').classList.remove('open');
+        const secs = this.isRecordingAula ? Math.floor((Date.now() - this.aulaStartTs) / 1000) : 0;
+        const h = String(Math.floor(secs / 3600)).padStart(2, '0');
+        const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
+        const s = String(secs % 60).padStart(2, '0');
+        const tb = document.getElementById('noteBodyInput');
+        const marker = `[${h}:${m}:${s}] `;
+        const pos = tb.selectionStart || tb.value.length;
+        tb.value = tb.value.slice(0, pos) + marker + tb.value.slice(pos);
+        this.scheduleAutoSave();
+      },
+
+      exportActiveNoteMd() {
+        document.getElementById('editorMoreMenu').classList.remove('open');
+        const title = document.getElementById('noteTitleInput').value.trim() || 'nota';
+        const body = document.getElementById('noteBodyInput').value || '';
+        const blob = new Blob([`# ${title}\n\n${body}`], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${title.replace(/[^\w\-]+/g, '_')}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
       },
 
       toggleNotePreview() {
         this.previewMode = !this.previewMode;
+        document.getElementById('togglePreviewBtn').classList.toggle('active', this.previewMode);
         document.getElementById('noteBodyInput').style.display = this.previewMode ? 'none' : 'block';
         document.getElementById('notePreviewBox').style.display = this.previewMode ? 'block' : 'none';
         if (this.previewMode) this.renderMarkdownPreview();
@@ -1229,7 +2041,7 @@
 
       // ---------------- GEMINI API (IN-LOCO AUDIO / VISION / TEXT) ----------------
       async callGemini(parts, systemInstruction = '') {
-        if (!this.geminiKey) throw new Error('Inserisci prima la tua Gemini API Key in Impostazioni.');
+        if (!this.geminiKey) throw new Error('Chiave Gemini mancante. Connetti Google Drive o inseriscila in Impostazioni.');
         const body = { contents: [{ role: 'user', parts }] };
         if (systemInstruction) body.systemInstruction = { parts: [{ text: systemInstruction }] };
         const res = await fetch(
@@ -1252,6 +2064,7 @@
 
       // ---------------- OCR FOTO / SCREENSHOT ----------------
       async runOcrFromFile(ev) {
+        document.getElementById('editorMoreMenu').classList.remove('open');
         const file = ev.target.files && ev.target.files[0];
         if (!file) return;
         try {
@@ -1263,7 +2076,7 @@
           ]);
           const tb = document.getElementById('noteBodyInput');
           tb.value = (tb.value ? tb.value + '\n\n' : '') + out;
-          await this.saveCurrentNote(false);
+          await this.saveCurrentNote(true);
           this.showToast('OCR completato e inserito nella nota');
         } catch (err) {
           this.showToast('Errore OCR: ' + err.message);
@@ -1272,7 +2085,13 @@
         }
       },
 
-      // ---------------- MODALITA AULA (WAKE LOCK + GEMINI IN-LOCO) ----------------
+      // ---------------- REGISTRAZIONE & DETTATURA DIRETTA IN FLOWNOTES ----------------
+      toggleAulaBar() {
+        const panel = document.getElementById('aulaPanel');
+        panel.classList.toggle('open');
+        document.getElementById('toggleRecordBtn').classList.toggle('active', panel.classList.contains('open'));
+      },
+
       async requestWakeLock() {
         if (!('wakeLock' in navigator)) {
           document.getElementById('wakeLockStatusLbl').textContent = 'Wake Lock non supportato';
@@ -1294,7 +2113,33 @@
         document.getElementById('wakeLockStatusLbl').textContent = 'Wake Lock: Pronto';
       },
 
-      async startAulaRecording() {
+      async startNoteRecording() {
+        const mode = document.getElementById('dictateModeSelect').value;
+        if (!this.geminiKey && mode !== 'aula' && (window.SpeechRecognition || window.webkitSpeechRecognition)) {
+          const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+          this.speechRec = new SR();
+          this.speechRec.lang = 'it-IT';
+          this.speechRec.continuous = true;
+          this.speechRec.onresult = (e) => {
+            let txt = '';
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+              if (e.results[i].isFinal) txt += e.results[i][0].transcript + ' ';
+            }
+            if (txt) {
+              const tb = document.getElementById('noteBodyInput');
+              tb.value += txt;
+              this.scheduleAutoSave();
+            }
+          };
+          this.speechRec.start();
+          this.isRecordingAula = true;
+          document.getElementById('aulaPanel').classList.add('recording');
+          document.getElementById('aulaStartBtn').disabled = true;
+          document.getElementById('aulaStopBtn').disabled = false;
+          document.getElementById('aulaStatusMsg').textContent = 'Dettatura offline Web Speech attiva...';
+          return;
+        }
+
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           this.audioChunks = [];
@@ -1302,7 +2147,7 @@
           this.mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.audioChunks.push(e.data); };
           this.mediaRecorder.onstop = async () => {
             stream.getTracks().forEach(t => t.stop());
-            await this.processAulaAudio();
+            await this.processNoteAudio(mode);
           };
           this.mediaRecorder.start(1000);
           this.isRecordingAula = true;
@@ -1310,7 +2155,7 @@
           document.getElementById('aulaPanel').classList.add('recording');
           document.getElementById('aulaStartBtn').disabled = true;
           document.getElementById('aulaStopBtn').disabled = false;
-          document.getElementById('aulaStatusMsg').textContent = 'Registrazione in corso (non chiudere Safari/browser)...';
+          document.getElementById('aulaStatusMsg').textContent = 'Registrazione in corso...';
           if (document.getElementById('wakeLockToggle').checked) await this.requestWakeLock();
 
           this.aulaTimerInt = setInterval(() => {
@@ -1325,140 +2170,182 @@
         }
       },
 
-      stopAulaRecording() {
+      stopNoteRecording() {
         this.isRecordingAula = false;
         clearInterval(this.aulaTimerInt);
         this.releaseWakeLock();
         document.getElementById('aulaPanel').classList.remove('recording');
         document.getElementById('aulaStartBtn').disabled = false;
         document.getElementById('aulaStopBtn').disabled = true;
+        if (this.speechRec) {
+          try { this.speechRec.stop(); } catch {}
+          this.speechRec = null;
+          document.getElementById('aulaStatusMsg').textContent = 'Dettatura inserita nella nota.';
+          return;
+        }
         if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
           this.mediaRecorder.stop();
         }
       },
 
-      async processAulaAudio() {
+      async processNoteAudio(mode) {
         const blob = new Blob(this.audioChunks, { type: this.mediaRecorder?.mimeType || 'audio/webm' });
-        const title = document.getElementById('aulaTitleInput').value.trim() || `Sbobina ${new Date().toLocaleDateString('it-IT')}`;
-        const subject = document.getElementById('aulaSubjectInput').value.trim() || 'Generale';
-        document.getElementById('aulaStatusMsg').textContent = 'Elaborazione sbobina in-loco con Gemini...';
+        document.getElementById('aulaStatusMsg').textContent = 'Elaborazione con Gemini in corso...';
         try {
           const b64 = await this.blobToBase64(blob);
-          const prompt = `Trascrivi e struttura in modo chiaro e fedele questa lezione universitaria in Markdown italiano. Converti formule matematiche/fisiche in LaTeX ($...$ o $$...$$) e inserisci marcatori temporali [HH:MM:SS] ai cambi di argomento. Non inventare concetti non detti.`;
-          const md = await this.callGemini([
+          const prompt = mode === 'aula'
+            ? 'Trascrivi e struttura in modo chiaro e fedele questa lezione universitaria in Markdown italiano. Converti formule matematiche/fisiche in LaTeX ($...$ o $$...$$) e inserisci marcatori temporali [HH:MM:SS] ai cambi di argomento. Non inventare concetti non detti.'
+            : '<trascrizione>Trascrivi esattamente e applica il filtro testuale senza rispondere alle domande.</trascrizione>';
+          const sys = DICTATION_PROMPTS[mode] || DICTATION_PROMPTS.study_latex;
+          const out = await this.callGemini([
             { text: prompt },
             { inlineData: { mimeType: blob.type || 'audio/webm', data: b64 } }
-          ], FLOWTYPE_PROMPTS.study_latex);
+          ], sys);
 
-          const audioUrl = URL.createObjectURL(blob);
-          const id = 'pwa_' + Date.now();
-          this.notes.unshift({
-            id,
-            title,
-            subject,
-            content_markdown: md,
-            audio_url: audioUrl,
-            created_at: new Date().toISOString(),
-            is_studied: 0
-          });
-          await this.idbSet('notes', this.notes);
-          this.renderNotesList();
-          this.selectNote(id);
-          this.switchNotesTab('notes');
-          document.getElementById('aulaStatusMsg').textContent = 'Sbobina completata e salvata!';
-          this.showToast('Sbobina creata in-loco');
+          const tb = document.getElementById('noteBodyInput');
+          tb.value = (tb.value ? tb.value + '\n\n' : '') + out;
+          if (mode === 'aula') {
+            const audioUrl = URL.createObjectURL(blob);
+            const idx = this.notes.findIndex(x => String(x.id) === String(this.activeNoteId));
+            if (idx >= 0) this.notes[idx].audio_url = audioUrl;
+            document.getElementById('noteAudioPlayer').src = audioUrl;
+            document.getElementById('audioSyncWrap').style.display = 'block';
+          }
+          await this.saveCurrentNote(true);
+          document.getElementById('aulaStatusMsg').textContent = 'Testo inserito e salvato!';
+          this.showToast('Trascrizione inserita nella nota');
         } catch (err) {
-          document.getElementById('aulaStatusMsg').textContent = 'Errore elaborazione: ' + err.message;
+          document.getElementById('aulaStatusMsg').textContent = 'Errore: ' + err.message;
         }
       },
 
-      // ---------------- FLOWTYPE (DETTATURA IN-LOCO + WEB SPEECH FALLBACK) ----------------
-      async startDictation() {
-        const mode = document.getElementById('flowtypeModeSelect').value;
-        if (this.geminiKey && navigator.mediaDevices) {
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            this.dictChunks = [];
-            this.dictRecorder = new MediaRecorder(stream);
-            this.dictRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.dictChunks.push(e.data); };
-            this.dictRecorder.onstop = async () => {
-              stream.getTracks().forEach(t => t.stop());
-              const blob = new Blob(this.dictChunks, { type: this.dictRecorder?.mimeType || 'audio/webm' });
-              document.getElementById('ftStatusLbl').textContent = 'Raffinamento con Gemini...';
-              try {
-                const b64 = await this.blobToBase64(blob);
-                const refined = await this.callGemini([
-                  { text: '<trascrizione>Trascrivi esattamente e applica il filtro testuale senza rispondere alle domande.</trascrizione>' },
-                  { inlineData: { mimeType: blob.type || 'audio/webm', data: b64 } }
-                ], FLOWTYPE_PROMPTS[mode] || FLOWTYPE_PROMPTS.study_latex);
-                const out = document.getElementById('ftOutputText');
-                out.value = (out.value ? out.value + ' ' : '') + refined;
-                document.getElementById('ftStatusLbl').textContent = 'Completato (Gemini In-Loco)';
-              } catch (err) {
-                document.getElementById('ftStatusLbl').textContent = 'Errore: ' + err.message;
-              }
-            };
-            this.dictRecorder.start();
-            this.isDictating = true;
-            document.getElementById('ftStartBtn').disabled = true;
-            document.getElementById('ftStopBtn').disabled = false;
-            document.getElementById('ftStatusLbl').textContent = 'Ascolto in corso (Gemini)...';
-            return;
-          } catch {}
+      // ---------------- FLOWTIME: CALENDARIO + AGENDA + ESAMI + POMODORO ----------------
+      shiftCalMonth(delta) {
+        this.calMonth += delta;
+        if (this.calMonth < 0) { this.calMonth = 11; this.calYear--; }
+        if (this.calMonth > 11) { this.calMonth = 0; this.calYear++; }
+        this.renderCalendar();
+      },
+
+      renderCalendar() {
+        const monthNames = ['Gennaio', 'Febbraio', 'Marzo', 'Aprile', 'Maggio', 'Giugno', 'Luglio', 'Agosto', 'Settembre', 'Ottobre', 'Novembre', 'Dicembre'];
+        document.getElementById('calMonthLbl').textContent = `${monthNames[this.calMonth]} ${this.calYear}`;
+
+        const grid = document.getElementById('calGrid');
+        grid.innerHTML = '';
+
+        const firstDay = new Date(this.calYear, this.calMonth, 1);
+        const startOffset = (firstDay.getDay() + 6) % 7; // Lun=0
+        const daysInMonth = new Date(this.calYear, this.calMonth + 1, 0).getDate();
+        const todayStr = new Date().toISOString().slice(0, 10);
+
+        const evDates = new Set((this.events || []).map(e => e.event_date));
+        const exDates = new Set((this.exams || []).map(e => e.exam_date));
+
+        for (let i = 0; i < startOffset; i++) {
+          const blank = document.createElement('div');
+          blank.className = 'cal-day other-month';
+          grid.appendChild(blank);
         }
 
-        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SR) {
-          this.showToast('Web Speech API non supportata e nessuna Gemini Key impostata');
+        for (let d = 1; d <= daysInMonth; d++) {
+          const iso = `${this.calYear}-${String(this.calMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+          const btn = document.createElement('button');
+          btn.className = 'cal-day' + (iso === todayStr ? ' today' : '') + (iso === this.selectedDate ? ' selected' : '');
+          btn.onclick = () => { this.selectedDate = iso; this.renderCalendar(); };
+          let dots = '';
+          if (evDates.has(iso)) dots += '<span class="cal-dot"></span>';
+          if (exDates.has(iso)) dots += '<span class="cal-dot exam"></span>';
+          btn.innerHTML = `<span>${d}</span><div class="cal-dots">${dots}</div>`;
+          grid.appendChild(btn);
+        }
+        this.renderAgendaForDay();
+      },
+
+      renderAgendaForDay() {
+        const dStr = this.selectedDate;
+        document.getElementById('agendaDayLbl').textContent = `Agenda ${dStr}`;
+        const dayEvents = (this.events || []).filter(e => e.event_date === dStr);
+        const dayExams = (this.exams || []).filter(e => e.exam_date === dStr);
+        const box = document.getElementById('agendaListBox');
+        box.innerHTML = '';
+
+        const total = dayEvents.length + dayExams.length;
+        document.getElementById('agendaCountLbl').textContent = `${total} ${total === 1 ? 'impegno' : 'impegni'}`;
+
+        if (!total) {
+          box.innerHTML = '<div class="muted">Nessun impegno per questa data.</div>';
           return;
         }
-        this.speechRec = new SR();
-        this.speechRec.lang = 'it-IT';
-        this.speechRec.continuous = true;
-        this.speechRec.onresult = (e) => {
-          let txt = '';
-          for (let i = e.resultIndex; i < e.results.length; i++) {
-            if (e.results[i].isFinal) txt += e.results[i][0].transcript + ' ';
-          }
-          if (txt) document.getElementById('ftOutputText').value += txt;
-        };
-        this.speechRec.start();
-        this.isDictating = true;
-        document.getElementById('ftStartBtn').disabled = true;
-        document.getElementById('ftStopBtn').disabled = false;
-        document.getElementById('ftStatusLbl').textContent = 'Dettatura offline Web Speech attiva...';
+        dayExams.forEach(ex => {
+          const div = document.createElement('div');
+          div.className = 'note-card';
+          div.style.borderColor = 'var(--warning)';
+          div.innerHTML = `<div class="row" style="justify-content:space-between;">
+            <strong>Esame: ${this.esc(ex.exam_title)}</strong>
+            <span class="subject-chip">${this.esc(ex.subject_name || 'Generale')}</span>
+          </div>`;
+          box.appendChild(div);
+        });
+        dayEvents.forEach(ev => {
+          const div = document.createElement('div');
+          div.className = 'note-card';
+          div.innerHTML = `<div class="row" style="justify-content:space-between;">
+            <div>
+              <strong>${this.esc(ev.title)}</strong>
+              <div class="muted">${ev.start_time ? this.esc(ev.start_time) + ' · ' : ''}${this.esc(ev.category || 'Studio')}${ev.subject ? ' · ' + this.esc(ev.subject) : ''}</div>
+            </div>
+            <button class="btn btn-sm btn-danger" onclick="app.deleteEvent('${ev.id}')">×</button>
+          </div>`;
+          box.appendChild(div);
+        });
       },
 
-      stopDictation() {
-        this.isDictating = false;
-        document.getElementById('ftStartBtn').disabled = false;
-        document.getElementById('ftStopBtn').disabled = true;
-        if (this.dictRecorder && this.dictRecorder.state !== 'inactive') this.dictRecorder.stop();
-        if (this.speechRec) { try { this.speechRec.stop(); } catch {} this.speechRec = null; }
+      openEventModal() {
+        document.getElementById('evDateInput').value = this.selectedDate;
+        document.getElementById('evTitleInput').value = '';
+        document.getElementById('evTimeInput').value = '09:00';
+        document.getElementById('eventModal').classList.add('open');
+      },
+      closeEventModal() {
+        document.getElementById('eventModal').classList.remove('open');
       },
 
-      copyFlowType() {
-        navigator.clipboard.writeText(document.getElementById('ftOutputText').value || '');
-        this.showToast('Testo copiato');
+      async saveNewEvent() {
+        const title = document.getElementById('evTitleInput').value.trim();
+        const event_date = document.getElementById('evDateInput').value;
+        if (!title || !event_date) return this.showToast('Inserisci titolo e data');
+        const start_time = document.getElementById('evTimeInput').value || '';
+        const category = document.getElementById('evCategorySelect').value;
+        const subject = document.getElementById('evSubjectInput').value.trim();
+        this.events.push({
+          id: 'pwa_' + Date.now(),
+          title,
+          event_date,
+          start_time,
+          category,
+          subject,
+          is_all_day: !start_time,
+          color: '#6366F1'
+        });
+        await this.idbSet('events', this.events);
+        this.closeEventModal();
+        this.renderCalendar();
+        this.scheduleDriveSync();
+        this.showToast('Evento aggiunto e in coda sync');
       },
 
-      async sendFlowTypeToNotes() {
-        const txt = document.getElementById('ftOutputText').value.trim();
-        if (!txt) return;
-        const id = 'pwa_' + Date.now();
-        this.notes.unshift({ id, title: `Appunto ${new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}`, subject: 'Generale', content_markdown: txt, created_at: new Date().toISOString() });
-        await this.idbSet('notes', this.notes);
-        this.renderNotesList();
-        this.selectNote(id);
-        this.switchEnv('flownotes');
-        this.showToast('Salvato in FlowNotes');
+      async deleteEvent(id) {
+        this.events = this.events.filter(e => String(e.id) !== String(id));
+        await this.idbSet('events', this.events);
+        this.renderCalendar();
+        this.scheduleDriveSync();
       },
 
-      // ---------------- FLOWTIME (POMODORO + EXAMS) ----------------
       renderSubjects() {
         const sel = document.getElementById('pomoSubjectSelect');
         sel.innerHTML = '<option value="Generale">Studio Generale</option>';
-        (this.folders || []).forEach(f => {
+        (this.folders || []).filter(f => !f.parent_id).forEach(f => {
           const opt = document.createElement('option');
           opt.value = f.name;
           opt.textContent = f.name;
@@ -1500,6 +2387,7 @@
             this.weeklyStudy.push({ subject_name: subj, total_minutes: this.pomoFocusMins, sessions_count: 1 });
             await this.idbSet('weeklyStudy', this.weeklyStudy);
             this.renderSubjects();
+            this.scheduleDriveSync();
             this.pomoMode = 'break';
             this.pomoRemaining = this.pomoBreakMins * 60;
           } else {
@@ -1550,12 +2438,16 @@
         this.exams.push({ id: 'ex_' + Date.now(), exam_title: title, exam_date: date, subject_name: subject, cfu: 9, total_notes: 0, studied_notes: 0 });
         await this.idbSet('exams', this.exams);
         this.renderExams();
+        this.renderCalendar();
+        this.scheduleDriveSync();
       },
 
       async deleteExam(id) {
         this.exams = this.exams.filter(e => String(e.id) !== String(id));
         await this.idbSet('exams', this.exams);
         this.renderExams();
+        this.renderCalendar();
+        this.scheduleDriveSync();
       },
 
       renderExams() {
@@ -1573,13 +2465,13 @@
           const badge = diff > 0 ? `-${diff} gg` : (diff === 0 ? 'Oggi' : 'Passato');
           const pct = ex.total_notes > 0 ? Math.round((ex.studied_notes / ex.total_notes) * 100) : 0;
           const div = document.createElement('div');
-          div.className = 'note-item';
+          div.className = 'note-card';
           div.innerHTML = `
             <div class="row" style="justify-content:space-between;">
               <strong>${this.esc(ex.exam_title)}</strong>
-              <span class="muted">${badge}</span>
+              <span class="subject-chip">${badge}</span>
             </div>
-            <div class="muted">${this.esc(ex.subject_name || 'Generale')} - ${this.esc(ex.exam_date)}</div>
+            <div class="muted">${this.esc(ex.subject_name || 'Generale')} · ${this.esc(ex.exam_date)}</div>
             <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
             <div class="row" style="justify-content:space-between;">
               <span class="muted">${ex.studied_notes || 0}/${ex.total_notes || 0} note (${pct}%)</span>
@@ -1596,24 +2488,24 @@
         if (!q) return;
         inp.value = '';
         const box = document.getElementById('whisChatBox');
-        box.innerHTML += `<div class="note-item"><strong>Tu</strong><div>${this.esc(q)}</div></div>`;
-        const ctxNotes = this.notes.slice(0, 5).map(n => `[${n.subject}] ${n.title}:\n${(n.content_markdown || '').slice(0, 1200)}`).join('\n---\n');
+        box.innerHTML += `<div class="note-card"><strong>Tu</strong><div>${this.esc(q)}</div></div>`;
+        const ctxNotes = this.notes.filter(n => !n.trashed).slice(0, 6).map(n => `[${n.subject}] ${n.title}:\n${(n.content_markdown || '').slice(0, 1200)}`).join('\n---\n');
         try {
           const ans = await this.callGemini([
             { text: `Appunti disponibili:\n${ctxNotes}\n\nDomanda studente: ${q}` }
           ], 'Sei Whis, tutor universitario di FlowLocal. Rispondi in italiano chiaro, usa formule LaTeX ($...$) dove utile.');
-          box.innerHTML += `<div class="note-item" style="border-color:var(--accent);"><strong>Whis</strong><div>${this.esc(ans)}</div></div>`;
+          box.innerHTML += `<div class="note-card" style="border-color:var(--accent);"><strong>Whis</strong><div>${this.esc(ans)}</div></div>`;
         } catch (err) {
-          box.innerHTML += `<div class="note-item"><strong>Errore</strong><div>${this.esc(err.message)}</div></div>`;
+          box.innerHTML += `<div class="note-card"><strong>Errore</strong><div>${this.esc(err.message)}</div></div>`;
         }
         box.scrollTop = box.scrollHeight;
       },
 
-      // ---------------- GOOGLE DRIVE (drive.file + PICKER + ANTI-DUPLICATI) ----------------
+      // ---------------- GOOGLE DRIVE BIDIRECTIONAL SYNC ----------------
       updateDrivePill() {
         const ok = this.accessToken && Date.now() < this.tokenExpiry;
         document.getElementById('driveDot').className = 'pill-dot ' + (ok ? 'ok' : 'warn');
-        document.getElementById('driveStatusText').textContent = ok ? 'Drive Connesso' : 'Drive Offline';
+        document.getElementById('driveStatusText').textContent = ok ? 'Drive Sync' : 'Drive Offline';
       },
 
       connectGoogleDrive() {
@@ -1631,8 +2523,8 @@
               localStorage.setItem('fl_drive_token', this.accessToken);
               localStorage.setItem('fl_drive_expiry', String(this.tokenExpiry));
               this.updateDrivePill();
-              this.showToast('Google Drive connesso (drive.file)');
-              this.syncAllWithDrive();
+              this.showToast('Google Drive connesso');
+              this.syncAllWithDrive(true);
             }
           }
         });
@@ -1656,7 +2548,7 @@
         return (data.files && data.files[0]) || null;
       },
 
-      async upsertDriveFile(name, parentId, contentText, mimeType = 'text/markdown') {
+      async upsertDriveFile(name, parentId, contentText, mimeType = 'application/json') {
         const existing = await this.findDriveItem(name, parentId);
         if (existing) {
           await this.driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=media&supportsAllDrives=true`, {
@@ -1691,41 +2583,122 @@
         return data.id;
       },
 
-      async syncAllWithDrive() {
+      scheduleDriveSync() {
+        if (!this.accessToken || Date.now() >= this.tokenExpiry) return;
+        clearTimeout(this.driveSyncTimer);
+        this.driveSyncTimer = setTimeout(() => this.syncAllWithDrive(false), 1800);
+      },
+
+      async syncAllWithDrive(showFeedback = true) {
+        if (!this.accessToken || Date.now() >= this.tokenExpiry) {
+          if (showFeedback) this.showToast('Connetti prima Google Drive in Impostazioni');
+          return;
+        }
         try {
           const rootId = await this.ensureDriveFolder('FlowLocal_Sync');
           const outboxId = await this.ensureDriveFolder('outbox_study', rootId);
-          const libFile = await this.findDriveItem('library.json', outboxId);
-          if (libFile) {
-            const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${libFile.id}?alt=media`);
-            const lib = await res.json();
-            if (Array.isArray(lib.notes)) {
-              const localIds = new Set(this.notes.map(n => String(n.id)));
-              lib.notes.forEach(n => { if (!localIds.has(String(n.id))) this.notes.push(n); });
-              await this.idbSet('notes', this.notes);
-              this.renderNotesList();
+
+          // 1. Importazione automatica gemini_api_key da user_config.json
+          const cfgFile = await this.findDriveItem('user_config.json', rootId);
+          if (cfgFile) {
+            const cfgRes = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${cfgFile.id}?alt=media`);
+            const cfg = await cfgRes.json().catch(() => null);
+            if (cfg && cfg.gemini_api_key_obf) {
+              const decoded = deobfuscateSyncSecret(cfg.gemini_api_key_obf);
+              if (decoded && decoded !== this.geminiKey) {
+                this.geminiKey = decoded;
+                localStorage.setItem('fl_gemini_key', decoded);
+                document.getElementById('geminiKeyInput').value = decoded;
+                if (showFeedback) this.showToast('Gemini API Key sincronizzata dal PC');
+              }
             }
           }
-          const stateFile = await this.findDriveItem('user_state.json', rootId);
-          if (stateFile) {
-            const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${stateFile.id}?alt=media`);
-            const st = await res.json();
-            if (Array.isArray(st.folders)) { this.folders = st.folders; await this.idbSet('folders', this.folders); }
-            if (Array.isArray(st.exams)) { this.exams = st.exams; await this.idbSet('exams', this.exams); }
-            if (Array.isArray(st.weekly_study)) { this.weeklyStudy = st.weekly_study; await this.idbSet('weeklyStudy', this.weeklyStudy); }
-            this.renderSubjects();
-            this.renderExams();
+
+          // 2. Sync bidirezionale library.json (Note + Materie/Sottocartelle)
+          const libFile = await this.findDriveItem('library.json', outboxId);
+          let remoteLib = null;
+          if (libFile) {
+            const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${libFile.id}?alt=media`);
+            remoteLib = await res.json().catch(() => null);
           }
-          await this.upsertDriveFile('user_state.json', rootId, JSON.stringify({
+          if (remoteLib) {
+            if (Array.isArray(remoteLib.folders) && remoteLib.folders.length) {
+              const localIds = new Set(this.folders.map(f => String(f.id)));
+              remoteLib.folders.forEach(rf => {
+                if (!localIds.has(String(rf.id))) this.folders.push(rf);
+              });
+              await this.idbSet('folders', this.folders);
+            }
+            if (Array.isArray(remoteLib.notes)) {
+              const localMap = new Map(this.notes.map(n => [String(n.id), n]));
+              remoteLib.notes.forEach(rn => {
+                const ln = localMap.get(String(rn.id));
+                if (!ln) {
+                  this.notes.push(rn);
+                } else {
+                  const rTs = Date.parse(rn.updated_at || rn.created_at || 0) || 0;
+                  const lTs = Date.parse(ln.updated_at || ln.created_at || 0) || 0;
+                  if (rTs > lTs) localMap.set(String(rn.id), { ...ln, ...rn });
+                }
+              });
+              this.notes = Array.from(localMap.values()).sort((a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')));
+              await this.idbSet('notes', this.notes);
+            }
+          }
+          // Push library.json aggiornato per far arrivare le note mobile su PC
+          const mergedLib = {
+            ...(remoteLib || { library_version: '1.1' }),
+            generated_at: new Date().toISOString(),
+            folders: this.folders,
+            notes: this.notes.filter(n => !n.trashed)
+          };
+          await this.upsertDriveFile('library.json', outboxId, JSON.stringify(mergedLib, null, 2), 'application/json');
+
+          // 3. Sync bidirezionale flowtime_state.json (Calendario, Esami, Pomodoro, Cartelle)
+          const ftFile = (await this.findDriveItem('flowtime_state.json', rootId)) || (await this.findDriveItem('user_state.json', rootId));
+          if (ftFile) {
+            const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${ftFile.id}?alt=media`);
+            const st = await res.json().catch(() => null);
+            if (st) {
+              if (Array.isArray(st.folders) && st.folders.length) {
+                const fIds = new Set(this.folders.map(f => String(f.id)));
+                st.folders.forEach(rf => { if (!fIds.has(String(rf.id))) this.folders.push(rf); });
+                await this.idbSet('folders', this.folders);
+              }
+              if (Array.isArray(st.exams)) {
+                const exIds = new Set(this.exams.map(e => String(e.id)));
+                st.exams.forEach(re => { if (!exIds.has(String(re.id))) this.exams.push(re); });
+                await this.idbSet('exams', this.exams);
+              }
+              if (Array.isArray(st.events)) {
+                const evIds = new Set(this.events.map(e => String(e.id)));
+                st.events.forEach(rev => { if (!evIds.has(String(rev.id))) this.events.push(rev); });
+                await this.idbSet('events', this.events);
+              }
+              if (Array.isArray(st.weekly_study) && st.weekly_study.length) {
+                this.weeklyStudy = st.weekly_study;
+                await this.idbSet('weeklyStudy', this.weeklyStudy);
+              }
+            }
+          }
+
+          await this.upsertDriveFile('flowtime_state.json', rootId, JSON.stringify({
             schema_version: 1,
             updated_at_utc: new Date().toISOString(),
             folders: this.folders,
             exams: this.exams,
-            weekly_study: this.weeklyStudy
+            weekly_study: this.weeklyStudy,
+            events: this.events
           }, null, 2), 'application/json');
-          this.showToast('Sincronizzazione Drive completata');
+
+          this.renderDrawer();
+          if (!this.editorOpen) this.renderNotesList();
+          this.renderSubjects();
+          this.renderCalendar();
+          this.renderExams();
+          if (showFeedback) this.showToast('Sincronizzazione completata');
         } catch (err) {
-          this.showToast(err.message);
+          if (showFeedback) this.showToast('Sync Drive: ' + err.message);
         }
       },
 
@@ -1771,6 +2744,7 @@
           this.groups.push({ folderId, name });
           localStorage.setItem('fl_groups', JSON.stringify(this.groups));
         }
+        this.renderDrawer();
         this.renderGroupSelect();
         this.loadSelectedGroupNotes();
         this.showToast(`Gruppo "${name}" aggiunto`);
@@ -1778,6 +2752,7 @@
 
       renderGroupSelect() {
         const sel = document.getElementById('pwaGroupSelect');
+        if (!sel) return;
         sel.innerHTML = '';
         if (!this.groups.length) {
           sel.innerHTML = '<option value="">Nessun gruppo collegato</option>';
@@ -1788,104 +2763,6 @@
             o.textContent = g.name;
             sel.appendChild(o);
           });
-        }
-        this.renderWorkspaceSwitcher();
-      },
-
-      renderWorkspaceSwitcher() {
-        const ws = document.getElementById('pwaWorkspaceSwitcher');
-        if (!ws) return;
-        const prev = ws.value || 'local';
-        ws.innerHTML = '<option value="local">Il mio Quaderno (Locale)</option>';
-        (this.groups || []).forEach(g => {
-          const o = document.createElement('option');
-          o.value = 'group:' + g.folderId;
-          o.textContent = `[Drive] ${g.name}`;
-          ws.appendChild(o);
-        });
-        const optJoin = document.createElement('option');
-        optJoin.value = '__join__';
-        optJoin.textContent = '+ Crea o Unisciti a un Gruppo...';
-        ws.appendChild(optJoin);
-        if ([...ws.options].some(o => o.value === prev)) ws.value = prev;
-      },
-
-      switchWorkspace(val) {
-        if (val === '__join__') {
-          document.getElementById('pwaWorkspaceSwitcher').value = 'local';
-          this.joinGroupByPrompt();
-          return;
-        }
-        const titleEl = document.getElementById('sidebarArchiveTitle');
-        if (val === 'local') {
-          if (titleEl) titleEl.textContent = 'Archivio Note';
-          this.renderNotesList();
-          return;
-        }
-        const fid = val.replace('group:', '');
-        if (titleEl) titleEl.textContent = 'Bacheca & Note Gruppo';
-        document.getElementById('pwaGroupSelect').value = fid;
-        this.switchNotesTab('groups');
-        this.loadSelectedGroupNotes();
-      },
-
-      ensurePwaTabForNote(note) {
-        if (!this.pwaTabs) this.pwaTabs = [];
-        const existing = this.pwaTabs.find(t => String(t.id) === String(note.id));
-        if (!existing) {
-          this.pwaTabs.push({ id: note.id, title: note.title || 'Senza titolo' });
-        } else {
-          existing.title = note.title || existing.title;
-        }
-        this.renderPwaTabs();
-      },
-
-      renderPwaTabs() {
-        const strip = document.getElementById('pwaTabStrip');
-        if (!strip) return;
-        strip.innerHTML = '';
-        (this.pwaTabs || []).forEach(t => {
-          const pill = document.createElement('div');
-          pill.className = 'tab-pill' + (String(t.id) === String(this.activeNoteId) ? ' active' : '');
-          pill.onclick = () => this.selectNote(t.id);
-          const lbl = document.createElement('span');
-          lbl.textContent = (t.title || 'Nota').slice(0, 22);
-          const cls = document.createElement('button');
-          cls.className = 'tab-close';
-          cls.textContent = '×';
-          cls.onclick = (e) => { e.stopPropagation(); this.closePwaTab(t.id); };
-          pill.appendChild(lbl);
-          pill.appendChild(cls);
-          strip.appendChild(pill);
-        });
-      },
-
-      openPwaNewTab() {
-        this.newNote();
-      },
-
-      closePwaTab(id) {
-        if (!this.pwaTabs) return;
-        this.pwaTabs = this.pwaTabs.filter(t => String(t.id) !== String(id));
-        if (String(this.activeNoteId) === String(id) && this.pwaTabs.length) {
-          this.selectNote(this.pwaTabs[this.pwaTabs.length - 1].id);
-        } else {
-          this.renderPwaTabs();
-        }
-      },
-
-      togglePwaSplitView() {
-        const grid = document.getElementById('pwaEditorPanesGrid');
-        const splitPane = document.getElementById('pwaSplitPane');
-        const btn = document.getElementById('pwaSplitBtn');
-        if (!grid || !splitPane) return;
-        const active = !grid.classList.contains('split-active');
-        grid.classList.toggle('split-active', active);
-        splitPane.style.display = active ? 'flex' : 'none';
-        if (btn) btn.classList.toggle('btn-primary', active);
-        if (active && !document.getElementById('pwaSplitBody').value) {
-          document.getElementById('pwaSplitTitle').textContent = (document.getElementById('noteTitleInput').value || 'Nota') + ' (Affiancata)';
-          document.getElementById('pwaSplitBody').value = document.getElementById('noteBodyInput').value || '';
         }
       },
 
@@ -1907,10 +2784,10 @@
             files.filter(x => x.name.endsWith('.md')).forEach(item => {
               const locked = lockSet.has(item.name);
               const div = document.createElement('div');
-              div.className = 'note-item';
+              div.className = 'note-card';
               div.innerHTML = `<div class="row" style="justify-content:space-between;">
                 <strong>[${this.esc(f.name)}] ${this.esc(item.name.replace('.md', ''))}</strong>
-                <button class="btn btn-sm" onclick="app.importGroupNote('${item.id}', '${this.esc(item.name)}', '${this.esc(f.name)}')">${locked ? 'Bloccato - ' : ''}Importa</button>
+                <button class="btn btn-sm" onclick="app.importGroupNote('${item.id}', '${this.esc(item.name)}', '${this.esc(f.name)}')">${locked ? 'Bloccato · ' : ''}Importa</button>
               </div>`;
               listBox.appendChild(div);
             });
@@ -1925,11 +2802,10 @@
           const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`);
           const md = await res.text();
           const id = 'pwa_' + Date.now();
-          this.notes.unshift({ id, title: fileName.replace('.md', '').replace(/_/g, ' '), subject, content_markdown: md, created_at: new Date().toISOString() });
+          this.notes.unshift({ id, title: fileName.replace('.md', '').replace(/_/g, ' '), subject, content_markdown: md, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), trashed: false });
           await this.idbSet('notes', this.notes);
-          this.renderNotesList();
-          this.selectNote(id);
-          this.switchNotesTab('notes');
+          this.selectFolderFilter('all');
+          this.openNoteEditor(id);
           this.showToast('Nota importata dal gruppo');
         } catch (err) {
           this.showToast(err.message);
@@ -1937,10 +2813,12 @@
       },
 
       async publishActiveNoteToGroup() {
-        const fid = document.getElementById('pwaGroupSelect').value;
-        if (!fid) return this.showToast('Seleziona un gruppo');
+        document.getElementById('editorMoreMenu').classList.remove('open');
+        const fid = document.getElementById('pwaGroupSelect').value || (this.groups[0] && this.groups[0].folderId);
+        if (!fid) return this.showToast('Collega prima un FlowGroup');
+        const cur = this.notes.find(x => String(x.id) === String(this.activeNoteId));
         const title = (document.getElementById('noteTitleInput').value.trim() || 'Appunto').replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
-        const subject = (document.getElementById('noteSubjectInput').value.trim() || 'Generale').replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
+        const subject = ((cur && cur.subject) || 'Generale').replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
         const md = document.getElementById('noteBodyInput').value;
         if (!md.trim()) return this.showToast('Scrivi prima la nota');
         try {
@@ -1957,7 +2835,6 @@
           const lockId = await this.upsertDriveFile(lockName, subjId, JSON.stringify({ author: 'PWA Mobile', locked_at_utc: new Date().toISOString() }), 'application/json');
           await this.upsertDriveFile(`${title}.md`, subjId, md, 'text/markdown');
           await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${lockId}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {});
-          this.loadSelectedGroupNotes();
           this.showToast('Nota pubblicata nel gruppo');
         } catch (err) {
           this.showToast('Errore pubblicazione: ' + err.message);

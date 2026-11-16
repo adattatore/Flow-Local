@@ -5,17 +5,40 @@ le code inbox/outbox, l'elaborazione manuale sequenziale e la generazione
 dell'indice completo library.json per la PWA Mobile.
 """
 
+import base64
 import json
 import os
 import re
 import shutil
 import string
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Callable
 
 from core.paths import get_user_data_path
 from database.db_manager import db
+
+_SYNC_OBF_SECRET = "FlowLocalSyncKey2026"
+
+
+def obfuscate_sync_secret(raw: str, secret: str = _SYNC_OBF_SECRET) -> str:
+    """Offusca una chiave API con XOR + Base64 per il ponte FlowLocal_Sync."""
+    if not raw:
+        return ""
+    raw_bytes = raw.encode("utf-8")
+    sec_bytes = secret.encode("utf-8")
+    xored = bytes(b ^ sec_bytes[i % len(sec_bytes)] for i, b in enumerate(raw_bytes))
+    return base64.b64encode(xored).decode("ascii")
+
+
+def deobfuscate_sync_secret(b64: str, secret: str = _SYNC_OBF_SECRET) -> str:
+    """Decodifica una chiave offuscata con XOR + Base64."""
+    if not b64:
+        return ""
+    raw_bytes = base64.b64decode(b64.encode("ascii"))
+    sec_bytes = secret.encode("utf-8")
+    plain = bytes(b ^ sec_bytes[i % len(sec_bytes)] for i, b in enumerate(raw_bytes))
+    return plain.decode("utf-8")
 
 
 SUPPORTED_AUDIO_EXTENSIONS = {
@@ -215,6 +238,11 @@ class CloudSyncManager:
         sbobine, appunti rapidi, flashcard, sommari esecutivi e grafi relazionali.
         """
         self.ensure_sync_folders()
+        try:
+            self.import_mobile_changes()
+        except Exception as e:
+            print(f"[CloudSync] Avviso import modifiche mobile: {e}")
+
         all_notes = db.get_all_study_notes()
         all_graph = db.get_all_graph_data()
 
@@ -328,11 +356,13 @@ class CloudSyncManager:
                     "profile": profile,
                     "subject": subject,
                     "topic": topic,
+                    "folder_id": n.get("folder_id"),
                     "tags": clean_tags_str,
                     "summary": summary_text,
                     "pdf_filename": expected_pdf if has_pdf else None,
                     "docx_filename": expected_docx if has_docx else None,
                     "created_at": created_at,
+                    "updated_at": str(n.get("updated_at") or created_at),
                 })
 
         # Relazioni e link del grafo
@@ -349,12 +379,18 @@ class CloudSyncManager:
                 "reason": l.get("reason") or "",
             })
 
+        try:
+            folders_tree = db.get_folders_tree()
+        except Exception:
+            folders_tree = []
+
         library_payload = {
-            "library_version": "1.0",
+            "library_version": "1.1",
             "generated_at": datetime.now().isoformat(),
             "sync_folder": self._sync_base_dir,
             "profiles": sorted(list(profiles_set)),
             "subjects": sorted(list(subjects_set)),
+            "folders": folders_tree,
             "stats": {
                 "total_notes": len(notes_list),
                 "total_flashcards": len(flashcards_list),
@@ -374,11 +410,172 @@ class CloudSyncManager:
             print(f"[CloudSync] Errore scrittura library.json: {e}")
 
         self.export_user_state()
+        self.export_flowtime_state()
+        self.export_user_config()
         return library_payload
+
+    def export_user_config(self, output_path: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Esporta la configurazione condivisa (es. gemini_api_key offuscata in XOR+Base64)
+        in FlowLocal_Sync/user_config.json per la configurazione automatica della PWA.
+        """
+        api_key = (db.get_setting("gemini_api_key", "") or "").strip()
+        payload: Dict[str, Any] = {
+            "schema_version": 1,
+            "updated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "obfuscation": "xor-b64-v1",
+            "gemini_api_key_obf": obfuscate_sync_secret(api_key) if api_key else "",
+        }
+        target = output_path or os.path.join(self._sync_base_dir, "user_config.json")
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            # Non sovrascrivere una chiave valida con stringa vuota se gia' presente
+            if not api_key and os.path.exists(target):
+                return payload
+            with open(target, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[CloudSync] Errore scrittura user_config.json: {e}")
+        return payload
+
+    def export_flowtime_state(self, output_path: Optional[str] = None) -> Dict[str, Any]:
+        """Esporta eventi calendario, esami, sessioni studio e cartelle in FlowLocal_Sync/flowtime_state.json."""
+        try:
+            folders = db.get_folders_tree()
+        except Exception:
+            folders = []
+        try:
+            exams = db.get_exam_countdowns()
+        except Exception:
+            exams = []
+        try:
+            weekly_study = db.get_weekly_study_summary()
+        except Exception:
+            weekly_study = []
+        try:
+            start_d = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+            end_d = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
+            events = db.get_calendar_events(start_d, end_d)
+        except Exception:
+            events = []
+
+        payload = {
+            "schema_version": 1,
+            "updated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "folders": folders,
+            "exams": exams,
+            "weekly_study": weekly_study,
+            "events": events,
+        }
+        target = output_path or os.path.join(self._sync_base_dir, "flowtime_state.json")
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[CloudSync] Errore scrittura flowtime_state.json: {e}")
+        return payload
+
+    def import_mobile_changes(self) -> Dict[str, int]:
+        """
+        Importa in SQLite eventuali note, cartelle, esami ed eventi creati o modificati
+        dalla PWA Mobile su FlowLocal_Sync (library.json e flowtime_state.json).
+        """
+        stats = {"notes_imported": 0, "events_imported": 0, "exams_imported": 0}
+        lib_path = os.path.join(self.get_outbox_study_dir(), "library.json")
+        if os.path.exists(lib_path):
+            try:
+                with open(lib_path, "r", encoding="utf-8") as f:
+                    lib = json.load(f)
+                existing_notes = db.get_all_study_notes()
+                existing_by_id = {str(n["id"]): n for n in existing_notes}
+                existing_pwa_tags = set()
+                for n in existing_notes:
+                    m = re.search(r"pwa_id:(pwa_[^\s,]+)", str(n.get("tags") or ""))
+                    if m:
+                        existing_pwa_tags.add(m.group(1))
+
+                for n in (lib.get("notes") or []):
+                    nid = str(n.get("id") or "")
+                    if nid.startswith("pwa_"):
+                        if nid in existing_pwa_tags:
+                            continue
+                        tags = str(n.get("tags") or "").strip()
+                        pwa_tag = f"pwa_id:{nid}"
+                        full_tags = f"{tags}, {pwa_tag}" if tags else pwa_tag
+                        db.add_study_note(
+                            title=n.get("title") or "Appunto Mobile",
+                            content_markdown=n.get("content_markdown") or "",
+                            note_type=n.get("note_type") or "Note",
+                            tags=full_tags,
+                            profile=n.get("profile") or "Alessandro",
+                            subject=n.get("subject") or "Generale",
+                            topic=n.get("topic") or "Generale",
+                        )
+                        stats["notes_imported"] += 1
+                    elif nid in existing_by_id and n.get("source") == "pwa_edited":
+                        db_note = existing_by_id[nid]
+                        if (n.get("content_markdown") or "") != (db_note.get("content_markdown") or ""):
+                            db.update_study_note(
+                                note_id=int(nid),
+                                title=n.get("title") or db_note.get("title") or "Senza titolo",
+                                content_markdown=n.get("content_markdown") or "",
+                                profile=n.get("profile") or db_note.get("profile") or "Alessandro",
+                                subject=n.get("subject") or db_note.get("subject") or "Generale",
+                                topic=n.get("topic") or db_note.get("topic") or "Generale",
+                                note_type=n.get("note_type") or db_note.get("note_type") or "Note",
+                            )
+                            stats["notes_imported"] += 1
+            except Exception as e:
+                print(f"[CloudSync] Avviso lettura library.json per import: {e}")
+
+        ft_path = os.path.join(self._sync_base_dir, "flowtime_state.json")
+        if os.path.exists(ft_path):
+            try:
+                with open(ft_path, "r", encoding="utf-8") as f:
+                    ft = json.load(f)
+                existing_events = db.get_calendar_events("2000-01-01", "2100-01-01")
+                known_ev_keys = {(e.get("title"), e.get("event_date"), e.get("start_time")) for e in existing_events}
+                for ev in (ft.get("events") or []):
+                    ev_id = str(ev.get("id") or "")
+                    key = (ev.get("title"), ev.get("event_date"), ev.get("start_time") or "")
+                    if ev_id.startswith("pwa_") and key not in known_ev_keys and ev.get("event_date"):
+                        db.add_calendar_event(
+                            title=ev.get("title") or "Evento Mobile",
+                            event_date=ev.get("event_date"),
+                            start_time=ev.get("start_time") or "",
+                            end_time=ev.get("end_time") or "",
+                            is_all_day=bool(ev.get("is_all_day")),
+                            description=ev.get("description") or "Creato su FlowLocal Mobile",
+                            category=ev.get("category") or "Studio",
+                            subject=ev.get("subject") or "",
+                            color=ev.get("color") or "#6366F1",
+                            source="pwa",
+                        )
+                        known_ev_keys.add(key)
+                        stats["events_imported"] += 1
+
+                existing_exams = db.get_exam_countdowns()
+                known_ex_keys = {(ex.get("exam_title"), ex.get("exam_date")) for ex in existing_exams}
+                for ex in (ft.get("exams") or []):
+                    ex_id = str(ex.get("id") or "")
+                    ex_key = (ex.get("exam_title"), ex.get("exam_date"))
+                    if ex_id.startswith("ex_") and ex_key not in known_ex_keys and ex.get("exam_date"):
+                        db.add_exam_countdown(
+                            subject_id=None,
+                            exam_title=ex.get("exam_title") or "Esame",
+                            exam_date=ex.get("exam_date"),
+                            cfu=int(ex.get("cfu") or 6),
+                        )
+                        known_ex_keys.add(ex_key)
+                        stats["exams_imported"] += 1
+            except Exception as e:
+                print(f"[CloudSync] Avviso lettura flowtime_state.json per import: {e}")
+
+        return stats
 
     def export_user_state(self, output_path: Optional[str] = None) -> Dict[str, Any]:
         """Esporta materie, esami e ore di studio in FlowLocal_Sync/user_state.json per la PWA."""
-        from datetime import timezone
         try:
             folders = db.get_folders_tree()
         except Exception:
