@@ -13,7 +13,7 @@ import shutil
 import string
 import sys
 from datetime import datetime, timedelta, timezone
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple
 
 from core.paths import get_user_data_path
 from database.db_manager import db
@@ -363,6 +363,13 @@ class CloudSyncManager:
                     "docx_filename": expected_docx if has_docx else None,
                     "created_at": created_at,
                     "updated_at": str(n.get("updated_at") or created_at),
+                    "trashed": bool(n.get("trashed")),
+                    "created_by_name": str(n.get("created_by_name") or ""),
+                    "created_by_email": str(n.get("created_by_email") or ""),
+                    "created_by_avatar": str(n.get("created_by_avatar") or ""),
+                    "last_edited_by_name": str(n.get("last_edited_by_name") or ""),
+                    "last_edited_by_email": str(n.get("last_edited_by_email") or ""),
+                    "last_edited_at_utc": str(n.get("last_edited_at_utc") or n.get("updated_at") or created_at),
                 })
 
         # Relazioni e link del grafo
@@ -411,32 +418,83 @@ class CloudSyncManager:
 
         self.export_user_state()
         self.export_flowtime_state()
-        self.export_user_config()
+        self.export_account_config()
         return library_payload
 
-    def export_user_config(self, output_path: Optional[str] = None) -> Dict[str, Any]:
+    def export_account_config(self, output_path: Optional[str] = None) -> Dict[str, Any]:
         """
-        Esporta la configurazione condivisa (es. gemini_api_key offuscata in XOR+Base64)
-        in FlowLocal_Sync/user_config.json per la configurazione automatica della PWA.
+        Esporta la configurazione condivisa (gemini_api_key offuscata in XOR+Base64 e preferenze tema)
+        in FlowLocal_Sync/account_config.json per la sincronizzazione automatica tra dispositivi.
         """
         api_key = (db.get_setting("gemini_api_key", "") or "").strip()
+        theme = (db.get_setting("theme", "obsidian") or "obsidian").strip()
+        reading_mode = (db.get_setting("reading_mode", "0") or "0").strip()
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         payload: Dict[str, Any] = {
-            "schema_version": 1,
-            "updated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "schema_version": 2,
+            "updated_at_utc": now_utc,
             "obfuscation": "xor-b64-v1",
             "gemini_api_key_obf": obfuscate_sync_secret(api_key) if api_key else "",
+            "theme": theme,
+            "reading_mode": reading_mode == "1",
         }
-        target = output_path or os.path.join(self._sync_base_dir, "user_config.json")
+        target = output_path or os.path.join(self._sync_base_dir, "account_config.json")
         try:
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            # Non sovrascrivere una chiave valida con stringa vuota se gia' presente
             if not api_key and os.path.exists(target):
-                return payload
+                try:
+                    with open(target, "r", encoding="utf-8") as ef:
+                        prev = json.load(ef)
+                    if isinstance(prev, dict) and prev.get("gemini_api_key_obf"):
+                        payload["gemini_api_key_obf"] = prev["gemini_api_key_obf"]
+                except Exception:
+                    pass
             with open(target, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
+            db.set_setting("account_config_updated_at", now_utc)
         except Exception as e:
-            print(f"[CloudSync] Errore scrittura user_config.json: {e}")
+            print(f"[CloudSync] Errore scrittura account_config.json: {e}")
         return payload
+
+    def export_user_config(self, output_path: Optional[str] = None) -> Dict[str, Any]:
+        """Alias retrocompatibile verso export_account_config."""
+        return self.export_account_config(output_path=output_path)
+
+    def import_account_config(self, cfg: Dict[str, Any]) -> Dict[str, bool]:
+        """Importa chiave Gemini e tema da account_config.json se presenti e più recenti o mancanti localmente."""
+        changed = {"gemini_key": False, "theme": False}
+        if not isinstance(cfg, dict):
+            return changed
+
+        remote_ts = str(cfg.get("updated_at_utc") or "")
+        local_ts = str(db.get_setting("account_config_updated_at", "") or "")
+        remote_is_newer = bool(remote_ts and (not local_ts or remote_ts > local_ts))
+
+        obf = str(cfg.get("gemini_api_key_obf") or "").strip()
+        if obf:
+            try:
+                decoded = deobfuscate_sync_secret(obf).strip()
+            except Exception:
+                decoded = ""
+            local_key = (db.get_setting("gemini_api_key", "") or "").strip()
+            if decoded and (not local_key or (remote_is_newer and decoded != local_key)):
+                db.set_setting("gemini_api_key", decoded)
+                if not (db.get_setting("ai_provider", "") or "").strip():
+                    db.set_setting("ai_provider", "adaptive")
+                changed["gemini_key"] = True
+
+        remote_theme = str(cfg.get("theme") or "").strip()
+        if remote_theme and remote_is_newer:
+            local_theme = (db.get_setting("theme", "obsidian") or "obsidian").strip()
+            if remote_theme != local_theme:
+                db.set_setting("theme", remote_theme)
+                changed["theme"] = True
+        if "reading_mode" in cfg and remote_is_newer:
+            db.set_setting("reading_mode", "1" if cfg.get("reading_mode") else "0")
+
+        if remote_ts and (changed["gemini_key"] or changed["theme"]):
+            db.set_setting("account_config_updated_at", remote_ts)
+        return changed
 
     def export_flowtime_state(self, output_path: Optional[str] = None) -> Dict[str, Any]:
         """Esporta eventi calendario, esami, sessioni studio e cartelle in FlowLocal_Sync/flowtime_state.json."""
@@ -476,56 +534,166 @@ class CloudSyncManager:
             print(f"[CloudSync] Errore scrittura flowtime_state.json: {e}")
         return payload
 
+    @staticmethod
+    def _parse_utc_ts(ts: Any) -> float:
+        s = str(ts or "").strip()
+        if not s:
+            return 0.0
+        try:
+            if s.endswith("Z"):
+                return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except Exception:
+            return 0.0
+
+    def merge_library_payload(self, lib: Dict[str, Any]) -> int:
+        """Merge bidirezionale di library.json in SQLite basato su updated_at UTC (incluse note cestinate e campi autore)."""
+        if not isinstance(lib, dict):
+            return 0
+        imported = 0
+        existing_notes = db.get_all_study_notes()
+        existing_by_id = {str(n["id"]): n for n in existing_notes}
+        existing_pwa_by_tag: Dict[str, Dict[str, Any]] = {}
+        for n in existing_notes:
+            m = re.search(r"pwa_id:(pwa_[^\s,]+)", str(n.get("tags") or ""))
+            if m:
+                existing_pwa_by_tag[m.group(1)] = n
+
+        for n in (lib.get("notes") or []):
+            nid = str(n.get("id") or "")
+            remote_ts = self._parse_utc_ts(n.get("updated_at") or n.get("last_edited_at_utc") or n.get("created_at"))
+            if nid.startswith("pwa_"):
+                if nid in existing_pwa_by_tag:
+                    db_note = existing_pwa_by_tag[nid]
+                    local_ts = self._parse_utc_ts(db_note.get("updated_at") or db_note.get("last_edited_at_utc") or db_note.get("created_at"))
+                    if remote_ts > local_ts:
+                        db.update_study_note(
+                            note_id=int(db_note["id"]),
+                            title=n.get("title") or db_note.get("title") or "Appunto Mobile",
+                            content_markdown=n.get("content_markdown") or "",
+                            profile=n.get("profile") or db_note.get("profile") or "Alessandro",
+                            subject=n.get("subject") or db_note.get("subject") or "Generale",
+                            topic=n.get("topic") or db_note.get("topic") or "Generale",
+                            note_type=n.get("note_type") or db_note.get("note_type") or "Note",
+                            last_edited_by_name=n.get("last_edited_by_name") or "",
+                            last_edited_by_email=n.get("last_edited_by_email") or "",
+                            last_edited_at_utc=n.get("last_edited_at_utc") or n.get("updated_at") or "",
+                            updated_at=n.get("updated_at") or "",
+                            trashed=1 if n.get("trashed") else 0,
+                        )
+                        imported += 1
+                    continue
+                tags = str(n.get("tags") or "").strip()
+                pwa_tag = f"pwa_id:{nid}"
+                full_tags = f"{tags}, {pwa_tag}" if tags else pwa_tag
+                db.add_study_note(
+                    title=n.get("title") or "Appunto Mobile",
+                    content_markdown=n.get("content_markdown") or "",
+                    note_type=n.get("note_type") or "Note",
+                    tags=full_tags,
+                    profile=n.get("profile") or "Alessandro",
+                    subject=n.get("subject") or "Generale",
+                    topic=n.get("topic") or "Generale",
+                    created_by_name=n.get("created_by_name") or "",
+                    created_by_email=n.get("created_by_email") or "",
+                    created_by_avatar=n.get("created_by_avatar") or "",
+                    last_edited_by_name=n.get("last_edited_by_name") or "",
+                    last_edited_by_email=n.get("last_edited_by_email") or "",
+                    last_edited_at_utc=n.get("last_edited_at_utc") or n.get("updated_at") or "",
+                    updated_at=n.get("updated_at") or "",
+                    trashed=1 if n.get("trashed") else 0,
+                )
+                imported += 1
+            elif nid in existing_by_id:
+                db_note = existing_by_id[nid]
+                local_ts = self._parse_utc_ts(db_note.get("updated_at") or db_note.get("last_edited_at_utc") or db_note.get("created_at"))
+                if (remote_ts > local_ts) or (
+                    n.get("source") == "pwa_edited"
+                    and (n.get("content_markdown") or "") != (db_note.get("content_markdown") or "")
+                ):
+                    db.update_study_note(
+                        note_id=int(nid),
+                        title=n.get("title") or db_note.get("title") or "Senza titolo",
+                        content_markdown=n.get("content_markdown") or "",
+                        profile=n.get("profile") or db_note.get("profile") or "Alessandro",
+                        subject=n.get("subject") or db_note.get("subject") or "Generale",
+                        topic=n.get("topic") or db_note.get("topic") or "Generale",
+                        note_type=n.get("note_type") or db_note.get("note_type") or "Note",
+                        last_edited_by_name=n.get("last_edited_by_name") or "",
+                        last_edited_by_email=n.get("last_edited_by_email") or "",
+                        last_edited_at_utc=n.get("last_edited_at_utc") or n.get("updated_at") or "",
+                        updated_at=n.get("updated_at") or "",
+                        trashed=1 if n.get("trashed") else 0,
+                    )
+                    imported += 1
+        return imported
+
+    def merge_flowtime_payload(self, ft: Dict[str, Any]) -> Tuple[int, int]:
+        """Merge di esami ed eventi calendario da flowtime_state.json in SQLite."""
+        if not isinstance(ft, dict):
+            return (0, 0)
+        ev_imp = 0
+        ex_imp = 0
+        existing_events = db.get_calendar_events("2000-01-01", "2100-01-01")
+        known_ev_keys = {(e.get("title"), e.get("event_date"), e.get("start_time")) for e in existing_events}
+        for ev in (ft.get("events") or []):
+            ev_id = str(ev.get("id") or "")
+            key = (ev.get("title"), ev.get("event_date"), ev.get("start_time") or "")
+            if ev_id.startswith("pwa_") and key not in known_ev_keys and ev.get("event_date"):
+                db.add_calendar_event(
+                    title=ev.get("title") or "Evento Mobile",
+                    event_date=ev.get("event_date"),
+                    start_time=ev.get("start_time") or "",
+                    end_time=ev.get("end_time") or "",
+                    is_all_day=bool(ev.get("is_all_day")),
+                    description=ev.get("description") or "Creato su FlowLocal Mobile",
+                    category=ev.get("category") or "Studio",
+                    subject=ev.get("subject") or "",
+                    color=ev.get("color") or "#6366F1",
+                    source="pwa",
+                )
+                known_ev_keys.add(key)
+                ev_imp += 1
+
+        existing_exams = db.get_exam_countdowns()
+        known_ex_keys = {(ex.get("exam_title"), ex.get("exam_date")) for ex in existing_exams}
+        for ex in (ft.get("exams") or []):
+            ex_id = str(ex.get("id") or "")
+            ex_key = (ex.get("exam_title"), ex.get("exam_date"))
+            if ex_id.startswith("ex_") and ex_key not in known_ex_keys and ex.get("exam_date"):
+                db.add_exam_countdown(
+                    subject_id=None,
+                    exam_title=ex.get("exam_title") or "Esame",
+                    exam_date=ex.get("exam_date"),
+                    cfu=int(ex.get("cfu") or 6),
+                )
+                known_ex_keys.add(ex_key)
+                ex_imp += 1
+        return (ev_imp, ex_imp)
+
     def import_mobile_changes(self) -> Dict[str, int]:
         """
         Importa in SQLite eventuali note, cartelle, esami ed eventi creati o modificati
-        dalla PWA Mobile su FlowLocal_Sync (library.json e flowtime_state.json).
+        dalla PWA Mobile su FlowLocal_Sync (library.json, flowtime_state.json e account_config.json).
         """
         stats = {"notes_imported": 0, "events_imported": 0, "exams_imported": 0}
+        acc_cfg_path = os.path.join(self._sync_base_dir, "account_config.json")
+        if os.path.exists(acc_cfg_path):
+            try:
+                with open(acc_cfg_path, "r", encoding="utf-8") as f:
+                    self.import_account_config(json.load(f))
+            except Exception as e:
+                print(f"[CloudSync] Avviso lettura account_config.json: {e}")
+
         lib_path = os.path.join(self.get_outbox_study_dir(), "library.json")
         if os.path.exists(lib_path):
             try:
                 with open(lib_path, "r", encoding="utf-8") as f:
                     lib = json.load(f)
-                existing_notes = db.get_all_study_notes()
-                existing_by_id = {str(n["id"]): n for n in existing_notes}
-                existing_pwa_tags = set()
-                for n in existing_notes:
-                    m = re.search(r"pwa_id:(pwa_[^\s,]+)", str(n.get("tags") or ""))
-                    if m:
-                        existing_pwa_tags.add(m.group(1))
-
-                for n in (lib.get("notes") or []):
-                    nid = str(n.get("id") or "")
-                    if nid.startswith("pwa_"):
-                        if nid in existing_pwa_tags:
-                            continue
-                        tags = str(n.get("tags") or "").strip()
-                        pwa_tag = f"pwa_id:{nid}"
-                        full_tags = f"{tags}, {pwa_tag}" if tags else pwa_tag
-                        db.add_study_note(
-                            title=n.get("title") or "Appunto Mobile",
-                            content_markdown=n.get("content_markdown") or "",
-                            note_type=n.get("note_type") or "Note",
-                            tags=full_tags,
-                            profile=n.get("profile") or "Alessandro",
-                            subject=n.get("subject") or "Generale",
-                            topic=n.get("topic") or "Generale",
-                        )
-                        stats["notes_imported"] += 1
-                    elif nid in existing_by_id and n.get("source") == "pwa_edited":
-                        db_note = existing_by_id[nid]
-                        if (n.get("content_markdown") or "") != (db_note.get("content_markdown") or ""):
-                            db.update_study_note(
-                                note_id=int(nid),
-                                title=n.get("title") or db_note.get("title") or "Senza titolo",
-                                content_markdown=n.get("content_markdown") or "",
-                                profile=n.get("profile") or db_note.get("profile") or "Alessandro",
-                                subject=n.get("subject") or db_note.get("subject") or "Generale",
-                                topic=n.get("topic") or db_note.get("topic") or "Generale",
-                                note_type=n.get("note_type") or db_note.get("note_type") or "Note",
-                            )
-                            stats["notes_imported"] += 1
+                stats["notes_imported"] += self.merge_library_payload(lib)
             except Exception as e:
                 print(f"[CloudSync] Avviso lettura library.json per import: {e}")
 
@@ -534,45 +702,120 @@ class CloudSyncManager:
             try:
                 with open(ft_path, "r", encoding="utf-8") as f:
                     ft = json.load(f)
-                existing_events = db.get_calendar_events("2000-01-01", "2100-01-01")
-                known_ev_keys = {(e.get("title"), e.get("event_date"), e.get("start_time")) for e in existing_events}
-                for ev in (ft.get("events") or []):
-                    ev_id = str(ev.get("id") or "")
-                    key = (ev.get("title"), ev.get("event_date"), ev.get("start_time") or "")
-                    if ev_id.startswith("pwa_") and key not in known_ev_keys and ev.get("event_date"):
-                        db.add_calendar_event(
-                            title=ev.get("title") or "Evento Mobile",
-                            event_date=ev.get("event_date"),
-                            start_time=ev.get("start_time") or "",
-                            end_time=ev.get("end_time") or "",
-                            is_all_day=bool(ev.get("is_all_day")),
-                            description=ev.get("description") or "Creato su FlowLocal Mobile",
-                            category=ev.get("category") or "Studio",
-                            subject=ev.get("subject") or "",
-                            color=ev.get("color") or "#6366F1",
-                            source="pwa",
-                        )
-                        known_ev_keys.add(key)
-                        stats["events_imported"] += 1
-
-                existing_exams = db.get_exam_countdowns()
-                known_ex_keys = {(ex.get("exam_title"), ex.get("exam_date")) for ex in existing_exams}
-                for ex in (ft.get("exams") or []):
-                    ex_id = str(ex.get("id") or "")
-                    ex_key = (ex.get("exam_title"), ex.get("exam_date"))
-                    if ex_id.startswith("ex_") and ex_key not in known_ex_keys and ex.get("exam_date"):
-                        db.add_exam_countdown(
-                            subject_id=None,
-                            exam_title=ex.get("exam_title") or "Esame",
-                            exam_date=ex.get("exam_date"),
-                            cfu=int(ex.get("cfu") or 6),
-                        )
-                        known_ex_keys.add(ex_key)
-                        stats["exams_imported"] += 1
+                ev_imp, ex_imp = self.merge_flowtime_payload(ft)
+                stats["events_imported"] += ev_imp
+                stats["exams_imported"] += ex_imp
             except Exception as e:
                 print(f"[CloudSync] Avviso lettura flowtime_state.json per import: {e}")
 
         return stats
+
+    def sync_with_drive(self, interactive: bool = False) -> Dict[str, Any]:
+        """
+        Sincronizza i 3 file unificati (account_config.json, library.json, flowtime_state.json)
+        nella cartella FlowLocal_Sync su Google Drive (se autenticato) e localmente.
+        """
+        from core.flow_groups import flow_groups
+
+        result: Dict[str, Any] = {
+            "drive_synced": False,
+            "gemini_key_imported": False,
+            "theme_imported": False,
+            "notes_imported": 0,
+            "events_imported": 0,
+            "exams_imported": 0,
+        }
+
+        service = flow_groups.get_drive_service(interactive=interactive)
+        if service:
+            root_id = flow_groups._ensure_drive_folder(service, "FlowLocal_Sync")
+            outbox_id = flow_groups._ensure_drive_folder(service, "outbox_study", parent_id=root_id)
+
+            # 1. account_config.json (Gemini API Key + Tema)
+            cfg_item = (
+                flow_groups._find_drive_item(service, "account_config.json", parent_id=root_id)
+                or flow_groups._find_drive_item(service, "user_config.json", parent_id=root_id)
+            )
+            if cfg_item:
+                try:
+                    remote_cfg = json.loads(flow_groups._download_drive_text(service, cfg_item["id"]))
+                    chg = self.import_account_config(remote_cfg)
+                    result["gemini_key_imported"] = chg.get("gemini_key", False)
+                    result["theme_imported"] = chg.get("theme", False)
+                except Exception as e:
+                    print(f"[CloudSync] Avviso download account_config.json: {e}")
+
+            # 2. library.json (Note, Cartelle, Cestino - bidirezionale su updated_at UTC)
+            lib_item = (
+                flow_groups._find_drive_item(service, "library.json", parent_id=root_id)
+                or flow_groups._find_drive_item(service, "library.json", parent_id=outbox_id)
+            )
+            if lib_item:
+                try:
+                    remote_lib = json.loads(flow_groups._download_drive_text(service, lib_item["id"]))
+                    result["notes_imported"] += self.merge_library_payload(remote_lib)
+                except Exception as e:
+                    print(f"[CloudSync] Avviso download library.json: {e}")
+
+            # 3. flowtime_state.json (Esami, Eventi, Sessioni Pomodoro)
+            ft_item = flow_groups._find_drive_item(service, "flowtime_state.json", parent_id=root_id)
+            if ft_item:
+                try:
+                    remote_ft = json.loads(flow_groups._download_drive_text(service, ft_item["id"]))
+                    ev_i, ex_i = self.merge_flowtime_payload(remote_ft)
+                    result["events_imported"] += ev_i
+                    result["exams_imported"] += ex_i
+                except Exception as e:
+                    print(f"[CloudSync] Avviso download flowtime_state.json: {e}")
+
+            # Rigenera snapshot locali aggiornati dopo il merge e carica i 3 file su Drive
+            lib_payload = self.generate_library_json()
+            ft_payload = self.export_flowtime_state()
+            cfg_payload = self.export_account_config()
+
+            flow_groups._upsert_drive_text(
+                service, "account_config.json", root_id,
+                json.dumps(cfg_payload, ensure_ascii=False, indent=2), mime_type="application/json",
+            )
+            flow_groups._upsert_drive_text(
+                service, "library.json", root_id,
+                json.dumps(lib_payload, ensure_ascii=False, indent=2), mime_type="application/json",
+            )
+            flow_groups._upsert_drive_text(
+                service, "flowtime_state.json", root_id,
+                json.dumps(ft_payload, ensure_ascii=False, indent=2), mime_type="application/json",
+            )
+            result["drive_synced"] = True
+        else:
+            self.generate_library_json()
+            self.export_flowtime_state()
+            self.export_account_config()
+
+        return result
+
+    def push_account_config_to_drive(self, async_bg: bool = True) -> None:
+        """Salva subito account_config.json localmente e su Google Drive (in background)."""
+        cfg_payload = self.export_account_config()
+
+        def _worker():
+            try:
+                from core.flow_groups import flow_groups
+                service = flow_groups.get_drive_service(interactive=False)
+                if not service:
+                    return
+                root_id = flow_groups._ensure_drive_folder(service, "FlowLocal_Sync")
+                flow_groups._upsert_drive_text(
+                    service, "account_config.json", root_id,
+                    json.dumps(cfg_payload, ensure_ascii=False, indent=2), mime_type="application/json",
+                )
+            except Exception as e:
+                print(f"[CloudSync] Avviso push account_config.json su Drive: {e}")
+
+        if async_bg:
+            import threading
+            threading.Thread(target=_worker, daemon=True).start()
+        else:
+            _worker()
 
     def export_user_state(self, output_path: Optional[str] = None) -> Dict[str, Any]:
         """Esporta materie, esami e ore di studio in FlowLocal_Sync/user_state.json per la PWA."""

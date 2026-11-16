@@ -17,6 +17,7 @@ import io
 import json
 import os
 import re
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -34,7 +35,13 @@ from core.cloud_sync import sanitize_filename
 from core.paths import get_resource_path, get_user_data_path, is_frozen
 from database.db_manager import db
 
-DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+GOOGLE_ACCOUNT_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/drive.file",
+]
+DRIVE_SCOPES = GOOGLE_ACCOUNT_SCOPES
 LOCK_TTL_SECONDS = 1800  # 30 minuti
 HISTORY_MAX_VERSIONS = 15
 
@@ -87,6 +94,56 @@ def _escape_drive_q(val: str) -> str:
     return (val or "").replace("\\", "\\\\").replace("'", "\\'")
 
 
+_AUTHOR_META_KEYS = (
+    "created_by_name",
+    "created_by_email",
+    "created_by_avatar",
+    "last_edited_by_name",
+    "last_edited_by_email",
+    "last_edited_at_utc",
+)
+
+
+def parse_md_frontmatter(raw_text: str) -> Tuple[Dict[str, str], str]:
+    """Estrae eventuale frontmatter YAML (--- ... ---) da un file .md e restituisce (meta, body)."""
+    text = raw_text or ""
+    if not text.startswith("---\n") and not text.startswith("---\r\n"):
+        return ({}, text)
+    lines = text.splitlines()
+    end_idx = -1
+    for i in range(1, min(len(lines), 40)):
+        if lines[i].strip() == "---":
+            end_idx = i
+            break
+    if end_idx == -1:
+        return ({}, text)
+    meta: Dict[str, str] = {}
+    for line in lines[1:end_idx]:
+        if ":" in line:
+            k, v = line.split(":", 1)
+            key = k.strip()
+            val = v.strip().strip('"').strip("'")
+            if key:
+                meta[key] = val
+    body = "\n".join(lines[end_idx + 1 :]).lstrip("\r\n")
+    return (meta, body)
+
+
+def build_md_with_frontmatter(body: str, meta: Dict[str, str]) -> str:
+    """Compone un file .md con frontmatter YAML contenente i metadati autore/provenienza."""
+    clean_meta = {k: str(meta.get(k) or "").replace("\n", " ").strip() for k in _AUTHOR_META_KEYS}
+    for extra_k in ("archived_by_name", "archived_by_email", "archived_at_utc"):
+        if meta.get(extra_k):
+            clean_meta[extra_k] = str(meta[extra_k]).replace("\n", " ").strip()
+    fm_lines = ["---"]
+    for k, v in clean_meta.items():
+        if v:
+            fm_lines.append(f"{k}: {v}")
+    fm_lines.append("---")
+    fm_lines.append("")
+    return "\n".join(fm_lines) + (body or "").lstrip("\r\n")
+
+
 class FlowGroupsManager:
     """Gestore unificato FlowGroups (Google Drive API `drive.file` + Cartella Locale)."""
 
@@ -119,8 +176,30 @@ class FlowGroupsManager:
         self._resolve_paths()
         return os.path.exists(self.credentials_path)
 
+    def fetch_and_save_userinfo(self, creds) -> Dict[str, str]:
+        """Recupera sub, name, email e picture da Google UserInfo e li salva localmente."""
+        if not creds or not getattr(creds, "token", None):
+            return db.get_google_account()
+        try:
+            req = urllib.request.Request(
+                "https://www.googleapis.com/oauth2/v3/userinfo",
+                headers={"Authorization": f"Bearer {creds.token}"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            user_id = str(data.get("sub") or "").strip()
+            display_name = str(data.get("name") or data.get("given_name") or "").strip()
+            email = str(data.get("email") or "").strip()
+            avatar_url = str(data.get("picture") or "").strip()
+            if user_id or email or display_name:
+                db.set_google_account(user_id, display_name, email, avatar_url)
+            return db.get_google_account()
+        except Exception as e:
+            print(f"[GoogleAuth] Avviso recupero userinfo: {e}")
+            return db.get_google_account()
+
     def get_drive_service(self, interactive: bool = False):
-        """Restituisce il client Google Drive API v3 autenticato con scope `drive.file`."""
+        """Restituisce il client Google Drive API v3 autenticato con scope unificato (openid, profile, email, drive.file)."""
         if not GOOGLE_DRIVE_AVAILABLE:
             raise RuntimeError("Librerie Google API non installate.")
         self._resolve_paths()
@@ -128,7 +207,7 @@ class FlowGroupsManager:
         creds = None
         if os.path.exists(self.token_path):
             try:
-                creds = Credentials.from_authorized_user_file(self.token_path, DRIVE_SCOPES)
+                creds = Credentials.from_authorized_user_file(self.token_path)
             except Exception:
                 creds = None
 
@@ -140,6 +219,13 @@ class FlowGroupsManager:
             except Exception:
                 creds = None
 
+        # Se mancano gli scope identità e l'utente ha chiesto login interattivo, riesegui il consenso
+        if creds and creds.valid and interactive:
+            existing_scopes = set(getattr(creds, "scopes", None) or [])
+            if existing_scopes and not {"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"}.issubset(existing_scopes):
+                if not db.get_google_account().get("email"):
+                    creds = None
+
         if not creds or not creds.valid:
             if not interactive:
                 return None
@@ -147,11 +233,16 @@ class FlowGroupsManager:
                 raise FileNotFoundError(
                     "File credentials.json non trovato per l'autenticazione Google Drive."
                 )
-            flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, DRIVE_SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, GOOGLE_ACCOUNT_SCOPES)
             creds = flow.run_local_server(port=0)
             os.makedirs(os.path.dirname(self.token_path), exist_ok=True)
             with open(self.token_path, "w", encoding="utf-8") as f:
                 f.write(creds.to_json())
+            self.fetch_and_save_userinfo(creds)
+        else:
+            acc = db.get_google_account()
+            if not acc.get("email") and getattr(creds, "token", None):
+                self.fetch_and_save_userinfo(creds)
 
         self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
         return self._service
@@ -163,6 +254,7 @@ class FlowGroupsManager:
                 os.remove(self.token_path)
             except Exception:
                 pass
+        db.clear_google_account()
 
     # ------------------------------------------------------------------
     # DRIVE API HELPERS (ANTI-DUPLICATI)
@@ -258,6 +350,16 @@ class FlowGroupsManager:
     # ------------------------------------------------------------------
     # CREAZIONE & UNIONE GRUPPI
     # ------------------------------------------------------------------
+    @staticmethod
+    def _current_author_identity(fallback_author: str = "Studente") -> Dict[str, str]:
+        acc = db.get_google_account()
+        name = acc.get("display_name") or (fallback_author or "").strip() or "Studente"
+        return {
+            "name": name,
+            "email": acc.get("email") or "",
+            "avatar": acc.get("avatar_url") or "",
+        }
+
     def create_group(
         self,
         group_name: str,
@@ -268,12 +370,15 @@ class FlowGroupsManager:
     ) -> Dict[str, Any]:
         clean_name = (group_name or "FlowGroup").strip()
         subj_list = [s.strip() for s in (subjects or ["Generale"]) if s.strip()] or ["Generale"]
+        ident = self._current_author_identity(author)
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "group_name": clean_name,
-            "created_by": author,
+            "created_by": ident["name"],
+            "created_by_email": ident["email"],
             "subjects": subj_list,
-            "members": [author],
+            "members": [ident["name"]],
+            "notes_meta": {},
             "updated_at_utc": _utc_iso(),
         }
 
@@ -395,10 +500,14 @@ class FlowGroupsManager:
         return 0 <= age < LOCK_TTL_SECONDS
 
     @classmethod
-    def _is_lock_active(cls, lock_data: Dict[str, Any], current_author: str) -> bool:
+    def _is_lock_active(cls, lock_data: Dict[str, Any], current_author: str, current_email: str = "") -> bool:
         if not cls._is_lock_valid(lock_data):
             return False
-        lock_author = (lock_data.get("author") or "").strip()
+        lock_email = (lock_data.get("author_email") or "").strip().lower()
+        cur_email = (current_email or "").strip().lower()
+        if lock_email and cur_email and lock_email == cur_email:
+            return False
+        lock_author = (lock_data.get("author_name") or lock_data.get("author") or "").strip()
         if lock_author and lock_author == (current_author or "").strip():
             return False
         return True
@@ -413,8 +522,11 @@ class FlowGroupsManager:
         subj_dir = sanitize_filename(subject or "Generale")
         safe_fn = filename if filename.endswith(".md") else f"{filename}.md"
         lock_name = f"{safe_fn}.lock"
+        ident = self._current_author_identity(author)
         payload = {
-            "author": author or "Studente",
+            "author": ident["name"],
+            "author_name": ident["name"],
+            "author_email": ident["email"],
             "locked_at_utc": _utc_iso(),
             "ttl_seconds": LOCK_TTL_SECONDS,
             "file": f"{subj_dir}/{safe_fn}",
@@ -429,8 +541,8 @@ class FlowGroupsManager:
                 try:
                     with open(lock_path, "r", encoding="utf-8") as f:
                         existing = json.load(f)
-                    if self._is_lock_active(existing, author):
-                        return (False, f"File bloccato da {existing.get('author')} (UTC {existing.get('locked_at_utc')}).", existing)
+                    if self._is_lock_active(existing, ident["name"], ident["email"]):
+                        return (False, f"File bloccato da {existing.get('author_name') or existing.get('author')} (UTC {existing.get('locked_at_utc')}).", existing)
                 except Exception:
                     pass
             with open(lock_path, "w", encoding="utf-8") as f:
@@ -447,8 +559,8 @@ class FlowGroupsManager:
         if existing_item:
             try:
                 existing = json.loads(self._download_drive_text(service, existing_item["id"]))
-                if self._is_lock_active(existing, author):
-                    return (False, f"File bloccato da {existing.get('author')} (UTC {existing.get('locked_at_utc')}).", existing)
+                if self._is_lock_active(existing, ident["name"], ident["email"]):
+                    return (False, f"File bloccato da {existing.get('author_name') or existing.get('author')} (UTC {existing.get('locked_at_utc')}).", existing)
             except Exception:
                 pass
         self._upsert_drive_text(
@@ -532,17 +644,25 @@ class FlowGroupsManager:
         markdown_content: str,
         author: str = "Studente",
         release_lock: bool = True,
+        created_by_meta: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         subj_dir = sanitize_filename(subject or "Generale")
         stem = sanitize_filename(title or "Appunto")
         md_name = f"{stem}.md"
+        rel_key = f"{subj_dir}/{md_name}"
+        ident = self._current_author_identity(author)
+        now_iso = _utc_iso()
 
-        ok, msg, lock_info = self.acquire_lock(group_rec, subj_dir, md_name, author)
+        ok, msg, lock_info = self.acquire_lock(group_rec, subj_dir, md_name, ident["name"])
         if not ok:
             raise RuntimeError(msg)
 
         ts_tag = _utc_now().strftime("%Y%m%dT%H%M%SZ")
         lpath = (group_rec.get("local_fallback_path") or "").strip()
+
+        # Rimuovi eventuale frontmatter duplicato dal corpo markdown
+        _, clean_body = parse_md_frontmatter(markdown_content or "")
+        final_meta: Dict[str, str] = {}
 
         try:
             if lpath:
@@ -551,29 +671,55 @@ class FlowGroupsManager:
                 os.makedirs(target_dir, exist_ok=True)
                 os.makedirs(hist_dir, exist_ok=True)
                 target_file = os.path.join(target_dir, md_name)
-                if os.path.exists(target_file):
-                    with open(target_file, "r", encoding="utf-8") as f:
-                        prev_txt = f.read()
-                    if prev_txt != markdown_content:
-                        hist_file = os.path.join(hist_dir, f"{stem}_{ts_tag}.md")
-                        with open(hist_file, "w", encoding="utf-8") as hf:
-                            hf.write(prev_txt)
-                        self._prune_local_history(hist_dir, stem)
-                with open(target_file, "w", encoding="utf-8") as f:
-                    f.write(markdown_content)
 
                 manifest_path = os.path.join(lpath, "group_manifest.json")
-                manifest = {"schema_version": 1, "group_name": group_rec.get("group_name"), "subjects": [subj_dir]}
+                manifest = {"schema_version": 2, "group_name": group_rec.get("group_name"), "subjects": [subj_dir], "notes_meta": {}}
                 if os.path.exists(manifest_path):
                     try:
                         with open(manifest_path, "r", encoding="utf-8") as mf:
                             manifest = json.load(mf)
                     except Exception:
                         pass
+
+                prev_meta: Dict[str, str] = {}
+                if os.path.exists(target_file):
+                    with open(target_file, "r", encoding="utf-8") as f:
+                        prev_raw = f.read()
+                    prev_meta, prev_body = parse_md_frontmatter(prev_raw)
+                    if prev_body.strip() != clean_body.strip():
+                        hist_meta = dict(prev_meta)
+                        hist_meta["archived_by_name"] = ident["name"]
+                        hist_meta["archived_by_email"] = ident["email"]
+                        hist_meta["archived_at_utc"] = now_iso
+                        hist_file = os.path.join(hist_dir, f"{stem}_{ts_tag}.md")
+                        with open(hist_file, "w", encoding="utf-8") as hf:
+                            hf.write(build_md_with_frontmatter(prev_body, hist_meta))
+                        self._prune_local_history(hist_dir, stem)
+
+                existing_manifest_meta = (manifest.get("notes_meta") or {}).get(rel_key) or {}
+                cb = created_by_meta or {}
+                final_meta = {
+                    "created_by_name": prev_meta.get("created_by_name") or existing_manifest_meta.get("created_by_name") or cb.get("created_by_name") or ident["name"],
+                    "created_by_email": prev_meta.get("created_by_email") or existing_manifest_meta.get("created_by_email") or cb.get("created_by_email") or ident["email"],
+                    "created_by_avatar": prev_meta.get("created_by_avatar") or existing_manifest_meta.get("created_by_avatar") or cb.get("created_by_avatar") or ident["avatar"],
+                    "last_edited_by_name": ident["name"],
+                    "last_edited_by_email": ident["email"],
+                    "last_edited_at_utc": now_iso,
+                }
+                with open(target_file, "w", encoding="utf-8") as f:
+                    f.write(build_md_with_frontmatter(clean_body, final_meta))
+
                 subjs = set(manifest.get("subjects") or [])
                 subjs.add(subj_dir)
                 manifest["subjects"] = sorted(subjs)
-                manifest["updated_at_utc"] = _utc_iso()
+                members = list(manifest.get("members") or [])
+                if ident["name"] and ident["name"] not in members:
+                    members.append(ident["name"])
+                manifest["members"] = members
+                notes_meta = manifest.get("notes_meta") if isinstance(manifest.get("notes_meta"), dict) else {}
+                notes_meta[rel_key] = final_meta
+                manifest["notes_meta"] = notes_meta
+                manifest["updated_at_utc"] = now_iso
                 with open(manifest_path, "w", encoding="utf-8") as mf:
                     json.dump(manifest, mf, ensure_ascii=False, indent=2)
             else:
@@ -584,26 +730,55 @@ class FlowGroupsManager:
                 subj_id = self._ensure_drive_folder(service, subj_dir, parent_id=fid)
                 hist_id = self._ensure_drive_folder(service, ".history", parent_id=fid)
 
-                existing_md = self._find_drive_item(service, md_name, parent_id=subj_id)
-                if existing_md:
-                    prev_txt = self._download_drive_text(service, existing_md["id"])
-                    if prev_txt != markdown_content:
-                        self._upsert_drive_text(service, f"{stem}_{ts_tag}.md", hist_id, prev_txt)
-                        self._prune_drive_history(service, hist_id, stem)
-
-                self._upsert_drive_text(service, md_name, subj_id, markdown_content)
-
                 m_item = self._find_drive_item(service, "group_manifest.json", parent_id=fid)
-                manifest = {"schema_version": 1, "group_name": group_rec.get("group_name"), "subjects": [subj_dir]}
+                manifest = {"schema_version": 2, "group_name": group_rec.get("group_name"), "subjects": [subj_dir], "notes_meta": {}}
                 if m_item:
                     try:
                         manifest = json.loads(self._download_drive_text(service, m_item["id"]))
                     except Exception:
                         pass
+
+                prev_meta = {}
+                existing_md = self._find_drive_item(service, md_name, parent_id=subj_id)
+                if existing_md:
+                    prev_raw = self._download_drive_text(service, existing_md["id"])
+                    prev_meta, prev_body = parse_md_frontmatter(prev_raw)
+                    if prev_body.strip() != clean_body.strip():
+                        hist_meta = dict(prev_meta)
+                        hist_meta["archived_by_name"] = ident["name"]
+                        hist_meta["archived_by_email"] = ident["email"]
+                        hist_meta["archived_at_utc"] = now_iso
+                        self._upsert_drive_text(
+                            service,
+                            f"{stem}_{ts_tag}.md",
+                            hist_id,
+                            build_md_with_frontmatter(prev_body, hist_meta),
+                        )
+                        self._prune_drive_history(service, hist_id, stem)
+
+                existing_manifest_meta = (manifest.get("notes_meta") or {}).get(rel_key) or {}
+                cb = created_by_meta or {}
+                final_meta = {
+                    "created_by_name": prev_meta.get("created_by_name") or existing_manifest_meta.get("created_by_name") or cb.get("created_by_name") or ident["name"],
+                    "created_by_email": prev_meta.get("created_by_email") or existing_manifest_meta.get("created_by_email") or cb.get("created_by_email") or ident["email"],
+                    "created_by_avatar": prev_meta.get("created_by_avatar") or existing_manifest_meta.get("created_by_avatar") or cb.get("created_by_avatar") or ident["avatar"],
+                    "last_edited_by_name": ident["name"],
+                    "last_edited_by_email": ident["email"],
+                    "last_edited_at_utc": now_iso,
+                }
+                self._upsert_drive_text(service, md_name, subj_id, build_md_with_frontmatter(clean_body, final_meta))
+
                 subjs = set(manifest.get("subjects") or [])
                 subjs.add(subj_dir)
                 manifest["subjects"] = sorted(subjs)
-                manifest["updated_at_utc"] = _utc_iso()
+                members = list(manifest.get("members") or [])
+                if ident["name"] and ident["name"] not in members:
+                    members.append(ident["name"])
+                manifest["members"] = members
+                notes_meta = manifest.get("notes_meta") if isinstance(manifest.get("notes_meta"), dict) else {}
+                notes_meta[rel_key] = final_meta
+                manifest["notes_meta"] = notes_meta
+                manifest["updated_at_utc"] = now_iso
                 self._upsert_drive_text(
                     service,
                     "group_manifest.json",
@@ -617,7 +792,7 @@ class FlowGroupsManager:
 
         if group_rec.get("id"):
             db.update_flow_group_sync(int(group_rec["id"]))
-        return {"subject": subj_dir, "filename": md_name, "updated_at_utc": _utc_iso()}
+        return {"subject": subj_dir, "filename": md_name, "updated_at_utc": now_iso, **final_meta}
 
     def read_group_manifest(self, group_rec: Dict[str, Any]) -> Dict[str, Any]:
         """Legge group_manifest.json dal gruppo (Locale o Drive)."""
@@ -799,6 +974,22 @@ class FlowGroupsManager:
         """Restituisce riepilogo completo per la Bacheca & Stato Sbobine del gruppo."""
         manifest = self.read_group_manifest(group_rec)
         notes = self.list_group_notes(group_rec, current_author=current_author)
+        notes_meta = manifest.get("notes_meta") if isinstance(manifest.get("notes_meta"), dict) else {}
+        for n in notes:
+            rel = n.get("rel_path") or f"{n.get('subject')}/{n.get('filename')}"
+            m = notes_meta.get(rel) or {}
+            # Per note locali, leggi anche eventuale frontmatter se manca nel manifest
+            if not m and n.get("local_path") and os.path.exists(n["local_path"]):
+                try:
+                    with open(n["local_path"], "r", encoding="utf-8") as lf:
+                        head = lf.read(1200)
+                    fm, _ = parse_md_frontmatter(head)
+                    m = fm
+                except Exception:
+                    pass
+            for k in _AUTHOR_META_KEYS:
+                if m.get(k) and not n.get(k):
+                    n[k] = m[k]
         subj_set = set(manifest.get("subjects") or [])
         for n in notes:
             if n.get("subject"):
@@ -823,14 +1014,21 @@ class FlowGroupsManager:
     def download_note(self, group_rec: Dict[str, Any], note_item: Dict[str, Any]) -> Tuple[str, str]:
         title = note_item.get("title") or "Nota Gruppo"
         local_p = note_item.get("local_path") or ""
+        raw_md = ""
         if local_p and os.path.exists(local_p):
             with open(local_p, "r", encoding="utf-8") as f:
-                return (title, f.read())
-        file_id = note_item.get("file_id") or ""
-        service = self.get_drive_service(interactive=True)
-        if not service or not file_id:
-            raise RuntimeError("Impossibile scaricare la nota dal gruppo.")
-        return (title, self._download_drive_text(service, file_id))
+                raw_md = f.read()
+        else:
+            file_id = note_item.get("file_id") or ""
+            service = self.get_drive_service(interactive=True)
+            if not service or not file_id:
+                raise RuntimeError("Impossibile scaricare la nota dal gruppo.")
+            raw_md = self._download_drive_text(service, file_id)
+        fm, body = parse_md_frontmatter(raw_md)
+        for k in _AUTHOR_META_KEYS:
+            if fm.get(k):
+                note_item[k] = fm[k]
+        return (title, body)
 
 
 flow_groups = FlowGroupsManager()

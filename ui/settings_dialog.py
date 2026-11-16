@@ -1093,10 +1093,12 @@ class HubSettingsDialog(QDialog):
 
     def _on_gemini_key_saved(self):
         db.set_setting("gemini_api_key", self.gemini_key_edit.text().strip())
+        cloud_sync.push_account_config_to_drive(async_bg=True)
 
     def _on_verify_gemini_key(self):
         key = self.gemini_key_edit.text().strip()
         db.set_setting("gemini_api_key", key)
+        cloud_sync.push_account_config_to_drive(async_bg=True)
         self.gemini_status_row.setVisible(True)
         self.gemini_status_icon.setVisible(False)
         if not key:
@@ -1211,22 +1213,33 @@ class HubSettingsDialog(QDialog):
         if flow_groups.has_token():
             flow_groups.disconnect_drive()
             self._refresh_drive_status()
+            if hasattr(self.hub, "_refresh_account_badge"):
+                self.hub._refresh_account_badge()
             return
         try:
             self.drive_oauth_btn.setEnabled(False)
             self.drive_oauth_btn.setText("Connessione...")
             flow_groups.get_drive_service(interactive=True)
+            if hasattr(self.hub, "_startup_cloud_sync"):
+                self.hub._startup_cloud_sync()
         except Exception as exc:
             self.drive_status_lbl.setText(f"Errore OAuth Drive: {exc}")
         finally:
             self.drive_oauth_btn.setEnabled(True)
             self._refresh_drive_status()
+            if hasattr(self.hub, "_refresh_account_badge"):
+                self.hub._refresh_account_badge()
 
     def _on_sync_drive_now(self):
         try:
-            cloud_sync.generate_library_json()
-            cloud_sync.export_user_state()
+            res = cloud_sync.sync_with_drive(interactive=False)
+            if res.get("gemini_key_imported"):
+                saved_key = (db.get_setting("gemini_api_key", "") or "").strip()
+                if saved_key and hasattr(self, "gemini_key_edit"):
+                    self.gemini_key_edit.setText(saved_key)
             self._refresh_drive_status()
+            if hasattr(self.hub, "_refresh_account_badge"):
+                self.hub._refresh_account_badge()
             self.drive_status_lbl.setText(
                 f"{self.drive_status_lbl.text()} • Indice aggiornato."
             )

@@ -7,7 +7,7 @@ import os
 import re
 import sqlite3
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple
 
 from core.paths import get_user_data_path
@@ -102,7 +102,7 @@ class DatabaseManager:
             );
         """)
 
-        # Migrazione schema Notekeeper: parent_note_id, profile, subject, topic
+        # Migrazione schema Notekeeper: parent_note_id, profile, subject, topic, autore/provenienza
         for col_name, col_sql in [
             ("parent_note_id", "INTEGER DEFAULT NULL"),
             ("profile", "TEXT DEFAULT 'Alessandro'"),
@@ -111,6 +111,14 @@ class DatabaseManager:
             ("audio_path", "TEXT DEFAULT ''"),
             ("folder_id", "INTEGER DEFAULT NULL"),
             ("is_studied", "INTEGER DEFAULT 0"),
+            ("updated_at", "TEXT DEFAULT ''"),
+            ("trashed", "INTEGER DEFAULT 0"),
+            ("created_by_name", "TEXT DEFAULT ''"),
+            ("created_by_email", "TEXT DEFAULT ''"),
+            ("created_by_avatar", "TEXT DEFAULT ''"),
+            ("last_edited_by_name", "TEXT DEFAULT ''"),
+            ("last_edited_by_email", "TEXT DEFAULT ''"),
+            ("last_edited_at_utc", "TEXT DEFAULT ''"),
         ]:
             try:
                 cursor.execute(f"ALTER TABLE study_notes ADD COLUMN {col_name} {col_sql};")
@@ -864,6 +872,33 @@ class DatabaseManager:
             "is_active": 1
         }
 
+    def get_google_account(self) -> Dict[str, str]:
+        """Restituisce i dati dell'account Google unificato salvati nelle impostazioni."""
+        return {
+            "user_id": (self.get_setting("google_user_id", "") or "").strip(),
+            "display_name": (self.get_setting("google_display_name", "") or "").strip(),
+            "email": (self.get_setting("google_email", "") or "").strip(),
+            "avatar_url": (self.get_setting("google_avatar_url", "") or "").strip(),
+        }
+
+    def set_google_account(
+        self,
+        user_id: str,
+        display_name: str,
+        email: str,
+        avatar_url: str = "",
+    ) -> None:
+        """Salva localmente i dati dell'account Google unificato."""
+        self.set_setting("google_user_id", (user_id or "").strip())
+        self.set_setting("google_display_name", (display_name or "").strip())
+        self.set_setting("google_email", (email or "").strip())
+        self.set_setting("google_avatar_url", (avatar_url or "").strip())
+
+    def clear_google_account(self) -> None:
+        """Rimuove i dati dell'account Google unificato salvati localmente."""
+        for k in ("google_user_id", "google_display_name", "google_email", "google_avatar_url"):
+            self.set_setting(k, "")
+
     # --- NOTE DI STUDIO & FLASHCARD (NOTEKEEPER HIERARCHY) ---
     def add_study_note(
         self,
@@ -874,7 +909,15 @@ class DatabaseManager:
         parent_note_id: Optional[int] = None,
         profile: str = "Alessandro",
         subject: str = "Generale",
-        topic: str = "Generale"
+        topic: str = "Generale",
+        created_by_name: Optional[str] = None,
+        created_by_email: Optional[str] = None,
+        created_by_avatar: Optional[str] = None,
+        last_edited_by_name: Optional[str] = None,
+        last_edited_by_email: Optional[str] = None,
+        last_edited_at_utc: Optional[str] = None,
+        updated_at: Optional[str] = None,
+        trashed: int = 0,
     ) -> int:
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -893,10 +936,29 @@ class DatabaseManager:
         if existing:
             return existing["id"] if isinstance(existing, sqlite3.Row) else existing[0]
 
+        acc = self.get_google_account()
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cb_name = (created_by_name if created_by_name is not None else acc["display_name"]).strip()
+        cb_email = (created_by_email if created_by_email is not None else acc["email"]).strip()
+        cb_avatar = (created_by_avatar if created_by_avatar is not None else acc["avatar_url"]).strip()
+        le_name = (last_edited_by_name if last_edited_by_name is not None else cb_name).strip()
+        le_email = (last_edited_by_email if last_edited_by_email is not None else cb_email).strip()
+        le_utc = (last_edited_at_utc or updated_at or now_utc).strip()
+        upd_utc = (updated_at or le_utc).strip()
+
         cursor.execute("""
-            INSERT INTO study_notes (title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (t_clean, c_clean, note_type, tags, parent_note_id, profile, subject, topic))
+            INSERT INTO study_notes (
+                title, content_markdown, note_type, tags, parent_note_id,
+                profile, subject, topic, updated_at, trashed,
+                created_by_name, created_by_email, created_by_avatar,
+                last_edited_by_name, last_edited_by_email, last_edited_at_utc
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            t_clean, c_clean, note_type, tags, parent_note_id,
+            profile, subject, topic, upd_utc, int(bool(trashed)),
+            cb_name, cb_email, cb_avatar, le_name, le_email, le_utc,
+        ))
         new_id = cursor.lastrowid
         conn.commit()
         if parent_note_id is None and note_type != "Flashcard":
@@ -952,32 +1014,65 @@ class DatabaseManager:
         profile: str = "Alessandro",
         subject: str = "Generale",
         topic: str = "Generale",
-        note_type: str = "appunto"
+        note_type: str = "appunto",
+        last_edited_by_name: Optional[str] = None,
+        last_edited_by_email: Optional[str] = None,
+        last_edited_at_utc: Optional[str] = None,
+        updated_at: Optional[str] = None,
+        trashed: Optional[int] = None,
     ) -> bool:
         """Aggiorna metadati e contenuto di una nota nel Notekeeper."""
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            UPDATE study_notes
-            SET title = ?, content_markdown = ?, profile = ?, subject = ?, topic = ?, note_type = ?
-            WHERE id = ?
-        """, (title.strip(), content_markdown.strip(), profile.strip(), subject.strip(), topic.strip(), note_type.strip(), note_id))
+        acc = self.get_google_account()
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        le_name = (last_edited_by_name if last_edited_by_name is not None else acc["display_name"]).strip()
+        le_email = (last_edited_by_email if last_edited_by_email is not None else acc["email"]).strip()
+        le_utc = (last_edited_at_utc or updated_at or now_utc).strip()
+        upd_utc = (updated_at or le_utc).strip()
+
+        if trashed is not None:
+            cursor.execute("""
+                UPDATE study_notes
+                SET title = ?, content_markdown = ?, profile = ?, subject = ?, topic = ?, note_type = ?,
+                    updated_at = ?, trashed = ?, last_edited_by_name = ?, last_edited_by_email = ?, last_edited_at_utc = ?
+                WHERE id = ?
+            """, (
+                title.strip(), content_markdown.strip(), profile.strip(), subject.strip(),
+                topic.strip(), note_type.strip(), upd_utc, int(bool(trashed)),
+                le_name, le_email, le_utc, note_id,
+            ))
+        else:
+            cursor.execute("""
+                UPDATE study_notes
+                SET title = ?, content_markdown = ?, profile = ?, subject = ?, topic = ?, note_type = ?,
+                    updated_at = ?, last_edited_by_name = ?, last_edited_by_email = ?, last_edited_at_utc = ?
+                WHERE id = ?
+            """, (
+                title.strip(), content_markdown.strip(), profile.strip(), subject.strip(),
+                topic.strip(), note_type.strip(), upd_utc,
+                le_name, le_email, le_utc, note_id,
+            ))
         conn.commit()
         return cursor.rowcount > 0
 
     def get_all_study_notes(self, note_type: Optional[str] = None) -> List[Dict[str, Any]]:
         conn = self._get_connection()
         cursor = conn.cursor()
+        cols = (
+            "id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, "
+            "folder_id, created_at, updated_at, trashed, "
+            "created_by_name, created_by_email, created_by_avatar, "
+            "last_edited_by_name, last_edited_by_email, last_edited_at_utc"
+        )
         if note_type:
             cursor.execute(
-                "SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at "
-                "FROM study_notes WHERE note_type = ? ORDER BY id DESC",
+                f"SELECT {cols} FROM study_notes WHERE note_type = ? ORDER BY id DESC",
                 (note_type,)
             )
         else:
             cursor.execute(
-                "SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at "
-                "FROM study_notes ORDER BY id DESC"
+                f"SELECT {cols} FROM study_notes ORDER BY id DESC"
             )
         return [dict(row) for row in cursor.fetchall()]
 
@@ -986,9 +1081,12 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, created_at
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic,
+                   folder_id, created_at, updated_at, trashed,
+                   created_by_name, created_by_email, created_by_avatar,
+                   last_edited_by_name, last_edited_by_email, last_edited_at_utc
             FROM study_notes
-            WHERE (parent_note_id IS NULL AND note_type != 'Flashcard')
+            WHERE (parent_note_id IS NULL AND note_type != 'Flashcard' AND COALESCE(trashed, 0) = 0)
             ORDER BY id DESC
         """)
         return [dict(row) for row in cursor.fetchall()]
@@ -1373,7 +1471,10 @@ class DatabaseManager:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, audio_path, created_at
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id,
+                   profile, subject, topic, audio_path, folder_id, created_at, updated_at, trashed,
+                   created_by_name, created_by_email, created_by_avatar,
+                   last_edited_by_name, last_edited_by_email, last_edited_at_utc
             FROM study_notes
             WHERE id = ?
         """, (note_id,))

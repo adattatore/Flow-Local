@@ -169,12 +169,19 @@ class FlowLocalHub(QMainWindow):
     flowtime_sync_done = pyqtSignal(bool, str)
     _aiRuntimeSignal = pyqtSignal(str)
     _ollamaProbeSignal = pyqtSignal(bool)
+    _cloudSyncDoneSignal = pyqtSignal(dict)
+    _avatarLoadedSignal = pyqtSignal(bytes)
 
     def __init__(self, on_device_changed: Optional[Callable] = None, engine=None):
         super().__init__()
         self._ollama_detected: Optional[bool] = None
+        self._account_avatar_pixmap: Optional[QPixmap] = None
+        self._account_avatar_url_loaded: str = ""
+        self._cloud_sync_running: bool = False
         self._aiRuntimeSignal.connect(self._on_ai_runtime_changed, Qt.ConnectionType.QueuedConnection)
         self._ollamaProbeSignal.connect(self._on_ollama_probe_finished, Qt.ConnectionType.QueuedConnection)
+        self._cloudSyncDoneSignal.connect(self._on_cloud_sync_done, Qt.ConnectionType.QueuedConnection)
+        self._avatarLoadedSignal.connect(self._on_avatar_loaded, Qt.ConnectionType.QueuedConnection)
         add_runtime_engine_listener(lambda lbl: self._aiRuntimeSignal.emit(lbl))
         # API pubblica mantenuta per compatibilità con main.py / pipeline audio
         self.on_device_changed = on_device_changed
@@ -263,8 +270,9 @@ class FlowLocalHub(QMainWindow):
         self._cmd_palette_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self._cmd_palette_shortcut.activated.connect(self._open_command_palette)
 
-        # Sync iniziale e periodico Google Calendar in background (se connesso)
+        # Sync iniziale e periodico Google Calendar & Cloud Account in background (se connesso)
         QTimer.singleShot(1500, self._startup_google_calendar_sync)
+        QTimer.singleShot(2200, self._startup_cloud_sync)
         self.gcal_sync_timer = QTimer(self)
         self.gcal_sync_timer.timeout.connect(self._periodic_google_calendar_sync)
         self.gcal_sync_timer.start(120000)
@@ -479,10 +487,9 @@ class FlowLocalHub(QMainWindow):
         self.pomo_top_pill.hide()
         layout.addWidget(self.pomo_top_pill)
 
-        # A destra: Barra Spotify + Modalità Lettura + Rotellina Impostazioni (larghezza fissa anti-shift)
+        # A destra: Barra Spotify + Modalità Lettura + Badge Profilo Account + Rotellina Impostazioni
         right_host = QWidget()
-        right_host.setFixedWidth(368)
-        right_host.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        right_host.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         right_host.setStyleSheet("background: transparent;")
         right_row = QHBoxLayout(right_host)
         right_row.setContentsMargins(0, 0, 0, 0)
@@ -505,6 +512,15 @@ class FlowLocalHub(QMainWindow):
         self.reading_mode_btn.toggled.connect(self._toggle_reading_mode)
         right_row.addWidget(self.reading_mode_btn)
 
+        self.account_badge_btn = QPushButton(" Accedi")
+        self.account_badge_btn.setObjectName("FilterPill")
+        self.account_badge_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.account_badge_btn.setIconSize(QSize(20, 20))
+        self.account_badge_btn.setToolTip("Account Google & Stato Sincronizzazione")
+        self.account_badge_btn.clicked.connect(self._on_account_badge_clicked)
+        right_row.addWidget(self.account_badge_btn)
+        self._refresh_account_badge()
+
         self.settings_btn = ThemedPushButton("")
         self.settings_btn.setObjectName("SettingsGearBtn")
         self.settings_btn.setIcon(get_icon("settings", theme_key=self._current_theme, role="subtitle", size=15))
@@ -517,6 +533,153 @@ class FlowLocalHub(QMainWindow):
         layout.addWidget(right_host)
 
         return top_bar
+
+    def _make_circular_account_icon(self, avatar_px: Optional[QPixmap], initials: str, synced: bool) -> QIcon:
+        from PyQt6.QtGui import QPainterPath
+        size = 22
+        pm = QPixmap(size, size)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        if avatar_px and not avatar_px.isNull():
+            path = QPainterPath()
+            path.addEllipse(0, 0, size - 2, size - 2)
+            p.setClipPath(path)
+            scaled = avatar_px.scaled(size - 2, size - 2, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            p.drawPixmap(0, 0, scaled)
+            p.setClipping(False)
+        else:
+            p.setBrush(QColor("#6366F1" if synced else "#64748B"))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.drawEllipse(0, 0, size - 2, size - 2)
+            p.setPen(QColor("#FFFFFF"))
+            f = p.font()
+            f.setPixelSize(10)
+            f.setBold(True)
+            p.setFont(f)
+            p.drawText(0, 0, size - 2, size - 2, Qt.AlignmentFlag.AlignCenter, initials[:2].upper() or "G")
+
+        # Indicatore verde/grigio di sync in basso a destra
+        dot_col = QColor("#10B981") if synced else QColor("#94A3B8")
+        p.setBrush(dot_col)
+        p.setPen(QPen(QColor("#0F172A"), 1.5))
+        p.drawEllipse(size - 9, size - 9, 8, 8)
+        p.end()
+        return QIcon(pm)
+
+    def _refresh_account_badge(self):
+        if not hasattr(self, "account_badge_btn"):
+            return
+        acc = db.get_google_account()
+        connected = flow_groups.has_token()
+        name = acc.get("display_name") or acc.get("email") or ("Google Sync" if connected else "Accedi Google")
+        short_name = name.split()[0] if " " in name else name
+        if len(short_name) > 14:
+            short_name = short_name[:13] + "…"
+        initials = "".join(w[0] for w in name.split()[:2]) or "G"
+        avatar_url = acc.get("avatar_url") or ""
+        if connected and avatar_url and avatar_url != self._account_avatar_url_loaded:
+            self._account_avatar_url_loaded = avatar_url
+            def _dl(url=avatar_url):
+                try:
+                    import urllib.request
+                    with urllib.request.urlopen(url, timeout=6) as resp:
+                        self._avatarLoadedSignal.emit(resp.read())
+                except Exception:
+                    pass
+            threading.Thread(target=_dl, daemon=True).start()
+        elif not connected:
+            self._account_avatar_pixmap = None
+            self._account_avatar_url_loaded = ""
+
+        self.account_badge_btn.setText(f" {short_name}")
+        self.account_badge_btn.setIcon(self._make_circular_account_icon(self._account_avatar_pixmap, initials, connected))
+        self.account_badge_btn.setStyleSheet(
+            "padding: 0 10px 0 6px; font-size: 11px; min-height: 26px; font-weight: 600;"
+        )
+        tip = f"{acc.get('display_name') or 'Account Google'}\n{acc.get('email') or ''}".strip() if connected else "Clicca per accedere con Google e sincronizzare"
+        self.account_badge_btn.setToolTip(tip)
+
+    def _on_avatar_loaded(self, raw_bytes: bytes):
+        pm = QPixmap()
+        if pm.loadFromData(raw_bytes):
+            self._account_avatar_pixmap = pm
+            self._refresh_account_badge()
+
+    def _on_account_badge_clicked(self):
+        menu = QMenu(self)
+        acc = db.get_google_account()
+        connected = flow_groups.has_token()
+        gemini_ok = bool((db.get_setting("gemini_api_key", "") or "").strip())
+
+        if connected:
+            hdr = menu.addAction(f"{acc.get('display_name') or 'Account Google'} ({acc.get('email') or 'connesso'})")
+        else:
+            hdr = menu.addAction("Account Google non connesso")
+        hdr.setEnabled(False)
+
+        gem_act = menu.addAction(f"Chiave Gemini: {'Attiva (Sync)' if gemini_ok else 'Mancante'}")
+        gem_act.setEnabled(False)
+        menu.addSeparator()
+
+        sync_act = menu.addAction(get_icon("refresh", theme_key=self._current_theme, size=14), "Sincronizza ora")
+        sync_act.triggered.connect(lambda: self._run_cloud_sync(interactive=not connected))
+
+        if connected:
+            disc_act = menu.addAction(get_icon("close", theme_key=self._current_theme, role="danger", size=14), "Disconnetti")
+            def _disconnect():
+                flow_groups.disconnect_drive()
+                self._refresh_account_badge()
+                self._refresh_notekeeper()
+            disc_act.triggered.connect(_disconnect)
+        else:
+            login_act = menu.addAction(get_icon("cloud", theme_key=self._current_theme, size=14), "Accedi con Google")
+            login_act.triggered.connect(lambda: self._run_cloud_sync(interactive=True))
+
+        menu.exec(self.account_badge_btn.mapToGlobal(QPoint(0, self.account_badge_btn.height())))
+
+    def _startup_cloud_sync(self):
+        if flow_groups.has_token():
+            self._run_cloud_sync(interactive=False)
+
+    def _run_cloud_sync(self, interactive: bool = False):
+        if self._cloud_sync_running:
+            return
+        self._cloud_sync_running = True
+        if interactive:
+            try:
+                flow_groups.get_drive_service(interactive=True)
+                self._refresh_account_badge()
+            except Exception as exc:
+                self._cloud_sync_running = False
+                QMessageBox.warning(self, "Accesso Google", str(exc))
+                return
+
+        def _worker():
+            try:
+                res = cloud_sync.sync_with_drive(interactive=False)
+                self._cloudSyncDoneSignal.emit(res)
+            except Exception as e:
+                self._cloudSyncDoneSignal.emit({"error": str(e)})
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_cloud_sync_done(self, res: dict):
+        self._cloud_sync_running = False
+        self._refresh_account_badge()
+        if res.get("gemini_key_imported") and hasattr(self, "_refresh_ai_onboarding_and_badge"):
+            self._refresh_ai_onboarding_and_badge()
+        if res.get("theme_imported"):
+            self._current_theme = db.get_setting("theme", "obsidian")
+            self._reading_mode = db.get_setting("reading_mode", "0") == "1"
+            QSettings("FlowLocal", "Hub").setValue("theme", self._current_theme)
+            QSettings("FlowLocal", "Hub").setValue("reading_mode", self._reading_mode)
+            self._apply_theme_change()
+        if res.get("notes_imported", 0) > 0:
+            self._refresh_notekeeper()
+        if res.get("events_imported", 0) > 0 or res.get("exams_imported", 0) > 0:
+            self._refresh_current_page()
 
     def _build_flowtype_subbar(self) -> QFrame:
         subbar = AnimatedSegmentedBox(
@@ -581,14 +744,18 @@ class FlowLocalHub(QMainWindow):
             return
         self._current_theme = theme_key
         QSettings("FlowLocal", "Hub").setValue("theme", theme_key)
+        db.set_setting("theme", theme_key)
         self._apply_theme_change()
+        cloud_sync.push_account_config_to_drive(async_bg=True)
 
     def _toggle_reading_mode(self, checked: bool):
         if bool(checked) == self._reading_mode:
             return
         self._reading_mode = bool(checked)
         QSettings("FlowLocal", "Hub").setValue("reading_mode", self._reading_mode)
+        db.set_setting("reading_mode", "1" if self._reading_mode else "0")
         self._apply_theme_change()
+        cloud_sync.push_account_config_to_drive(async_bg=True)
 
     def _set_font_preset(self, preset_key: str):
         if preset_key not in FONT_PRESETS or preset_key == self._font_preset:
@@ -2109,6 +2276,9 @@ class FlowLocalHub(QMainWindow):
         return self._active_nk_pane().autosave_badge
 
     def _nk_author_name(self) -> str:
+        acc_name = db.get_google_account().get("display_name")
+        if acc_name:
+            return acc_name
         if hasattr(self, "nk_profile_combo"):
             p = self.nk_profile_combo.currentText().strip()
             if p and p != "Tutti i profili":
@@ -2291,6 +2461,12 @@ class FlowLocalHub(QMainWindow):
             is_dirty=False,
             is_locked_by_me=bool(item.get("locked_by_me")),
             lock_info=item.get("lock_info"),
+            created_by_name=item.get("created_by_name") or "",
+            created_by_email=item.get("created_by_email") or "",
+            created_by_avatar=item.get("created_by_avatar") or "",
+            last_edited_by_name=item.get("last_edited_by_name") or "",
+            last_edited_by_email=item.get("last_edited_by_email") or "",
+            last_edited_at_utc=item.get("last_edited_at_utc") or "",
         )
         pane.open_tab(ctx, in_new_tab=in_new_tab)
 
@@ -2485,10 +2661,16 @@ class FlowLocalHub(QMainWindow):
             tab.is_dirty = False
             tab.is_locked_by_me = False
             tab.lock_info = None
+            for k in ("created_by_name", "created_by_email", "created_by_avatar", "last_edited_by_name", "last_edited_by_email", "last_edited_at_utc"):
+                if res.get(k):
+                    setattr(tab, k, res[k])
             if tab.group_note_item is not None:
                 tab.group_note_item["locked_by_me"] = False
                 tab.group_note_item["locked_by_other"] = False
                 tab.group_note_item["lock_info"] = None
+                for k in ("created_by_name", "created_by_email", "created_by_avatar", "last_edited_by_name", "last_edited_by_email", "last_edited_at_utc"):
+                    if res.get(k):
+                        tab.group_note_item[k] = res[k]
             pane.tab_bar_widget.update_tab_title(pane.current_tab_index, tab)
             pane._render_tab(tab)
             pane.set_autosave_badge(True, f"✓ Pubblicato in {res['subject']} (.history/ aggiornato)")
@@ -3234,6 +3416,12 @@ class FlowLocalHub(QMainWindow):
             title=title_txt or "Appunto senza titolo",
             content_markdown=note.get("content_markdown") or "",
             is_dirty=False,
+            created_by_name=note.get("created_by_name") or "",
+            created_by_email=note.get("created_by_email") or "",
+            created_by_avatar=note.get("created_by_avatar") or "",
+            last_edited_by_name=note.get("last_edited_by_name") or "",
+            last_edited_by_email=note.get("last_edited_by_email") or "",
+            last_edited_at_utc=note.get("last_edited_at_utc") or "",
         )
         target_pane.open_tab(ctx, in_new_tab=in_new_tab)
 

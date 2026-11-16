@@ -1,8 +1,10 @@
 <!DOCTYPE html>
 <html lang="it" data-theme="obsidian">
+
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="FlowLocal">
@@ -20,7 +22,8 @@
   <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous" defer></script>
 
   <style>
-    :root, [data-theme="obsidian"] {
+    :root,
+    [data-theme="obsidian"] {
       --bg-canvas: #0B0F19;
       --bg-surface: #111827;
       --bg-card: #151C2C;
@@ -88,7 +91,12 @@
       --text-dim: #94A3B8;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
 
     body {
       font-family: var(--font-sans);
@@ -103,7 +111,8 @@
     }
 
     /* GLOBAL SVG FIX: zero clipping */
-    svg, svg.icon {
+    svg,
+    svg.icon {
       flex-shrink: 0;
       display: inline-block;
       vertical-align: middle;
@@ -150,8 +159,16 @@
       flex-shrink: 0;
     }
 
-    .brand-name { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
-    .brand-sub { font-size: 11px; color: var(--text-muted); }
+    .brand-name {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
 
     .nav-btn {
       display: flex;
@@ -169,7 +186,12 @@
       transition: background 0.15s, color 0.15s, border-color 0.15s;
       text-align: left;
     }
-    .nav-btn:hover { background: var(--bg-card-hover); color: var(--text-main); }
+
+    .nav-btn:hover {
+      background: var(--bg-card-hover);
+      color: var(--text-main);
+    }
+
     .nav-btn.active {
       background: var(--accent-soft);
       color: var(--accent);
@@ -189,6 +211,7 @@
       height: 100dvh;
       overflow: hidden;
     }
+
     body.editor-fullscreen .app-shell,
     body.editor-fullscreen .main-area,
     body.editor-fullscreen .view-container,
@@ -198,9 +221,11 @@
       overflow: hidden;
       padding-bottom: 0;
     }
+
     body.editor-fullscreen .bottom-nav {
       display: none !important;
     }
+
     body.editor-fullscreen .global-topbar {
       display: none !important;
     }
@@ -218,9 +243,27 @@
       border-bottom: 1px solid var(--border);
     }
 
-    .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-    .topbar-title { font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .topbar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .topbar-title {
+      font-size: 16px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .topbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
 
     .icon-btn {
       display: inline-flex;
@@ -236,12 +279,20 @@
       flex-shrink: 0;
       transition: background 0.15s;
     }
-    .icon-btn:hover { background: var(--bg-card-hover); }
+
+    .icon-btn:hover {
+      background: var(--bg-card-hover);
+    }
+
     .icon-btn.ghost {
       background: transparent;
       border-color: transparent;
     }
-    .icon-btn.ghost:hover { background: var(--bg-input); }
+
+    .icon-btn.ghost:hover {
+      background: var(--bg-input);
+    }
+
     .icon-btn.active {
       background: var(--accent-soft);
       color: var(--accent);
@@ -262,9 +313,22 @@
       cursor: pointer;
       white-space: nowrap;
     }
-    .pill-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); flex-shrink: 0; }
-    .pill-dot.ok { background: var(--success); }
-    .pill-dot.warn { background: var(--warning); }
+
+    .pill-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      flex-shrink: 0;
+    }
+
+    .pill-dot.ok {
+      background: var(--success);
+    }
+
+    .pill-dot.warn {
+      background: var(--warning);
+    }
 
     .view-container {
       padding: 14px;
@@ -276,13 +340,22 @@
       gap: 14px;
       flex: 1;
     }
+
     body.editor-fullscreen .view-container {
       padding: 0;
       max-width: 100%;
     }
 
-    .view { display: none; flex-direction: column; gap: 14px; flex: 1; }
-    .view.active { display: flex; }
+    .view {
+      display: none;
+      flex-direction: column;
+      gap: 14px;
+      flex: 1;
+    }
+
+    .view.active {
+      display: flex;
+    }
 
     /* CARDS, BUTTONS, INPUTS */
     .card {
@@ -294,17 +367,51 @@
       flex-direction: column;
       gap: 10px;
     }
-    .card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-    .card-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
-    .muted { color: var(--text-muted); font-size: 13px; }
 
-    .grid-2 { display: grid; grid-template-columns: 1fr; gap: 14px; }
-    @media (min-width: 860px) {
-      .grid-2 { grid-template-columns: 1fr 1fr; }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
     }
 
-    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .grow { flex: 1; min-width: 0; }
+    .card-title {
+      font-size: 15px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .muted {
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+
+    @media (min-width: 860px) {
+      .grid-2 {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .grow {
+      flex: 1;
+      min-width: 0;
+    }
 
     .btn {
       display: inline-flex;
@@ -323,22 +430,45 @@
       transition: opacity 0.15s, background 0.15s;
       white-space: nowrap;
     }
-    .btn:hover { background: var(--bg-card-hover); }
-    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn:hover {
+      background: var(--bg-card-hover);
+    }
+
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
     .btn-primary {
       background: linear-gradient(135deg, var(--accent), var(--accent-2));
       border-color: transparent;
       color: #FFFFFF;
     }
+
     .btn-danger {
       background: rgba(239, 68, 68, 0.15);
       border-color: rgba(239, 68, 68, 0.35);
       color: #FCA5A5;
     }
-    [data-theme="chiaro"] .btn-danger { color: #B91C1C; }
-    .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
 
-    input[type="text"], input[type="password"], input[type="date"], input[type="time"], input[type="number"], select, textarea {
+    [data-theme="chiaro"] .btn-danger {
+      color: #B91C1C;
+    }
+
+    .btn-sm {
+      padding: 6px 10px;
+      font-size: 12px;
+      border-radius: 8px;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="date"],
+    input[type="time"],
+    input[type="number"],
+    select,
+    textarea {
       width: 100%;
       padding: 10px 12px;
       border-radius: 10px;
@@ -349,8 +479,18 @@
       font-size: 14px;
       outline: none;
     }
-    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
-    textarea { resize: vertical; min-height: 150px; line-height: 1.55; }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--accent);
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 150px;
+      line-height: 1.55;
+    }
 
     /* SLIDE-OVER DRAWER (SAMSUNG NOTES STYLE) */
     .drawer-backdrop {
@@ -362,10 +502,12 @@
       pointer-events: none;
       transition: opacity 0.22s ease;
     }
+
     .drawer-backdrop.open {
       opacity: 1;
       pointer-events: auto;
     }
+
     .side-drawer {
       position: fixed;
       top: 0;
@@ -384,15 +526,18 @@
       transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
       overflow-y: auto;
     }
+
     .side-drawer.open {
       transform: translateX(0);
     }
+
     .drawer-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 4px 4px 12px;
     }
+
     .drawer-item {
       display: flex;
       align-items: center;
@@ -409,21 +554,42 @@
       cursor: pointer;
       text-align: left;
     }
-    .drawer-item:hover { background: var(--bg-card-hover); }
-    .drawer-item.active { background: var(--accent-soft); color: var(--accent); }
-    .drawer-item-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-    .drawer-item-left span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .drawer-item:hover {
+      background: var(--bg-card-hover);
+    }
+
+    .drawer-item.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .drawer-item-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .drawer-item-left span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .drawer-count {
       font-size: 12px;
       color: var(--text-muted);
       font-weight: 700;
       flex-shrink: 0;
     }
+
     .drawer-divider {
       border: none;
       border-top: 1px dashed var(--border);
       margin: 8px 4px;
     }
+
     .drawer-section-title {
       font-size: 11px;
       font-weight: 700;
@@ -432,12 +598,14 @@
       color: var(--text-dim);
       padding: 4px 12px;
     }
+
     .folder-children {
       padding-left: 22px;
       display: flex;
       flex-direction: column;
       gap: 2px;
     }
+
     .folder-chevron {
       display: inline-flex;
       align-items: center;
@@ -448,7 +616,10 @@
       color: var(--text-muted);
       flex-shrink: 0;
     }
-    .folder-chevron:hover { background: var(--bg-input); }
+
+    .folder-chevron:hover {
+      background: var(--bg-input);
+    }
 
     /* FLOWNOTES: LIST VIEW & GRID */
     .notes-list-header {
@@ -457,14 +628,17 @@
       justify-content: space-between;
       gap: 10px;
     }
+
     .notes-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
       gap: 10px;
     }
+
     .notes-grid.list-mode {
       grid-template-columns: 1fr;
     }
+
     .note-card {
       padding: 12px;
       border-radius: 12px;
@@ -476,7 +650,12 @@
       gap: 6px;
       transition: border-color 0.15s, background 0.15s;
     }
-    .note-card:hover { border-color: var(--accent); background: var(--bg-card-hover); }
+
+    .note-card:hover {
+      border-color: var(--accent);
+      background: var(--bg-card-hover);
+    }
+
     .note-card-title {
       font-weight: 700;
       font-size: 14px;
@@ -485,6 +664,7 @@
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+
     .note-card-snippet {
       font-size: 12.5px;
       color: var(--text-muted);
@@ -494,6 +674,7 @@
       overflow: hidden;
       line-height: 1.4;
     }
+
     .note-card-meta {
       font-size: 11px;
       color: var(--text-dim);
@@ -503,6 +684,7 @@
       gap: 6px;
       margin-top: auto;
     }
+
     .subject-chip {
       display: inline-flex;
       align-items: center;
@@ -537,8 +719,12 @@
       justify-content: center;
       cursor: pointer;
     }
+
     @media (min-width: 768px) {
-      .fab-btn { bottom: 24px; right: 28px; }
+      .fab-btn {
+        bottom: 24px;
+        right: 28px;
+      }
     }
 
     /* FULLSCREEN NOTE EDITOR */
@@ -549,9 +735,11 @@
       overflow: hidden;
       background: var(--bg-canvas);
     }
+
     .note-editor-shell.active {
       display: flex;
     }
+
     .editor-topbar {
       position: sticky;
       top: 0;
@@ -564,6 +752,7 @@
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
     }
+
     .editor-topbar-left {
       display: flex;
       align-items: center;
@@ -571,6 +760,7 @@
       min-width: 0;
       flex: 1;
     }
+
     .editor-subj-crumb {
       background: var(--accent-soft);
       color: var(--accent);
@@ -585,6 +775,7 @@
       text-overflow: ellipsis;
       max-width: 150px;
     }
+
     .autosave-badge {
       font-size: 11px;
       color: var(--text-dim);
@@ -592,7 +783,10 @@
       white-space: nowrap;
       flex-shrink: 0;
     }
-    .autosave-badge.saved { color: var(--success); }
+
+    .autosave-badge.saved {
+      color: var(--success);
+    }
 
     .editor-actions-right {
       display: flex;
@@ -617,7 +811,11 @@
       flex-direction: column;
       gap: 2px;
     }
-    .editor-more-menu.open { display: flex; }
+
+    .editor-more-menu.open {
+      display: flex;
+    }
+
     .menu-action {
       display: flex;
       align-items: center;
@@ -633,9 +831,18 @@
       cursor: pointer;
       text-align: left;
     }
-    .menu-action:hover { background: var(--bg-card-hover); }
-    .menu-action.danger { color: #FCA5A5; }
-    [data-theme="chiaro"] .menu-action.danger { color: #DC2626; }
+
+    .menu-action:hover {
+      background: var(--bg-card-hover);
+    }
+
+    .menu-action.danger {
+      color: #FCA5A5;
+    }
+
+    [data-theme="chiaro"] .menu-action.danger {
+      color: #DC2626;
+    }
 
     .editor-body-wrap {
       flex: 1;
@@ -647,6 +854,7 @@
       padding: 14px 16px 90px;
       gap: 8px;
     }
+
     .sheet-title-input {
       width: 100%;
       background: transparent !important;
@@ -661,6 +869,7 @@
       overflow: hidden;
       font-family: inherit;
     }
+
     .sheet-meta-row {
       display: flex;
       align-items: center;
@@ -670,6 +879,7 @@
       font-size: 12px;
       color: var(--text-dim);
     }
+
     .visual-editor {
       flex: 1;
       width: 100%;
@@ -681,15 +891,38 @@
       word-break: break-word;
       padding: 6px 0 30px;
     }
+
     .visual-editor:empty::before {
       content: attr(data-placeholder);
       color: var(--text-dim);
       pointer-events: none;
     }
-    .visual-editor h1 { font-size: 22px; font-weight: 800; margin: 14px 0 6px; line-height: 1.3; }
-    .visual-editor h2 { font-size: 18px; font-weight: 700; margin: 12px 0 5px; line-height: 1.35; }
-    .visual-editor h3 { font-size: 16px; font-weight: 700; margin: 10px 0 4px; }
-    .visual-editor p, .visual-editor div { margin: 3px 0; }
+
+    .visual-editor h1 {
+      font-size: 22px;
+      font-weight: 800;
+      margin: 14px 0 6px;
+      line-height: 1.3;
+    }
+
+    .visual-editor h2 {
+      font-size: 18px;
+      font-weight: 700;
+      margin: 12px 0 5px;
+      line-height: 1.35;
+    }
+
+    .visual-editor h3 {
+      font-size: 16px;
+      font-weight: 700;
+      margin: 10px 0 4px;
+    }
+
+    .visual-editor p,
+    .visual-editor div {
+      margin: 3px 0;
+    }
+
     .visual-editor pre {
       background: var(--bg-input);
       border: 1px solid var(--border);
@@ -700,6 +933,7 @@
       overflow-x: auto;
       margin: 8px 0;
     }
+
     .visual-editor code {
       background: var(--bg-input);
       padding: 2px 5px;
@@ -707,12 +941,14 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 13.5px;
     }
+
     .visual-editor img {
       max-width: 100%;
       border-radius: 10px;
       margin: 8px 0;
       border: 1px solid var(--border);
     }
+
     .katex-pill {
       display: inline-flex;
       align-items: center;
@@ -724,6 +960,7 @@
       cursor: pointer;
       vertical-align: middle;
     }
+
     .katex-pill.block {
       display: flex;
       justify-content: center;
@@ -731,12 +968,14 @@
       margin: 8px 0;
       width: 100%;
     }
+
     .todo-row {
       display: flex;
       align-items: flex-start;
       gap: 8px;
       margin: 4px 0;
     }
+
     .todo-row input[type="checkbox"] {
       width: 18px;
       height: 18px;
@@ -744,10 +983,12 @@
       accent-color: var(--accent);
       flex-shrink: 0;
     }
-    .todo-row.done > span {
+
+    .todo-row.done>span {
       text-decoration: line-through;
       color: var(--text-dim);
     }
+
     .ts-chip {
       display: inline-flex;
       align-items: center;
@@ -773,13 +1014,23 @@
       flex-direction: column;
       gap: 8px;
     }
-    .aula-panel.open { display: flex; }
+
+    .aula-panel.open {
+      display: flex;
+    }
+
     .aula-panel.recording {
       background: #04060C;
       border-color: var(--danger);
       color: #E2E8F0;
     }
-    .rec-timer { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+
+    .rec-timer {
+      font-size: 22px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 1px;
+    }
 
     /* FLOWTIME CALENDAR */
     .cal-header {
@@ -788,11 +1039,14 @@
       justify-content: space-between;
       gap: 8px;
     }
-    .cal-weekdays, .cal-grid {
+
+    .cal-weekdays,
+    .cal-grid {
       display: grid;
       grid-template-columns: repeat(7, 1fr);
       gap: 4px;
     }
+
     .cal-weekday {
       text-align: center;
       font-size: 11px;
@@ -800,6 +1054,7 @@
       color: var(--text-dim);
       padding: 4px 0;
     }
+
     .cal-day {
       min-height: 42px;
       border-radius: 9px;
@@ -816,12 +1071,38 @@
       cursor: pointer;
       padding: 4px 2px;
     }
-    .cal-day.other-month { opacity: 0.35; }
-    .cal-day.today { border-color: var(--accent-2); }
-    .cal-day.selected { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-    .cal-dots { display: flex; gap: 3px; height: 6px; align-items: center; }
-    .cal-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-    .cal-dot.exam { background: var(--warning); }
+
+    .cal-day.other-month {
+      opacity: 0.35;
+    }
+
+    .cal-day.today {
+      border-color: var(--accent-2);
+    }
+
+    .cal-day.selected {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .cal-dots {
+      display: flex;
+      gap: 3px;
+      height: 6px;
+      align-items: center;
+    }
+
+    .cal-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .cal-dot.exam {
+      background: var(--warning);
+    }
 
     /* POMODORO & PROGRESS */
     .pomo-display {
@@ -831,6 +1112,7 @@
       text-align: center;
       padding: 8px 0;
     }
+
     .progress-track {
       width: 100%;
       height: 8px;
@@ -838,6 +1120,7 @@
       background: var(--bg-input);
       overflow: hidden;
     }
+
     .progress-fill {
       height: 100%;
       background: linear-gradient(90deg, var(--accent), var(--accent-2));
@@ -855,7 +1138,11 @@
       justify-content: center;
       padding: 16px;
     }
-    .modal-backdrop.open { display: flex; }
+
+    .modal-backdrop.open {
+      display: flex;
+    }
+
     .modal-box {
       width: 100%;
       max-width: 520px;
@@ -869,6 +1156,7 @@
       max-height: 90dvh;
       overflow-y: auto;
     }
+
     .rsvp-stage {
       min-height: 120px;
       display: flex;
@@ -883,7 +1171,10 @@
       padding: 20px;
       text-align: center;
     }
-    .rsvp-orp { color: var(--danger); }
+
+    .rsvp-orp {
+      color: var(--danger);
+    }
 
     /* BOTTOM NAV (MOBILE < 768px) — ONLY 3 TABS */
     .bottom-nav {
@@ -898,6 +1189,7 @@
       justify-content: space-around;
       padding: 6px 8px calc(6px + var(--safe-bottom));
     }
+
     .bnav-btn {
       flex: 1;
       max-width: 120px;
@@ -914,13 +1206,28 @@
       border-radius: 10px;
       cursor: pointer;
     }
-    .bnav-btn.active { color: var(--accent); background: var(--accent-soft); }
+
+    .bnav-btn.active {
+      color: var(--accent);
+      background: var(--accent-soft);
+    }
 
     @media (min-width: 768px) {
-      .sidebar-rail { display: flex; }
-      .bottom-nav { display: none; }
-      .main-area { padding-bottom: 24px; }
-      .mobile-brand { display: none; }
+      .sidebar-rail {
+        display: flex;
+      }
+
+      .bottom-nav {
+        display: none;
+      }
+
+      .main-area {
+        padding-bottom: 24px;
+      }
+
+      .mobile-brand {
+        display: none;
+      }
     }
 
     /* TOAST */
@@ -942,7 +1249,10 @@
       max-width: 90vw;
       text-align: center;
     }
-    .toast.show { display: block; }
+
+    .toast.show {
+      display: block;
+    }
 
     /* BREADCRUMB & CONTEXTUAL TOOLS */
     .breadcrumb-bar {
@@ -954,7 +1264,11 @@
       min-width: 0;
       white-space: nowrap;
     }
-    .breadcrumb-bar::-webkit-scrollbar { display: none; }
+
+    .breadcrumb-bar::-webkit-scrollbar {
+      display: none;
+    }
+
     .bc-crumb {
       background: transparent;
       border: none;
@@ -965,9 +1279,21 @@
       border-radius: 8px;
       cursor: pointer;
     }
-    .bc-crumb:hover { background: var(--bg-input); color: var(--text-main); }
-    .bc-crumb.current { color: var(--text-main); }
-    .bc-sep { color: var(--text-dim); font-size: 13px; user-select: none; }
+
+    .bc-crumb:hover {
+      background: var(--bg-input);
+      color: var(--text-main);
+    }
+
+    .bc-crumb.current {
+      color: var(--text-main);
+    }
+
+    .bc-sep {
+      color: var(--text-dim);
+      font-size: 13px;
+      user-select: none;
+    }
 
     .context-tools-bar {
       display: none;
@@ -979,7 +1305,10 @@
       background: var(--bg-surface);
       border: 1px solid var(--border);
     }
-    .context-tools-bar.active { display: flex; }
+
+    .context-tools-bar.active {
+      display: flex;
+    }
 
     .ctx-pill {
       display: inline-flex;
@@ -995,7 +1324,11 @@
       cursor: pointer;
       white-space: nowrap;
     }
-    .ctx-pill:hover { border-color: var(--accent); }
+
+    .ctx-pill:hover {
+      border-color: var(--accent);
+    }
+
     .ctx-pill.running {
       border-color: var(--accent);
       background: var(--accent-soft);
@@ -1021,7 +1354,10 @@
       box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
       cursor: pointer;
     }
-    .pomo-floating-pill.visible { display: inline-flex; }
+
+    .pomo-floating-pill.visible {
+      display: inline-flex;
+    }
 
     /* PULL TO REFRESH */
     .pull-refresh-ind {
@@ -1036,7 +1372,10 @@
       background: var(--accent-soft);
       border-radius: 10px;
     }
-    .pull-refresh-ind.show { display: flex; }
+
+    .pull-refresh-ind.show {
+      display: flex;
+    }
 
     /* SMART FORMATTING BAR ABOVE KEYBOARD */
     .smart-format-bar {
@@ -1053,13 +1392,18 @@
       border-top: 1px solid var(--border);
       box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.25);
     }
-    .smart-format-bar.visible { display: flex; }
 
-    .sfb-fixed-left, .sfb-fixed-right {
+    .smart-format-bar.visible {
+      display: flex;
+    }
+
+    .sfb-fixed-left,
+    .sfb-fixed-right {
       flex-shrink: 0;
       display: flex;
       align-items: center;
     }
+
     .sfb-slash-btn {
       width: 38px;
       height: 36px;
@@ -1074,6 +1418,7 @@
       align-items: center;
       justify-content: center;
     }
+
     .sfb-scroll {
       flex: 1;
       min-width: 0;
@@ -1084,7 +1429,10 @@
       scrollbar-width: none;
       padding: 0 2px;
     }
-    .sfb-scroll::-webkit-scrollbar { display: none; }
+
+    .sfb-scroll::-webkit-scrollbar {
+      display: none;
+    }
 
     .sfb-btn {
       flex-shrink: 0;
@@ -1103,6 +1451,7 @@
       justify-content: center;
       gap: 4px;
     }
+
     .sfb-btn.active {
       background: var(--accent-soft);
       border-color: var(--accent);
@@ -1110,9 +1459,17 @@
     }
 
     @keyframes sfbPopUp {
-      from { opacity: 0; transform: translateY(8px) scale(0.96); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
+      from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.96);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
     }
+
     .sfb-color-popover {
       position: fixed;
       z-index: 10000;
@@ -1127,7 +1484,11 @@
       min-width: 176px;
       animation: sfbPopUp 0.16s cubic-bezier(0.22, 1, 0.36, 1);
     }
-    .sfb-color-popover.open { display: flex; }
+
+    .sfb-color-popover.open {
+      display: flex;
+    }
+
     .sfb-color-opt {
       display: flex;
       align-items: center;
@@ -1143,7 +1504,11 @@
       cursor: pointer;
       text-align: left;
     }
-    .sfb-color-opt:hover { background: var(--bg-card-hover); }
+
+    .sfb-color-opt:hover {
+      background: var(--bg-card-hover);
+    }
+
     .color-dot {
       width: 18px;
       height: 18px;
@@ -1173,7 +1538,11 @@
       overflow-y: auto;
       animation: sfbPopUp 0.16s cubic-bezier(0.22, 1, 0.36, 1);
     }
-    .sfb-popup.open { display: flex; }
+
+    .sfb-popup.open {
+      display: flex;
+    }
+
     .slash-cmd-item {
       display: flex;
       align-items: center;
@@ -1190,7 +1559,11 @@
       cursor: pointer;
       text-align: left;
     }
-    .slash-cmd-item:hover { background: var(--bg-card-hover); }
+
+    .slash-cmd-item:hover {
+      background: var(--bg-card-hover);
+    }
+
     .slash-cmd-tag {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 12px;
@@ -1208,6 +1581,7 @@
       border: 1px solid var(--border);
       width: fit-content;
     }
+
     .seg-btn {
       padding: 7px 14px;
       border-radius: 8px;
@@ -1218,7 +1592,11 @@
       font-weight: 700;
       cursor: pointer;
     }
-    .seg-btn.active { background: var(--accent-soft); color: var(--accent); }
+
+    .seg-btn.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
 
     /* FLASHCARDS SWIPEABLE */
     .flashcard-stage {
@@ -1248,8 +1626,91 @@
       touch-action: none;
       cursor: crosshair;
     }
+
+    /* ACCOUNT PROFILE BADGE & MENU */
+    .account-badge-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 10px 4px 5px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .account-avatar-wrap {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #FFFFFF;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .account-avatar-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
+    }
+    .account-badge-name {
+      max-width: 105px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .account-menu-popover {
+      display: none;
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      width: 245px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+      padding: 8px;
+      z-index: 250;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .account-menu-popover.open {
+      display: flex;
+    }
+    .account-menu-hdr {
+      padding: 6px 8px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .account-menu-row {
+      padding: 6px 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .note-author-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: -2px;
+      margin-bottom: 4px;
+    }
+    .group-author-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11.5px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
   </style>
 </head>
+
 <body>
   <!-- SLIDE-OVER DRAWER (SAMSUNG NOTES STYLE) -->
   <div class="drawer-backdrop" id="drawerBackdrop" onclick="app.closeDrawer()"></div>
@@ -1263,13 +1724,21 @@
         </div>
       </div>
       <button class="icon-btn" onclick="app.closeDrawer(); app.switchEnv('settings');" title="Impostazioni">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z" />
+        </svg>
       </button>
     </div>
 
     <button class="drawer-item active" id="drawerAllBtn" onclick="app.selectFolderFilter('all')">
       <span class="drawer-item-left">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+        </svg>
         <span>Tutte le note</span>
       </span>
       <span class="drawer-count" id="drawerAllCount">0</span>
@@ -1277,7 +1746,13 @@
 
     <button class="drawer-item" id="drawerGroupsBtn" onclick="app.selectFolderFilter('groups')">
       <span class="drawer-item-left">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
         <span>Note condivise (FlowGroups)</span>
       </span>
       <span class="drawer-count" id="drawerGroupsCount">0</span>
@@ -1285,7 +1760,11 @@
 
     <button class="drawer-item" id="drawerTrashBtn" onclick="app.selectFolderFilter('trash')">
       <span class="drawer-item-left">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6" />
+          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        </svg>
         <span>Cestino</span>
       </span>
       <span class="drawer-count" id="drawerTrashCount">0</span>
@@ -1296,14 +1775,23 @@
     <div id="drawerFoldersTree" style="display:flex; flex-direction:column; gap:2px;"></div>
 
     <button class="btn btn-sm" style="margin-top:8px; width:100%;" onclick="app.createFolderPrompt()">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19" />
+        <line x1="5" y1="12" x2="19" y2="12" />
+      </svg>
       Nuova Cartella / Materia
     </button>
   </aside>
 
   <!-- PILLOLA POMODORO FLOTTANTE (SEMPRE VISIBILE QUANDO ATTIVO) -->
-  <button class="pomo-floating-pill" id="pomoFloatingPill" onclick="app.togglePomodoro()" title="Metti in pausa / Riprendi Pomodoro">
-    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+  <button class="pomo-floating-pill" id="pomoFloatingPill" onclick="app.togglePomodoro()"
+    title="Metti in pausa / Riprendi Pomodoro">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+      stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
     <span id="pomoPillTimer">25:00</span>
     <span id="pomoPillSubject" style="color:var(--text-muted); font-weight:600;"></span>
   </button>
@@ -1319,20 +1807,38 @@
         </div>
       </div>
       <button class="nav-btn active" data-nav="flownotes" onclick="app.switchEnv('flownotes')">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+        </svg>
         <span>FlowNotes</span>
       </button>
       <button class="nav-btn" data-nav="flowtime" onclick="app.switchEnv('flowtime')">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
         <span>FlowTime</span>
       </button>
       <button class="nav-btn" data-nav="whis" onclick="app.switchEnv('whis')">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path
+            d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
+        </svg>
         <span>Whis</span>
       </button>
       <div style="flex:1"></div>
       <button class="nav-btn" data-nav="settings" onclick="app.switchEnv('settings')">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3" />
+          <path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z" />
+        </svg>
         <span>Impostazioni</span>
       </button>
     </aside>
@@ -1342,17 +1848,37 @@
       <header class="global-topbar">
         <div class="topbar-left" style="flex:1; min-width:0;">
           <button class="icon-btn" id="drawerTriggerBtn" onclick="app.openDrawer()" title="Menu Cartelle">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
           </button>
           <div class="breadcrumb-bar" id="topbarBreadcrumb">
             <button class="bc-crumb current" onclick="app.selectFolderFilter('all')">Quaderno</button>
           </div>
         </div>
-        <div class="topbar-actions">
-          <button class="pill-status" onclick="app.syncAllWithDrive(true)" title="Sincronizza con Google Drive">
-            <span class="pill-dot" id="driveDot"></span>
-            <span id="driveStatusText">Drive Offline</span>
+        <div class="topbar-actions" style="position:relative;">
+          <button class="account-badge-btn" id="accountBadgeBtn" onclick="app.toggleAccountMenu(event)"
+            title="Account Google & Stato Sincronizzazione">
+            <span class="account-avatar-wrap" id="accountAvatarWrap">G</span>
+            <span class="account-badge-name" id="accountBadgeName">Accedi</span>
+            <span class="pill-dot warn" id="driveDot"></span>
           </button>
+          <div class="account-menu-popover" id="accountMenuPopover">
+            <div class="account-menu-hdr">
+              <div id="accountMenuName" style="font-weight:700; font-size:13px;">Account Google</div>
+              <div id="accountMenuEmail" class="muted" style="font-size:11.5px;">Non connesso</div>
+            </div>
+            <div class="account-menu-row" id="accountMenuGemini">Chiave Gemini: Mancante</div>
+            <button class="menu-action" onclick="app.closeAccountMenu(); app.syncAllWithDrive(true);">
+              <span>Sincronizza ora</span>
+            </button>
+            <button class="menu-action" id="accountMenuAuthBtn" onclick="app.closeAccountMenu(); app.handleAccountAuthAction();">
+              <span>Accedi con Google</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -1362,22 +1888,37 @@
           <!-- A) VISTA LISTA / GRIGLIA -->
           <div id="fnListContainer" style="display:flex; flex-direction:column; gap:12px;">
             <div class="pull-refresh-ind" id="pullRefreshInd">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
               <span id="pullRefreshText">Trascina per sincronizzare...</span>
             </div>
 
             <!-- Strumenti Contestuali Materia (Pomodoro + Esame + Flashcard) -->
             <div class="context-tools-bar" id="subjectContextBar">
               <button class="ctx-pill" id="ctxPomoBtn" onclick="app.toggleContextualPomodoro()">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
                 <span id="ctxPomoLbl">25:00</span>
               </button>
               <button class="ctx-pill" id="ctxExamBtn" onclick="app.editSubjectExam()">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
+                  <path d="M6 12v5c3 3 9 3 12 0v-5" />
+                </svg>
                 <span id="ctxExamLbl">Imposta Esame</span>
               </button>
               <button class="ctx-pill" id="ctxFlashBtn" onclick="app.openSubjectFlashcards()">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                </svg>
                 <span>Flashcard</span>
               </button>
             </div>
@@ -1385,21 +1926,37 @@
             <div class="notes-list-header">
               <div class="row grow" style="gap:8px; flex-wrap:nowrap;">
                 <button class="icon-btn" onclick="app.openDrawer()" title="Apri Cartelle">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  </svg>
                 </button>
-                <input type="text" id="notesSearchInput" placeholder="Cerca note per titolo, materia o testo..." oninput="app.renderNotesList()">
-                <button class="icon-btn" id="layoutToggleBtn" onclick="app.toggleNotesLayout()" title="Cambia vista Griglia / Lista">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                <input type="text" id="notesSearchInput" placeholder="Cerca note per titolo, materia o testo..."
+                  oninput="app.renderNotesList()">
+                <button class="icon-btn" id="layoutToggleBtn" onclick="app.toggleNotesLayout()"
+                  title="Cambia vista Griglia / Lista">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="7" height="7" />
+                    <rect x="14" y="3" width="7" height="7" />
+                    <rect x="14" y="14" width="7" height="7" />
+                    <rect x="3" y="14" width="7" height="7" />
+                  </svg>
                 </button>
               </div>
             </div>
             <div class="row" style="justify-content:space-between;">
               <span class="muted" id="notesCountLbl">0 note</span>
-              <button class="btn btn-sm btn-danger" id="emptyTrashBtn" style="display:none;" onclick="app.emptyTrash()">Svuota Cestino</button>
+              <button class="btn btn-sm btn-danger" id="emptyTrashBtn" style="display:none;"
+                onclick="app.emptyTrash()">Svuota Cestino</button>
             </div>
             <div id="notesListBox" class="notes-grid"></div>
             <button class="fab-btn" id="newNoteFab" onclick="app.createNewNote()" title="Nuova Nota">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
             </button>
           </div>
 
@@ -1407,11 +1964,18 @@
           <div id="fnGroupsContainer" class="card" style="display:none;">
             <div class="card-header">
               <div class="card-title">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </svg>
                 FlowGroups (Drive Condiviso)
               </div>
               <div class="row">
-                <button class="btn btn-sm btn-primary" onclick="app.openGooglePickerForGroup()">Seleziona con Picker</button>
+                <button class="btn btn-sm btn-primary" onclick="app.openGooglePickerForGroup()">Seleziona con
+                  Picker</button>
                 <button class="btn btn-sm" onclick="app.joinGroupByPrompt()">Unisciti con ID/Link</button>
               </div>
             </div>
@@ -1427,55 +1991,110 @@
             <div class="editor-topbar">
               <div class="editor-topbar-left">
                 <button class="icon-btn ghost" onclick="app.closeEditor()" title="Torna alla lista">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="19" y1="12" x2="5" y2="12" />
+                    <polyline points="12 19 5 12 12 5" />
+                  </svg>
                 </button>
-                <button class="editor-subj-crumb" id="editorSubjectCrumb" onclick="app.openFolderPickerForNote()" title="Cambia Materia / Cartella">Generale</button>
+                <button class="editor-subj-crumb" id="editorSubjectCrumb" onclick="app.openFolderPickerForNote()"
+                  title="Cambia Materia / Cartella">Generale</button>
                 <span class="autosave-badge" id="autoSaveLbl">Salvato</span>
               </div>
 
               <div class="editor-actions-right">
                 <button class="icon-btn ghost" onclick="app.openRsvp()" title="RSVP Speed-Reading">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
                 </button>
-                <button class="icon-btn ghost" id="toggleRecordBtn" onclick="app.toggleAulaBar()" title="Registra / Detta in nota">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                <button class="icon-btn ghost" id="toggleRecordBtn" onclick="app.toggleAulaBar()"
+                  title="Registra / Detta in nota">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                    <line x1="12" y1="19" x2="12" y2="22" />
+                  </svg>
                 </button>
-                <button class="icon-btn ghost" id="moreMenuBtn" onclick="app.toggleEditorMoreMenu(event)" title="Altre azioni">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+                <button class="icon-btn ghost" id="moreMenuBtn" onclick="app.toggleEditorMoreMenu(event)"
+                  title="Altre azioni">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="5" r="1.5" />
+                    <circle cx="12" cy="12" r="1.5" />
+                    <circle cx="12" cy="19" r="1.5" />
+                  </svg>
                 </button>
 
                 <div class="editor-more-menu" id="editorMoreMenu">
                   <label class="menu-action" style="cursor:pointer;">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                      <circle cx="12" cy="13" r="4" />
+                    </svg>
                     <span>Scatta Foto / OCR LaTeX</span>
-                    <input type="file" id="ocrImageInput" accept="image/*" capture="environment" style="display:none" onchange="app.runOcrFromFile(event)">
+                    <input type="file" id="ocrImageInput" accept="image/*" capture="environment" style="display:none"
+                      onchange="app.runOcrFromFile(event)">
                   </label>
                   <button class="menu-action" onclick="app.openSketchModal()">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/></svg>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 19l7-7 3 3-7 7-3-3z" />
+                      <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
+                      <path d="M2 2l7.586 7.586" />
+                    </svg>
                     <span>Disegna Schema / S-Pen</span>
                   </button>
                   <button class="menu-action" onclick="app.openFolderPickerForNote()">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
                     <span>Cambia Materia / Cartella</span>
                   </button>
                   <button class="menu-action" onclick="app.publishActiveNoteToGroup()">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                    </svg>
                     <span>Pubblica in FlowGroup</span>
                   </button>
                   <button class="menu-action" onclick="app.insertTimestampMarker()">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
                     <span>Inserisci [HH:MM:SS]</span>
                   </button>
                   <button class="menu-action" onclick="app.exportActiveNoteMd()">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
                     <span>Esporta Markdown (.md)</span>
                   </button>
-                  <button class="menu-action" id="restoreNoteBtn" style="display:none;" onclick="app.restoreCurrentNote()">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                  <button class="menu-action" id="restoreNoteBtn" style="display:none;"
+                    onclick="app.restoreCurrentNote()">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="1 4 1 10 7 10" />
+                      <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                    </svg>
                     <span>Ripristina dal Cestino</span>
                   </button>
                   <button class="menu-action danger" onclick="app.deleteCurrentNote()">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                      stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
                     <span id="deleteNoteMenuLbl">Sposta nel Cestino</span>
                   </button>
                 </div>
@@ -1502,8 +2121,10 @@
                     <option value="natural">Dettatura Naturale</option>
                     <option value="code">Dettatura Code (IT+Tech)</option>
                   </select>
-                  <button class="btn btn-primary btn-sm" id="aulaStartBtn" onclick="app.startNoteRecording()">Avvia</button>
-                  <button class="btn btn-danger btn-sm" id="aulaStopBtn" onclick="app.stopNoteRecording()" disabled>Termina &amp; Inserisci</button>
+                  <button class="btn btn-primary btn-sm" id="aulaStartBtn"
+                    onclick="app.startNoteRecording()">Avvia</button>
+                  <button class="btn btn-danger btn-sm" id="aulaStopBtn" onclick="app.stopNoteRecording()"
+                    disabled>Termina &amp; Inserisci</button>
                 </div>
                 <div class="muted" id="aulaStatusMsg">Registra o detta direttamente in questa nota.</div>
               </div>
@@ -1513,92 +2134,165 @@
               </div>
 
               <!-- TITOLO GRANDE DENTRO IL FOGLIO + RIGA DATA/MATERIA -->
-              <textarea id="noteTitleInput" class="sheet-title-input" rows="1" placeholder="Titolo della nota..." oninput="app.autoResizeTitle(); app.scheduleAutoSave();"></textarea>
+              <textarea id="noteTitleInput" class="sheet-title-input" rows="1" placeholder="Titolo della nota..."
+                oninput="app.autoResizeTitle(); app.scheduleAutoSave();"></textarea>
+              <div id="noteAuthorMeta" class="note-author-meta" style="display:none;"></div>
               <div class="sheet-meta-row">
                 <span id="sheetDateLbl">Oggi</span>
                 <span>·</span>
-                <span class="subject-chip" id="sheetSubjectChip" onclick="app.openFolderPickerForNote()" style="cursor:pointer;">Generale</span>
+                <span class="subject-chip" id="sheetSubjectChip" onclick="app.openFolderPickerForNote()"
+                  style="cursor:pointer;">Generale</span>
               </div>
 
               <!-- EDITOR VISUALE PULITO (CONTENTEDITABLE RICH TEXT + KATEX LIVE) -->
-              <div id="noteVisualEditor" class="visual-editor" contenteditable="true" data-placeholder="Tocca qui per scrivere gli appunti o digita / per i comandi..." oninput="app.onVisualEditorInput(event)" onfocus="app.showSmartBar(true)" onblur="app.onVisualEditorBlur()" onkeyup="app.updateFormatStates()" onmouseup="app.updateFormatStates()"></div>
+              <div id="noteVisualEditor" class="visual-editor" contenteditable="true"
+                data-placeholder="Tocca qui per scrivere gli appunti o digita / per i comandi..."
+                oninput="app.onVisualEditorInput(event)" onfocus="app.showSmartBar(true)"
+                onblur="app.onVisualEditorBlur()" onkeyup="app.updateFormatStates()"
+                onmouseup="app.updateFormatStates()"></div>
             </div>
 
             <!-- POPUP MENU / (STILE BOT TELEGRAM) -->
             <div class="sfb-popup" id="slashMenuPopup">
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('formula')"><span>Formula Matematica (KaTeX)</span><span class="slash-cmd-tag">/formula</span></button>
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('matrice')"><span>Matrice (N×M)</span><span class="slash-cmd-tag">/matrice</span></button>
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('ocr')"><span>Scatta Foto / OCR Lavagna</span><span class="slash-cmd-tag">/ocr</span></button>
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('disegno')"><span>Disegna Schema / S-Pen</span><span class="slash-cmd-tag">/disegno</span></button>
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('todo')"><span>Lista Checkbox Interattiva</span><span class="slash-cmd-tag">/todo</span></button>
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('codice')"><span>Blocco Codice</span><span class="slash-cmd-tag">/codice</span></button>
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('audio')"><span>Marcatore Audio [HH:MM:SS]</span><span class="slash-cmd-tag">/audio</span></button>
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('riassumi')"><span>Riassumi / Formatta con Gemini</span><span class="slash-cmd-tag">/riassumi</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.runSlashCmd('formula')"><span>Formula Matematica (KaTeX)</span><span
+                  class="slash-cmd-tag">/formula</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.runSlashCmd('matrice')"><span>Matrice (N×M)</span><span
+                  class="slash-cmd-tag">/matrice</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.runSlashCmd('ocr')"><span>Scatta Foto / OCR Lavagna</span><span
+                  class="slash-cmd-tag">/ocr</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.runSlashCmd('disegno')"><span>Disegna Schema / S-Pen</span><span
+                  class="slash-cmd-tag">/disegno</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.runSlashCmd('todo')"><span>Lista Checkbox Interattiva</span><span
+                  class="slash-cmd-tag">/todo</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.runSlashCmd('codice')"><span>Blocco Codice</span><span
+                  class="slash-cmd-tag">/codice</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.runSlashCmd('audio')"><span>Marcatore Audio [HH:MM:SS]</span><span
+                  class="slash-cmd-tag">/audio</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.runSlashCmd('riassumi')"><span>Riassumi / Formatta con Gemini</span><span
+                  class="slash-cmd-tag">/riassumi</span></button>
             </div>
 
             <!-- POPUP DIMENSIONE TESTO -->
             <div class="sfb-popup" id="textSizePopup" style="max-width:210px;">
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.applyBlockSize('h1')"><strong style="font-size:17px;">Titolo Grande</strong><span class="slash-cmd-tag">H1</span></button>
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.applyBlockSize('h2')"><strong style="font-size:15px;">Sottotitolo</strong><span class="slash-cmd-tag">H2</span></button>
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.applyBlockSize('p')"><span>Testo Normale</span><span class="slash-cmd-tag">P</span></button>
-              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.applyBlockSize('small')"><span style="font-size:12px;">Testo Piccolo</span><span class="slash-cmd-tag">S</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.applyBlockSize('h1')"><strong style="font-size:17px;">Titolo Grande</strong><span
+                  class="slash-cmd-tag">H1</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.applyBlockSize('h2')"><strong style="font-size:15px;">Sottotitolo</strong><span
+                  class="slash-cmd-tag">H2</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.applyBlockSize('p')"><span>Testo Normale</span><span
+                  class="slash-cmd-tag">P</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()"
+                onclick="app.applyBlockSize('small')"><span style="font-size:12px;">Testo Piccolo</span><span
+                  class="slash-cmd-tag">S</span></button>
             </div>
 
             <!-- POPOVER VERTICALE COLORE CARATTERE -->
             <div class="sfb-color-popover" id="textColorPopover">
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('inherit')">
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyTextColor('inherit')">
                 <span class="color-dot" style="background:transparent;">
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#EF4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/></svg>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#EF4444" stroke-width="2.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="4" y1="20" x2="20" y2="4" />
+                  </svg>
                 </span>
                 <span>Predefinito (Tema)</span>
               </button>
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#EF4444')"><span class="color-dot" style="background:#EF4444;"></span><span>Rosso</span></button>
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#3B82F6')"><span class="color-dot" style="background:#3B82F6;"></span><span>Blu</span></button>
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#10B981')"><span class="color-dot" style="background:#10B981;"></span><span>Verde</span></button>
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#F59E0B')"><span class="color-dot" style="background:#F59E0B;"></span><span>Arancione</span></button>
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#A855F7')"><span class="color-dot" style="background:#A855F7;"></span><span>Viola</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyTextColor('#EF4444')"><span class="color-dot"
+                  style="background:#EF4444;"></span><span>Rosso</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyTextColor('#3B82F6')"><span class="color-dot"
+                  style="background:#3B82F6;"></span><span>Blu</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyTextColor('#10B981')"><span class="color-dot"
+                  style="background:#10B981;"></span><span>Verde</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyTextColor('#F59E0B')"><span class="color-dot"
+                  style="background:#F59E0B;"></span><span>Arancione</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyTextColor('#A855F7')"><span class="color-dot"
+                  style="background:#A855F7;"></span><span>Viola</span></button>
             </div>
 
             <!-- POPOVER VERTICALE EVIDENZIATORE -->
             <div class="sfb-color-popover" id="hiliteColorPopover">
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('transparent', 'inherit')">
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyHighlight('transparent', 'inherit')">
                 <span class="color-dot" style="background:transparent;">
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#EF4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/></svg>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#EF4444" stroke-width="2.5"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="4" y1="20" x2="20" y2="4" />
+                  </svg>
                 </span>
                 <span>Trasparente / Rimuovi sfondo</span>
               </button>
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#FEF08A', '#0F172A')"><span class="color-dot" style="background:#FEF08A;"></span><span>Giallo</span></button>
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#BBF7D0', '#0F172A')"><span class="color-dot" style="background:#BBF7D0;"></span><span>Verde menta</span></button>
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#BAE6FD', '#0F172A')"><span class="color-dot" style="background:#BAE6FD;"></span><span>Azzurro</span></button>
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#FBCFE8', '#0F172A')"><span class="color-dot" style="background:#FBCFE8;"></span><span>Rosa</span></button>
-              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#E9D5FF', '#0F172A')"><span class="color-dot" style="background:#E9D5FF;"></span><span>Viola chiaro</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyHighlight('#FEF08A', '#0F172A')"><span class="color-dot"
+                  style="background:#FEF08A;"></span><span>Giallo</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyHighlight('#BBF7D0', '#0F172A')"><span class="color-dot"
+                  style="background:#BBF7D0;"></span><span>Verde menta</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyHighlight('#BAE6FD', '#0F172A')"><span class="color-dot"
+                  style="background:#BAE6FD;"></span><span>Azzurro</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyHighlight('#FBCFE8', '#0F172A')"><span class="color-dot"
+                  style="background:#FBCFE8;"></span><span>Rosa</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()"
+                onclick="app.applyHighlight('#E9D5FF', '#0F172A')"><span class="color-dot"
+                  style="background:#E9D5FF;"></span><span>Viola chiaro</span></button>
             </div>
 
             <!-- UNICA SMART FORMATTING BAR SOPRA LA TASTIERA -->
             <div class="smart-format-bar" id="smartFormatBar">
               <div class="sfb-fixed-left">
-                <button class="sfb-slash-btn" onmousedown="event.preventDefault()" onclick="app.toggleSlashMenu()" title="Comandi rapidi /">/</button>
+                <button class="sfb-slash-btn" onmousedown="event.preventDefault()" onclick="app.toggleSlashMenu()"
+                  title="Comandi rapidi /">/</button>
               </div>
 
               <div class="sfb-scroll">
-                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.toggleTextSizePopup()" title="Dimensione carattere">T↕</button>
-                <button class="sfb-btn" id="sfbBoldBtn" onmousedown="event.preventDefault()" onclick="app.execFormat('bold')" title="Grassetto"><strong>B</strong></button>
-                <button class="sfb-btn" id="sfbItalicBtn" onmousedown="event.preventDefault()" onclick="app.execFormat('italic')" title="Corsivo"><span style="font-family: Georgia, 'Times New Roman', serif; font-style: italic; font-weight: 700; font-size: 17px;">S</span></button>
+                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.toggleTextSizePopup()"
+                  title="Dimensione carattere">T↕</button>
+                <button class="sfb-btn" id="sfbBoldBtn" onmousedown="event.preventDefault()"
+                  onclick="app.execFormat('bold')" title="Grassetto"><strong>B</strong></button>
+                <button class="sfb-btn" id="sfbItalicBtn" onmousedown="event.preventDefault()"
+                  onclick="app.execFormat('italic')" title="Corsivo"><span
+                    style="font-family: Georgia, 'Times New Roman', serif; font-style: italic; font-weight: 700; font-size: 17px;">S</span></button>
 
-                <button class="sfb-btn" id="sfbTextColorBtn" onmousedown="event.preventDefault()" onclick="app.toggleColorPopover('textColorPopover', this)" title="Colore carattere">
+                <button class="sfb-btn" id="sfbTextColorBtn" onmousedown="event.preventDefault()"
+                  onclick="app.toggleColorPopover('textColorPopover', this)" title="Colore carattere">
                   <span style="border-bottom:3px solid var(--accent); line-height:1.1;">A</span>
                 </button>
 
-                <button class="sfb-btn" id="sfbHiliteBtn" onmousedown="event.preventDefault()" onclick="app.toggleColorPopover('hiliteColorPopover', this)" title="Evidenziatore">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+                <button class="sfb-btn" id="sfbHiliteBtn" onmousedown="event.preventDefault()"
+                  onclick="app.toggleColorPopover('hiliteColorPopover', this)" title="Evidenziatore">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m9 11-6 6v3h9l3-3" />
+                    <path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4" />
+                  </svg>
                 </button>
 
-                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.execFormat('undo')" title="Annulla">↶</button>
-                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.execFormat('redo')" title="Ripeti">↷</button>
+                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.execFormat('undo')"
+                  title="Annulla">↶</button>
+                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.execFormat('redo')"
+                  title="Ripeti">↷</button>
               </div>
 
               <div class="sfb-fixed-right">
-                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.dismissKeyboard()" title="Chiudi tastiera">✓</button>
+                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.dismissKeyboard()"
+                  title="Chiudi tastiera">✓</button>
               </div>
             </div>
           </div>
@@ -1608,7 +2302,8 @@
         <section class="view" id="view-flowtime">
           <div class="row" style="justify-content:space-between;">
             <div class="seg-bar">
-              <button class="seg-btn active" id="ftSegFocus" onclick="app.switchFlowTimeTab('focus')">Focus &amp; Esami</button>
+              <button class="seg-btn active" id="ftSegFocus" onclick="app.switchFlowTimeTab('focus')">Focus &amp;
+                Esami</button>
               <button class="seg-btn" id="ftSegCal" onclick="app.switchFlowTimeTab('cal')">Calendario</button>
             </div>
           </div>
@@ -1619,7 +2314,11 @@
             <div class="card">
               <div class="card-header">
                 <div class="card-title">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
                   Pomodoro Focus
                 </div>
                 <select id="pomoSubjectSelect" style="width:160px;"></select>
@@ -1640,7 +2339,11 @@
             <div class="card">
               <div class="card-header">
                 <div class="card-title">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 10v6M2 10l10-5 10 5-10 5z" />
+                    <path d="M6 12v5c3 3 9 3 12 0v-5" />
+                  </svg>
                   Prossimi Esami
                 </div>
                 <button class="btn btn-sm btn-primary" onclick="app.addExamPrompt()">+ Esame</button>
@@ -1653,15 +2356,27 @@
           <div id="ftCalSection" class="card" style="display:none;">
             <div class="cal-header">
               <div class="card-title">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg>
                 <span id="calMonthLbl">Calendario</span>
               </div>
               <div class="row" style="gap:6px;">
                 <button class="icon-btn" onclick="app.shiftCalMonth(-1)" title="Mese precedente">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="15 18 9 12 15 6" />
+                  </svg>
                 </button>
                 <button class="icon-btn" onclick="app.shiftCalMonth(1)" title="Mese successivo">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
                 </button>
                 <button class="btn btn-sm btn-primary" onclick="app.openEventModal()">+ Evento</button>
               </div>
@@ -1692,14 +2407,22 @@
           <div class="card" style="flex:1;">
             <div class="card-header">
               <div class="card-title">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path
+                    d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
+                </svg>
                 Whis — Assistente Studio In-Loco
               </div>
               <span class="muted">Basato sulle tue note</span>
             </div>
-            <div id="whisChatBox" style="display:flex; flex-direction:column; gap:10px; min-height:260px; flex:1; max-height:58dvh; overflow-y:auto;"></div>
+            <div id="whisChatBox"
+              style="display:flex; flex-direction:column; gap:10px; min-height:260px; flex:1; max-height:58dvh; overflow-y:auto;">
+            </div>
             <div class="row">
-              <input type="text" id="whisPromptInput" class="grow" placeholder="Chiedi a Whis un concetto delle tue note..." onkeydown="if(event.key==='Enter') app.askWhis()">
+              <input type="text" id="whisPromptInput" class="grow"
+                placeholder="Chiedi a Whis un concetto delle tue note..."
+                onkeydown="if(event.key==='Enter') app.askWhis()">
               <button class="btn btn-primary" onclick="app.askWhis()">Invia</button>
             </div>
           </div>
@@ -1710,8 +2433,10 @@
           <div class="grid-2">
             <div class="card">
               <div class="card-title">Google Drive Sync Automatico (FlowLocal_Sync)</div>
-              <p class="muted">Collega lo stesso account Google Drive del PC per sincronizzare automaticamente note, cartelle, calendario, esami e Gemini API Key.</p>
-              <input type="text" id="googleClientIdInput" placeholder="Google OAuth Client ID (.apps.googleusercontent.com)">
+              <p class="muted">Collega lo stesso account Google Drive del PC per sincronizzare automaticamente note,
+                cartelle, calendario, esami e Gemini API Key.</p>
+              <input type="text" id="googleClientIdInput"
+                placeholder="Google OAuth Client ID (.apps.googleusercontent.com)">
               <input type="text" id="googlePickerKeyInput" placeholder="Google API Key per Picker (opzionale)">
               <div class="row">
                 <button class="btn btn-primary btn-sm" onclick="app.connectGoogleDrive()">Connetti Google Drive</button>
@@ -1721,11 +2446,13 @@
 
             <div class="card">
               <div class="card-title">Gemini API Key (Sync Automatico o Manuale)</div>
-              <p class="muted" id="geminiSyncHint">Se hai salvato la chiave su FlowLocal PC e connesso Drive, viene importata automaticamente da user_config.json.</p>
+              <p class="muted" id="geminiSyncHint">Se hai salvato la chiave su FlowLocal PC e connesso Drive, viene
+                importata automaticamente da user_config.json.</p>
               <input type="password" id="geminiKeyInput" placeholder="AIza... (compilata automaticamente da Drive)">
               <div class="row">
                 <button class="btn btn-primary btn-sm" onclick="app.saveSettings()">Salva Impostazioni</button>
-                <a class="btn btn-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">AI Studio</a>
+                <a class="btn btn-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">AI
+                  Studio</a>
               </div>
             </div>
 
@@ -1746,15 +2473,28 @@
     <!-- BOTTOM NAVIGATION (MOBILE < 768px) — ONLY 3 ITEMS -->
     <nav class="bottom-nav">
       <button class="bnav-btn active" data-nav="flownotes" onclick="app.onFlowNotesNavTap()">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+        </svg>
         <span>FlowNotes</span>
       </button>
       <button class="bnav-btn" data-nav="flowtime" onclick="app.switchEnv('flowtime')">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+          <line x1="16" y1="2" x2="16" y2="6" />
+          <line x1="8" y1="2" x2="8" y2="6" />
+          <line x1="3" y1="10" x2="21" y2="10" />
+        </svg>
         <span>FlowTime</span>
       </button>
       <button class="bnav-btn" data-nav="whis" onclick="app.switchEnv('whis')">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path
+            d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
+        </svg>
         <span>Whis</span>
       </button>
     </nav>
@@ -1770,7 +2510,8 @@
       <div class="rsvp-stage" id="rsvpStage">Pronto</div>
       <div class="row">
         <span class="muted">Velocità: <strong id="rsvpWpmLbl">300</strong> WPM</span>
-        <input type="range" id="rsvpWpmSlider" min="150" max="700" step="25" value="300" class="grow" oninput="app.setRsvpWpm(this.value)">
+        <input type="range" id="rsvpWpmSlider" min="150" max="700" step="25" value="300" class="grow"
+          oninput="app.setRsvpWpm(this.value)">
       </div>
       <div class="row" style="justify-content:center;">
         <button class="btn btn-primary" id="rsvpPlayBtn" onclick="app.toggleRsvpPlay()">Avvia</button>
@@ -1809,7 +2550,8 @@
     <div class="modal-box">
       <div class="card-header">
         <div class="card-title">Sposta in Materia / Cartella</div>
-        <button class="btn btn-sm" onclick="document.getElementById('folderPickerModal').classList.remove('open')">Chiudi</button>
+        <button class="btn btn-sm"
+          onclick="document.getElementById('folderPickerModal').classList.remove('open')">Chiudi</button>
       </div>
       <select id="moveNoteFolderSelect"></select>
       <button class="btn btn-primary" onclick="app.applyNoteFolderMove()">Conferma</button>
@@ -1854,7 +2596,8 @@
       <canvas id="sketchCanvas" class="sketch-canvas"></canvas>
       <div class="row">
         <button class="btn" style="flex:1;" onclick="app.insertSketchToNote()">Inserisci nella Nota</button>
-        <button class="btn btn-primary" style="flex:1;" onclick="app.convertSketchWithGemini()">Converti in LaTeX/Testo</button>
+        <button class="btn btn-primary" style="flex:1;" onclick="app.convertSketchWithGemini()">Converti in
+          LaTeX/Testo</button>
       </div>
     </div>
   </div>
@@ -1866,8 +2609,10 @@
         <div class="card-title">Inserisci Formula (KaTeX)</div>
         <button class="btn btn-sm" onclick="app.closeFormulaModal()">Chiudi</button>
       </div>
-      <input type="text" id="formulaInput" placeholder="Es. \int_0^\infty e^{-x}\,dx oppure \frac{a}{b}" oninput="app.updateFormulaPreview()">
-      <div id="formulaPreview" class="md-preview" style="min-height:56px; display:flex; align-items:center; justify-content:center;"></div>
+      <input type="text" id="formulaInput" placeholder="Es. \int_0^\infty e^{-x}\,dx oppure \frac{a}{b}"
+        oninput="app.updateFormulaPreview()">
+      <div id="formulaPreview" class="md-preview"
+        style="min-height:56px; display:flex; align-items:center; justify-content:center;"></div>
       <div class="row">
         <label class="row" style="font-size:12px; gap:6px; cursor:pointer;">
           <input type="checkbox" id="formulaBlockChk" style="width:auto;">
@@ -1893,6 +2638,21 @@
       code: "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. NON tradurre mai il discorso dell'utente in inglese: mantieni tutta la frase in italiano corretto lasciando in inglese solo i termini tecnici informatici pronunciati. Converti formule in LaTeX ($...$). Restituisci SOLO il testo rifinito senza tag."
     };
 
+    function obfuscateSyncSecret(raw, secret = SYNC_OBF_SECRET) {
+      if (!raw) return '';
+      try {
+        const rawBytes = new TextEncoder().encode(raw);
+        const enc = new TextEncoder().encode(secret);
+        let bin = '';
+        for (let i = 0; i < rawBytes.length; i++) {
+          bin += String.fromCharCode(rawBytes[i] ^ enc[i % enc.length]);
+        }
+        return btoa(bin);
+      } catch {
+        return '';
+      }
+    }
+
     function deobfuscateSyncSecret(b64, secret = SYNC_OBF_SECRET) {
       if (!b64) return '';
       try {
@@ -1906,6 +2666,42 @@
       } catch {
         return '';
       }
+    }
+
+    const AUTHOR_META_KEYS = [
+      'created_by_name', 'created_by_email', 'created_by_avatar',
+      'last_edited_by_name', 'last_edited_by_email', 'last_edited_at_utc'
+    ];
+
+    function parseMdFrontmatter(rawText) {
+      const text = rawText || '';
+      if (!text.startsWith('---\n') && !text.startsWith('---\r\n')) return { meta: {}, body: text };
+      const lines = text.split(/\r?\n/);
+      let endIdx = -1;
+      for (let i = 1; i < Math.min(lines.length, 40); i++) {
+        if (lines[i].trim() === '---') { endIdx = i; break; }
+      }
+      if (endIdx === -1) return { meta: {}, body: text };
+      const meta = {};
+      for (let i = 1; i < endIdx; i++) {
+        const idx = lines[i].indexOf(':');
+        if (idx > 0) {
+          const k = lines[i].slice(0, idx).trim();
+          const v = lines[i].slice(idx + 1).trim().replace(/^["']|["']$/g, '');
+          if (k) meta[k] = v;
+        }
+      }
+      const body = lines.slice(endIdx + 1).join('\n').replace(/^[\r\n]+/, '');
+      return { meta, body };
+    }
+
+    function buildMdWithFrontmatter(body, meta = {}) {
+      const fm = ['---'];
+      [...AUTHOR_META_KEYS, 'archived_by_name', 'archived_by_email', 'archived_at_utc'].forEach(k => {
+        if (meta[k]) fm.push(`${k}: ${String(meta[k]).replace(/\r?\n/g, ' ').trim()}`);
+      });
+      fm.push('---', '');
+      return fm.join('\n') + String(body || '').replace(/^[\r\n]+/, '');
     }
 
     const app = {
@@ -1930,7 +2726,7 @@
 
       // Flashcards & Sketch state
       fcDeck: [],
-      fcIdx: 0,
+       fcIdx: 0,
       fcFlipped: false,
       sketchCtx: null,
       sketchDrawing: false,
@@ -1948,6 +2744,7 @@
       googlePickerKey: localStorage.getItem('fl_google_picker_key') || '',
       accessToken: localStorage.getItem('fl_drive_token') || '',
       tokenExpiry: parseInt(localStorage.getItem('fl_drive_expiry') || '0', 10),
+      userProfile: JSON.parse(localStorage.getItem('fl_user_profile') || 'null'),
       tokenClient: null,
 
       // Recording / Wake Lock
@@ -2038,7 +2835,11 @@
         if (sel) sel.value = theme;
       },
 
-      setTheme(theme) { this.applyTheme(theme); },
+      setTheme(theme) {
+        this.applyTheme(theme);
+        localStorage.setItem('fl_account_cfg_ts', new Date().toISOString());
+        this.pushAccountConfig();
+      },
 
       saveSettings() {
         this.geminiKey = document.getElementById('geminiKeyInput').value.trim();
@@ -2047,6 +2848,9 @@
         localStorage.setItem('fl_gemini_key', this.geminiKey);
         localStorage.setItem('fl_google_client_id', this.googleClientId);
         localStorage.setItem('fl_google_picker_key', this.googlePickerKey);
+        localStorage.setItem('fl_account_cfg_ts', new Date().toISOString());
+        this.updateDrivePill();
+        this.pushAccountConfig();
         this.showToast('Impostazioni salvate');
       },
 
@@ -2154,7 +2958,7 @@
         document.getElementById('drawerBackdrop').classList.add('open');
       },
       closeDrawer() {
-        document.getElementById('sideDrawer').classList.remove('open');
+        document. getElementById('sideDrawer').classList.remove('open');
         document.getElementById('drawerBackdrop').classList.remove('open');
       },
 
@@ -2254,7 +3058,7 @@
               ${hasChildren ? `<span class="folder-chevron" onclick="app.toggleFolderExpand('${r.id}', event)">
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${isExp ? '<polyline points="6 9 12 15 18 9"/>' : '<polyline points="9 18 15 12 9 6"/>'}</svg>
               </span>` : '<span style="width:10px;"></span>'}
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="${this.esc(color)}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              <svg viewBox="0 0 24 24" width= "20" height="20" fill="none" stroke="${this.esc(color)}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
               <span>${this.esc(r.name)}</span>
             </span>
             <span class="drawer-count">${countForFolder(r)}</span>`;
@@ -2375,7 +3179,7 @@
         if (q) {
           list = list.filter(n =>
             (n.title || '').toLowerCase().includes(q) ||
-            (n.subject || '').toLowerCase().includes(q) ||
+            (n.subject || '').toLow erCase().includes(q) ||
             (n.content_markdown || '').toLowerCase().includes(q)
           );
         }
@@ -2401,7 +3205,7 @@
             <div class="note-card-snippet">${this.esc(snippet)}</div>
             <div class="note-card-meta">
               <span class="subject-chip">${this.esc(n.subject || 'Generale')}</span>
-              <span>${(n.updated_at || n.created_at || '').slice(0, 10)}</span>
+              <span>${(n.updated_at || n .created_at || '').slice(0, 10)}</span>
             </div>`;
           box.appendChild(div);
         });
@@ -2473,6 +3277,21 @@
         document.getElementById('sheetSubjectChip').textContent = subj;
         document.getElementById('sheetDateLbl').textContent = (n.updated_at || n.created_at || '').slice(0, 10) || 'Oggi';
 
+        const authorMetaEl = document.getElementById('noteAuthorMeta');
+        if (authorMetaEl) {
+          const cb = (n.created_by_name || '').trim();
+          const le = (n.last_edited_by_name || '').trim();
+          if (cb || le) {
+            const parts = [];
+            if (cb) parts.push(`Creata da ${cb}`);
+            if (le) parts.push(`Ultima modifica di ${le}`);
+            authorMetaEl.textContent = parts.join(' • ');
+            authorMetaEl.style.display = 'block';
+          } else {
+            authorMetaEl.style.display = 'none';
+          }
+        }
+
         const ed = document.getElementById('noteVisualEditor');
         ed.innerHTML = this.markdownToHtml(n.content_markdown || '');
 
@@ -2504,7 +3323,7 @@
         document.getElementById('aulaPanel').classList.remove('open');
         if (!skipSwitch) {
           const showGroups = this.activeFolderFilter === 'groups';
-          document.getElementById('fnListContainer').style.display = showGroups ? 'none' : 'flex';
+          document.getElementById('fnListContainer').style.display = showGroups ? 'none' : 'f lex';
           document.getElementById('fnGroupsContainer').style.display = showGroups ? 'flex' : 'none';
           this.renderDrawer();
           this.renderNotesList();
@@ -2536,11 +3355,19 @@
         }
 
         const isDesktopNote = !String(cur.id).startsWith('pwa_');
+        const p = this.userProfile || {};
+        const nowIso = new Date().toISOString();
         this.notes[idx] = {
           ...cur,
           title,
           content_markdown: body,
-          updated_at: new Date().toISOString(),
+          updated_at: nowIso,
+          created_by_name: cur.created_by_name || p.display_name || '',
+          created_by_email: cur.created_by_email || p.email || '',
+          created_by_avatar: cur.created_by_avatar || p.avatar_url || '',
+          last_edited_by_name: p.display_name || cur.last_edited_by_name || '',
+          last_edited_by_email: p.email || cur.last_edited_by_email || '',
+          last_edited_at_utc: nowIso,
           ...(isDesktopNote ? { source: 'pwa_edited' } : {})
         };
         await this.idbSet('notes', this.notes);
@@ -2859,7 +3686,7 @@
           const r = new FileReader();
           r.onload = () => resolve(r.result.split(',')[1]);
           r.onerror = reject;
-          r.readAsDataURL(blob);
+          r.readAsData URL(blob);
         });
       },
 
@@ -2872,7 +3699,7 @@
           this.showToast('Estrazione OCR con Gemini Vision...');
           const b64 = await this.blobToBase64(file);
           const out = await this.callGemini([
-            { text: 'Estrai il testo, le formule matematiche (in LaTeX $$...$$ o $...$) o tabelle (in Markdown) da questa immagine. Restituisci SOLO il contenuto strutturato senza commenti.' },
+            { text: 'Estrai il testo, le formule matematiche (in LaTeX $$...$$ o $...$) o tabelle (in Markdow da immagine. Restituisci SOLO il contenuto strutturato senza commenti.' },
             { inlineData: { mimeType: file.type || 'image/jpeg', data: b64 } }
           ]);
           this.insertHtmlAtCursor(this.markdownToHtml(out));
@@ -3904,38 +4731,139 @@
         box.scrollTop = box.scrollHeight;
       },
 
-      // ---------------- GOOGLE DRIVE BIDIRECTIONAL SYNC ----------------
+      // ---------------- GOOGLE ACCOUNT & DRIVE BIDIRECTIONAL SYNC ----------------
       updateDrivePill() {
         const ok = this.accessToken && Date.now() < this.tokenExpiry;
-        document.getElementById('driveDot').className = 'pill-dot ' + (ok ? 'ok' : 'warn');
-        document.getElementById('driveStatusText').textContent = ok ? 'Drive Sync' : 'Drive Offline';
+        const p = this.userProfile;
+        const dotEl = document.getElementById('driveDot');
+        if (dotEl) dotEl.className = 'pill-dot ' + (ok ? 'ok' : 'warn');
+
+        const nameEl = document.getElementById('accountBadgeName');
+        const avatarEl = document.getElementById('accountAvatarWrap');
+        const menuNameEl = document.getElementById('accountMenuName');
+        const menuEmailEl = document.getElementById('accountMenuEmail');
+        const menuGeminiEl = document.getElementById('accountMenuGemini');
+        const menuAuthBtn = document.getElementById('accountMenuAuthBtn');
+
+        const dispName = (p && (p.display_name || p.email)) || (ok ? 'Google Sync' : 'Accedi');
+        const shortName = dispName.includes(' ') ? dispName.split(' ')[0] : dispName;
+        const initials = (dispName.split(/\s+/).map(w => w[0] || '').join('').slice(0, 2) || 'G').toUpperCase();
+
+        if (nameEl) nameEl.textContent = shortName;
+        if (avatarEl) {
+          if (p && p.avatar_url) {
+            avatarEl.innerHTML = `<img src="${this.esc(p.avatar_url)}" alt="${this.esc(initials)}" referrerpolicy="no-referrer">`;
+          } else {
+            avatarEl.textContent = initials;
+          }
+        }
+        if (menuNameEl) menuNameEl.textContent = (p && p.display_name) || 'Account Google';
+        if (menuEmailEl) menuEmailEl.textContent = (p && p.email) || (ok ? 'Sessione attiva' : 'Non connesso');
+        if (menuGeminiEl) menuGeminiEl.textContent = this.geminiKey ? 'Chiave Gemini: Attiva (Sync)' : 'Chiave Gemini: Mancante';
+        if (menuAuthBtn) menuAuthBtn.innerHTML = `<span>${ok || (p && p.email) ? 'Disconnetti' : 'Accedi con Google'}</span>`;
       },
 
-      connectGoogleDrive() {
-        if (!this.googleClientId) {
-          this.showToast('Inserisci il Google OAuth Client ID');
-          return;
+      toggleAccountMenu(ev) {
+        if (ev) ev.stopPropagation();
+        this.updateDrivePill();
+        const pop = document.getElementById('accountMenuPopover');
+        if (pop) pop.classList.toggle('open');
+      },
+
+      closeAccountMenu() {
+        const pop = document.getElementById('accountMenuPopover');
+        if (pop) pop.classList.remove('open');
+      },
+
+      handleAccountAuthAction() {
+        const isLogged = (this.accessToken && Date.now() < this.tokenExpiry) || (this.userProfile && this.userProfile.email);
+        if (isLogged) {
+          this.disconnectGoogleAccount();
+        } else {
+          this.connectGoogleDrive(false);
         }
-        this.tokenClient = google.accounts.oauth2.initTokenClient({
-          client_id: this.googleClientId,
-          scope: 'https://www.googleapis.com/auth/drive.file',
-          callback: (resp) => {
-            if (resp.access_token) {
-              this.accessToken = resp.access_token;
-              this.tokenExpiry = Date.now() + ((parseInt(resp.expires_in, 10) || 3600) * 1000);
-              localStorage.setItem('fl_drive_token', this.accessToken);
-              localStorage.setItem('fl_drive_expiry', String(this.tokenExpiry));
-              this.updateDrivePill();
-              this.showToast('Google Drive connesso');
-              this.syncAllWithDrive(true);
+      },
+
+      disconnectGoogleAccount() {
+        this.accessToken = '';
+        this.tokenExpiry = 0;
+        this.userProfile = null;
+        localStorage.removeItem('fl_drive_token');
+        localStorage.removeItem('fl_drive_expiry');
+        localStorage.removeItem('fl_user_profile');
+        this.updateDrivePill();
+        this.showToast('Account Google disconnesso');
+      },
+
+      async fetchGoogleUserInfo(token) {
+        try {
+          const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (!res.ok) return null;
+          const data = await res.json();
+          const profile = {
+            user_id: data.sub || '',
+            display_name: data.name || data.given_name || data.email || 'Studente',
+            email: data.email || '',
+            avatar_url: data.picture || ''
+          };
+          this.userProfile = profile;
+          localStorage.setItem('fl_user_profile', JSON.stringify(profile));
+          this.updateDrivePill();
+          return profile;
+        } catch {
+          return null;
+        }
+      },
+
+      connectGoogleDrive(silent = false) {
+        if (!this.googleClientId) {
+          if (!silent) this.showToast('Inserisci il Google OAuth Client ID nelle Impostazioni');
+          return Promise.resolve(false);
+        }
+        if (!window.google || !google.accounts || !google.accounts.oauth2) {
+          if (!silent) this.showToast('Google Identity Services non ancora caricato');
+          return Promise.resolve(false);
+        }
+        return new Promise((resolve) => {
+          this.tokenClient = google.accounts.oauth2.initTokenClient({
+            client_id: this.googleClientId,
+            scope: 'openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive.file',
+            callback: async (resp) => {
+              if (resp && resp.access_token) {
+                this.accessToken = resp.access_token;
+                this.tokenExpiry = Date.now() + ((parseInt(resp.expires_in, 10) || 3600) * 1000);
+                localStorage.setItem('fl_drive_token', this.accessToken);
+                localStorage.setItem('fl_drive_expiry', String(this.tokenExpiry));
+                await this.fetchGoogleUserInfo(this.accessToken);
+                this.updateDrivePill();
+                if (!silent) {
+                  this.showToast('Account Google connesso');
+                  this.syncAllWithDrive(true);
+                }
+                resolve(true);
+              } else {
+                resolve(false);
+              }
             }
-          }
+          });
+          this.tokenClient.requestAccessToken({ prompt: silent ? '' : 'consent' });
         });
-        this.tokenClient.requestAccessToken({ prompt: 'consent' });
+      },
+
+      async ensureValidToken() {
+        if (this.accessToken && Date.now() < (this.tokenExpiry - 30000)) return true;
+        if (this.googleClientId && this.userProfile && this.userProfile.email) {
+          const ok = await this.connectGoogleDrive(true);
+          if (ok) return true;
+        }
+        return false;
       },
 
       async driveFetch(url, opts = {}) {
-        if (!this.accessToken || Date.now() >= this.tokenExpiry) throw new Error('Connetti prima Google Drive');
+        const ok = await this.ensureValidToken();
+        if (!ok) throw new Error('Connetti prima il tuo Account Google');
         const headers = { ...(opts.headers || {}), Authorization: `Bearer ${this.accessToken}` };
         const res = await fetch(url, { ...opts, headers });
         if (!res.ok) throw new Error(`Drive HTTP ${res.status}`);
@@ -3992,33 +4920,73 @@
         this.driveSyncTimer = setTimeout(() => this.syncAllWithDrive(false), 1800);
       },
 
+      async pushAccountConfig() {
+        const ok = await this.ensureValidToken();
+        if (!ok) return;
+        try {
+          const rootId = await this.ensureDriveFolder('FlowLocal_Sync');
+          const cfgPayload = {
+            schema_version: 2,
+            updated_at_utc: localStorage.getItem('fl_account_cfg_ts') || new Date().toISOString(),
+            obfuscation: 'xor-b64-v1',
+            gemini_api_key_obf: this.geminiKey ? obfuscateSyncSecret(this.geminiKey) : '',
+            theme: localStorage.getItem('fl_theme') || 'obsidian'
+          };
+          await this.upsertDriveFile('account_config.json', rootId, JSON.stringify(cfgPayload, null, 2), 'application/json');
+        } catch {
+          // silenzioso se offline
+        }
+      },
+
       async syncAllWithDrive(showFeedback = true) {
-        if (!this.accessToken || Date.now() >= this.tokenExpiry) {
-          if (showFeedback) this.showToast('Connetti prima Google Drive in Impostazioni');
+        const tokenOk = await this.ensureValidToken();
+        if (!tokenOk) {
+          if (showFeedback) this.showToast('Accedi con Google per sincronizzare');
           return;
         }
         try {
           const rootId = await this.ensureDriveFolder('FlowLocal_Sync');
           const outboxId = await this.ensureDriveFolder('outbox_study', rootId);
 
-          // 1. Importazione automatica gemini_api_key da user_config.json
-          const cfgFile = await this.findDriveItem('user_config.json', rootId);
+          // 1. Sync account_config.json (Gemini API Key + Tema)
+          const cfgFile = (await this.findDriveItem('account_config.json', rootId)) || (await this.findDriveItem('user_config.json', rootId));
+          let remoteCfg = null;
           if (cfgFile) {
             const cfgRes = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${cfgFile.id}?alt=media`);
-            const cfg = await cfgRes.json().catch(() => null);
-            if (cfg && cfg.gemini_api_key_obf) {
-              const decoded = deobfuscateSyncSecret(cfg.gemini_api_key_obf);
-              if (decoded && decoded !== this.geminiKey) {
+            remoteCfg = await cfgRes.json().catch(() => null);
+          }
+          const localCfgTs = localStorage.getItem('fl_account_cfg_ts') || '';
+          const remoteCfgTs = (remoteCfg && remoteCfg.updated_at_utc) || '';
+          const remoteIsNewer = Boolean(remoteCfgTs && (!localCfgTs || remoteCfgTs > localCfgTs));
+
+          if (remoteCfg) {
+            if (remoteCfg.gemini_api_key_obf) {
+              const decoded = deobfuscateSyncSecret(remoteCfg.gemini_api_key_obf);
+              if (decoded && (!this.geminiKey || (remoteIsNewer && decoded !== this.geminiKey))) {
                 this.geminiKey = decoded;
                 localStorage.setItem('fl_gemini_key', decoded);
-                document.getElementById('geminiKeyInput').value = decoded;
-                if (showFeedback) this.showToast('Gemini API Key sincronizzata dal PC');
+                const gkEl = document.getElementById('geminiKeyInput');
+                if (gkEl) gkEl.value = decoded;
+                this.updateDrivePill();
+                if (showFeedback) this.showToast('Gemini API Key sincronizzata automaticamente');
               }
             }
+            if (remoteCfg.theme && remoteIsNewer) {
+              this.applyTheme(remoteCfg.theme);
+            }
+          }
+          if (this.geminiKey || localStorage.getItem('fl_theme')) {
+            await this.upsertDriveFile('account_config.json', rootId, JSON.stringify({
+              schema_version: 2,
+              updated_at_utc: localCfgTs || remoteCfgTs || new Date().toISOString(),
+              obfuscation: 'xor-b64-v1',
+              gemini_api_key_obf: this.geminiKey ? obfuscateSyncSecret(this.geminiKey) : ((remoteCfg && remoteCfg.gemini_api_key_obf) || ''),
+              theme: localStorage.getItem('fl_theme') || (remoteCfg && remoteCfg.theme) || 'obsidian'
+            }, null, 2), 'application/json');
           }
 
-          // 2. Sync bidirezionale library.json (Note + Materie/Sottocartelle)
-          const libFile = await this.findDriveItem('library.json', outboxId);
+          // 2. Sync bidirezionale library.json (Note + Materie/Sottocartelle + Cestino su updated_at UTC)
+          const libFile = (await this.findDriveItem('library.json', rootId)) || (await this.findDriveItem('library.json', outboxId));
           let remoteLib = null;
           if (libFile) {
             const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${libFile.id}?alt=media`);
@@ -4037,10 +5005,10 @@
               remoteLib.notes.forEach(rn => {
                 const ln = localMap.get(String(rn.id));
                 if (!ln) {
-                  this.notes.push(rn);
+                  localMap.set(String(rn.id), rn);
                 } else {
-                  const rTs = Date.parse(rn.updated_at || rn.created_at || 0) || 0;
-                  const lTs = Date.parse(ln.updated_at || ln.created_at || 0) || 0;
+                  const rTs = Date.parse(rn.updated_at || rn.last_edited_at_utc || rn.created_at || 0) || 0;
+                  const lTs = Date.parse(ln.updated_at || ln.last_edited_at_utc || ln.created_at || 0) || 0;
                   if (rTs > lTs) localMap.set(String(rn.id), { ...ln, ...rn });
                 }
               });
@@ -4048,14 +5016,13 @@
               await this.idbSet('notes', this.notes);
             }
           }
-          // Push library.json aggiornato per far arrivare le note mobile su PC
           const mergedLib = {
             ...(remoteLib || { library_version: '1.1' }),
             generated_at: new Date().toISOString(),
             folders: this.folders,
-            notes: this.notes.filter(n => !n.trashed)
+            notes: this.notes
           };
-          await this.upsertDriveFile('library.json', outboxId, JSON.stringify(mergedLib, null, 2), 'application/json');
+          await this.upsertDriveFile('library.json', rootId, JSON.stringify(mergedLib, null, 2), 'application/json');
 
           // 3. Sync bidirezionale flowtime_state.json (Calendario, Esami, Pomodoro, Cartelle)
           const ftFile = (await this.findDriveItem('flowtime_state.json', rootId)) || (await this.findDriveItem('user_state.json', rootId));
@@ -4094,6 +5061,7 @@
             events: this.events
           }, null, 2), 'application/json');
 
+          this.updateDrivePill();
           this.renderDrawer();
           if (!this.editorOpen) this.renderNotesList();
           this.renderSubjects();
@@ -4175,22 +5143,44 @@
         listBox.innerHTML = '';
         if (!fid) return;
         try {
+          let manifestNotesMeta = {};
+          const mItem = await this.findDriveItem('group_manifest.json', fid);
+          if (mItem) {
+            const mRes = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${mItem.id}?alt=media&supportsAllDrives=true`);
+            const mData = await mRes.json().catch(() => ({}));
+            manifestNotesMeta = mData.notes_meta || {};
+          }
           const q = `'${fid}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
           const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`);
           const folders = (await res.json()).files || [];
           for (const f of folders) {
             if (f.name.startsWith('.')) continue;
             const fq = `'${f.id}' in parents and trashed = false`;
-            const fres = await this.driveFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fq)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`);
+            const fres = await this.driveFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fq)}&fields=files(id,name,modifiedTime)&supportsAllDrives=true&includeItemsFromAllDrives=true`);
             const files = (await fres.json()).files || [];
             const lockSet = new Set(files.filter(x => x.name.endsWith('.md.lock')).map(x => x.name.replace('.lock', '')));
             files.filter(x => x.name.endsWith('.md')).forEach(item => {
               const locked = lockSet.has(item.name);
+              const meta = manifestNotesMeta[`${f.name}/${item.name}`] || {};
+              const pubName = meta.created_by_name || meta.last_edited_by_name || '';
+              const pubAvatar = meta.created_by_avatar || '';
+              const tsRaw = meta.last_edited_at_utc || item.modifiedTime || '';
+              const dateFmt = tsRaw ? new Date(tsRaw).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' }) : '';
+              const initials = (pubName.split(/\s+/).map(w => w[0] || '').join('').slice(0, 2) || 'U').toUpperCase();
+              const avHtml = pubName
+                ? `<span class="account-avatar-wrap" style="width:20px;height:20px;font-size:9px;">${pubAvatar ? `<img src="${this.esc(pubAvatar)}" referrerpolicy="no-referrer">` : this.esc(initials)}</span>`
+                : '';
+              const badgeHtml = pubName
+                ? `<div class="group-author-badge">${avHtml}<span>Pubblicata da ${this.esc(pubName)}${dateFmt ? ' • ' + this.esc(dateFmt) : ''}</span></div>`
+                : '';
               const div = document.createElement('div');
               div.className = 'note-card';
-              div.innerHTML = `<div class="row" style="justify-content:space-between;">
-                <strong>[${this.esc(f.name)}] ${this.esc(item.name.replace('.md', ''))}</strong>
-                <button class="btn btn-sm" onclick="app.importGroupNote('${item.id}', '${this.esc(item.name)}', '${this.esc(f.name)}')">${locked ? 'Bloccato · ' : ''}Importa</button>
+              div.innerHTML = `<div class="row" style="justify-content:space-between; align-items:flex-start;">
+                <div>
+                  <strong>[${this.esc(f.name)}] ${this.esc(item.name.replace('.md', '').replace(/_/g, ' '))}</strong>
+                  ${badgeHtml}
+                </div>
+                <button class="btn btn-sm" onclick="app.importGroupNote('${item.id}', '${this.esc(item.name)}', '${this.esc(f.name)}')">${locked ? 'Bloccato · ' : ''}Apri</button>
               </div>`;
               listBox.appendChild(div);
             });
@@ -4203,9 +5193,24 @@
       async importGroupNote(fileId, fileName, subject) {
         try {
           const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`);
-          const md = await res.text();
+          const rawMd = await res.text();
+          const { meta, body } = parseMdFrontmatter(rawMd);
           const id = 'pwa_' + Date.now();
-          this.notes.unshift({ id, title: fileName.replace('.md', '').replace(/_/g, ' '), subject, content_markdown: md, created_at: new Date().toISOString(), updated_at: new Date().toISOString(), trashed: false });
+          this.notes.unshift({
+            id,
+            title: fileName.replace('.md', '').replace(/_/g, ' '),
+            subject,
+            content_markdown: body,
+            created_at: new Date().toISOString(),
+            updated_at: meta.last_edited_at_utc || new Date().toISOString(),
+            trashed: false,
+            created_by_name: meta.created_by_name || '',
+            created_by_email: meta.created_by_email || '',
+            created_by_avatar: meta.created_by_avatar || '',
+            last_edited_by_name: meta.last_edited_by_name || '',
+            last_edited_by_email: meta.last_edited_by_email || '',
+            last_edited_at_utc: meta.last_edited_at_utc || ''
+          });
           await this.idbSet('notes', this.notes);
           this.selectFolderFilter('all');
           this.openNoteEditor(id);
@@ -4224,20 +5229,82 @@
         const subject = ((cur && cur.subject) || 'Generale').replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
         const md = this.getEditorMarkdown();
         if (!md.trim()) return this.showToast('Scrivi prima la nota');
+
+        const p = this.userProfile || {};
+        const authorName = p.display_name || p.email || 'PWA Mobile';
+        const authorEmail = p.email || '';
+        const authorAvatar = p.avatar_url || '';
+        const nowIso = new Date().toISOString();
+
         try {
           const subjId = await this.ensureDriveFolder(subject, fid);
+          const histId = await this.ensureDriveFolder('.history', fid);
           const lockName = `${title}.md.lock`;
           const existingLock = await this.findDriveItem(lockName, subjId);
           if (existingLock) {
             const lres = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${existingLock.id}?alt=media`);
             const ld = await lres.json().catch(() => null);
-            if (ld && ld.locked_at_utc && (Date.now() - Date.parse(ld.locked_at_utc)) < LOCK_TTL_MS) {
-              return this.showToast(`File bloccato da ${ld.author || 'un collega'}`);
+            const sameUser = (ld && ld.author_email && authorEmail && ld.author_email === authorEmail) || (ld && ld.author === authorName);
+            if (!sameUser && ld && ld.locked_at_utc && (Date.now() - Date.parse(ld.locked_at_utc)) < LOCK_TTL_MS) {
+              return this.showToast(`File bloccato da ${ld.author_name || ld.author || 'un collega'}`);
             }
           }
-          const lockId = await this.upsertDriveFile(lockName, subjId, JSON.stringify({ author: 'PWA Mobile', locked_at_utc: new Date().toISOString() }), 'application/json');
-          await this.upsertDriveFile(`${title}.md`, subjId, md, 'text/markdown');
+          const lockId = await this.upsertDriveFile(lockName, subjId, JSON.stringify({
+            author: authorName,
+            author_name: authorName,
+            author_email: authorEmail,
+            locked_at_utc: nowIso
+          }), 'application/json');
+
+          // Archivia versione precedente in .history/ con autore
+          let prevMeta = {};
+          const existingMd = await this.findDriveItem(`${title}.md`, subjId);
+          if (existingMd) {
+            const prevRes = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${existingMd.id}?alt=media`);
+            const prevRaw = await prevRes.text();
+            const parsedPrev = parseMdFrontmatter(prevRaw);
+            prevMeta = parsedPrev.meta || {};
+            if (parsedPrev.body.trim() !== md.trim()) {
+              const tsTag = nowIso.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+              await this.upsertDriveFile(`${title}_${tsTag}.md`, histId, buildMdWithFrontmatter(parsedPrev.body, {
+                ...prevMeta,
+                archived_by_name: authorName,
+                archived_by_email: authorEmail,
+                archived_at_utc: nowIso
+              }), 'text/markdown');
+            }
+          }
+
+          const finalMeta = {
+            created_by_name: prevMeta.created_by_name || (cur && cur.created_by_name) || authorName,
+            created_by_email: prevMeta.created_by_email || (cur && cur.created_by_email) || authorEmail,
+            created_by_avatar: prevMeta.created_by_avatar || (cur && cur.created_by_avatar) || authorAvatar,
+            last_edited_by_name: authorName,
+            last_edited_by_email: authorEmail,
+            last_edited_at_utc: nowIso
+          };
+
+          await this.upsertDriveFile(`${title}.md`, subjId, buildMdWithFrontmatter(md, finalMeta), 'text/markdown');
+
+          // Aggiorna group_manifest.json
+          const mItem = await this.findDriveItem('group_manifest.json', fid);
+          let manifest = { schema_version: 2, subjects: [subject], members: [], notes_meta: {} };
+          if (mItem) {
+            const mRes = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${mItem.id}?alt=media`);
+            manifest = await mRes.json().catch(() => manifest);
+          }
+          manifest.subjects = Array.from(new Set([...(manifest.subjects || []), subject])).sort();
+          manifest.members = Array.from(new Set([...(manifest.members || []), authorName]));
+          manifest.notes_meta = manifest.notes_meta || {};
+          manifest.notes_meta[`${subject}/${title}.md`] = finalMeta;
+          manifest.updated_at_utc = nowIso;
+          await this.upsertDriveFile('group_manifest.json', fid, JSON.stringify(manifest, null, 2), 'application/json');
+
           await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${lockId}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {});
+          if (cur) {
+            Object.assign(cur, finalMeta);
+            await this.idbSet('notes', this.notes);
+          }
           this.showToast('Nota pubblicata nel gruppo');
         } catch (err) {
           this.showToast('Errore pubblicazione: ' + err.message);
@@ -4255,4 +5322,5 @@
     window.addEventListener('DOMContentLoaded', () => app.init());
   </script>
 </body>
+
 </html>

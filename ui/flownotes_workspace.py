@@ -68,6 +68,12 @@ class TabContext:
     lock_info: Optional[Dict[str, Any]] = None
     is_studio_view: bool = False
     is_new_empty: bool = False
+    created_by_name: str = ""
+    created_by_email: str = ""
+    created_by_avatar: str = ""
+    last_edited_by_name: str = ""
+    last_edited_by_email: str = ""
+    last_edited_at_utc: str = ""
 
     def display_title(self, max_len: int = 24) -> str:
         base = (self.title or "Nuova nota").strip()
@@ -973,8 +979,42 @@ class GroupBoardWidget(QWidget):
                     status_txt = f" · Bloccato da {item.get('lock_author')}"
                 elif item.get("locked_by_me"):
                     status_txt = " · In modifica (tu)"
-                mod_txt = (item.get("modified_at") or "")[:16].replace("T", " ")
-                lbl = QLabel(f"[{item.get('subject')}] {item.get('title')}{status_txt}\n{mod_txt}")
+
+                pub_name = (item.get("created_by_name") or item.get("last_edited_by_name") or "").strip()
+                edit_name = (item.get("last_edited_by_name") or "").strip()
+                raw_ts = (item.get("last_edited_at_utc") or item.get("modified_at") or "").strip()
+                mod_txt = raw_ts[:16].replace("T", " ") if raw_ts else ""
+                date_short = ""
+                if len(raw_ts) >= 10:
+                    try:
+                        from datetime import datetime as _dt
+                        _d = _dt.strptime(raw_ts[:10], "%Y-%m-%d")
+                        _months = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+                        date_short = f"{_d.day} {_months[_d.month - 1]}"
+                    except Exception:
+                        date_short = raw_ts[:10]
+
+                if pub_name:
+                    initials = "".join(w[0].upper() for w in pub_name.split()[:2]) or "U"
+                    av_badge = QLabel(initials)
+                    av_badge.setFixedSize(26, 26)
+                    av_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    accent_col = p.get("accent") or "#6366F1"
+                    av_badge.setStyleSheet(
+                        f"background-color: {accent_col}; color: #FFFFFF; border-radius: 13px; "
+                        "font-size: 10px; font-weight: 700; border: none;"
+                    )
+                    cl.addWidget(av_badge)
+
+                author_line = f"Pubblicata da {pub_name}" if pub_name else ""
+                if date_short and author_line:
+                    author_line += f" • {date_short}"
+                elif mod_txt and not author_line:
+                    author_line = mod_txt
+                if edit_name and pub_name and edit_name != pub_name:
+                    author_line += f" · Modificata da {edit_name}"
+
+                lbl = QLabel(f"[{item.get('subject')}] {item.get('title')}{status_txt}\n{author_line}")
                 lbl.setWordWrap(True)
                 lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
                 cl.addWidget(lbl, 1)
@@ -1088,6 +1128,15 @@ class EditorPane(QWidget):
         self.editor_title.setPlaceholderText("Titolo della nota...")
         self.editor_title.setMinimumHeight(36)
         ed_lay.addWidget(self.editor_title)
+
+        self.editor_author_lbl = QLabel("")
+        self.editor_author_lbl.setObjectName("NKEditorAuthorMeta")
+        self.editor_author_lbl.setStyleSheet(
+            "background: transparent; border: none; color: #94A3B8; font-size: 11.5px; padding: 0 2px;"
+        )
+        self.editor_author_lbl.setWordWrap(True)
+        self.editor_author_lbl.setVisible(False)
+        ed_lay.addWidget(self.editor_author_lbl)
 
         meta_grid = QHBoxLayout()
         meta_grid.setSpacing(6)
@@ -1521,6 +1570,21 @@ class EditorPane(QWidget):
                 self.editor_body.set_studio_view(tab.is_studio_view)
 
             self.editor_body.set_markdown_text(tab.content_markdown or "")
+
+            # Provenienza autore sotto il titolo
+            src_meta = tab.group_note_item if isinstance(tab.group_note_item, dict) else {}
+            cb_name = (src_meta.get("created_by_name") or tab.created_by_name or "").strip()
+            le_name = (src_meta.get("last_edited_by_name") or tab.last_edited_by_name or "").strip()
+            if cb_name or le_name:
+                parts = []
+                if cb_name:
+                    parts.append(f"Creata da {cb_name}")
+                if le_name:
+                    parts.append(f"Ultima modifica di {le_name}")
+                self.editor_author_lbl.setText("  •  ".join(parts))
+                self.editor_author_lbl.setVisible(True)
+            else:
+                self.editor_author_lbl.setVisible(False)
 
             # Read-only enforcement per note di gruppo senza lock
             is_ro = (tab.workspace_type == "group" and not tab.is_locked_by_me)
