@@ -185,8 +185,18 @@
       padding-bottom: calc(68px + var(--safe-bottom));
     }
 
-    body.editor-fullscreen .main-area {
-      padding-bottom: var(--safe-bottom);
+    body.editor-fullscreen {
+      height: 100dvh;
+      overflow: hidden;
+    }
+    body.editor-fullscreen .app-shell,
+    body.editor-fullscreen .main-area,
+    body.editor-fullscreen .view-container,
+    body.editor-fullscreen #view-flownotes {
+      height: 100dvh;
+      min-height: 0;
+      overflow: hidden;
+      padding-bottom: 0;
     }
     body.editor-fullscreen .bottom-nav {
       display: none !important;
@@ -535,8 +545,8 @@
     .note-editor-shell {
       display: none;
       flex-direction: column;
-      height: 100%;
-      min-height: calc(100dvh - var(--safe-top) - var(--safe-bottom));
+      height: 100dvh;
+      overflow: hidden;
       background: var(--bg-canvas);
     }
     .note-editor-shell.active {
@@ -629,9 +639,12 @@
 
     .editor-body-wrap {
       flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
       display: flex;
       flex-direction: column;
-      padding: 14px 16px 76px;
+      padding: 14px 16px 90px;
       gap: 8px;
     }
     .sheet-title-input {
@@ -1031,7 +1044,7 @@
       left: 0;
       right: 0;
       bottom: 0;
-      z-index: 75;
+      z-index: 9999;
       display: none;
       align-items: center;
       gap: 6px;
@@ -1096,21 +1109,50 @@
       color: var(--accent);
     }
 
-    .sfb-inline-palette {
-      display: none;
-      align-items: center;
-      gap: 5px;
-      padding: 0 4px;
-      flex-shrink: 0;
+    @keyframes sfbPopUp {
+      from { opacity: 0; transform: translateY(8px) scale(0.96); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
     }
-    .sfb-inline-palette.open { display: flex; }
-    .color-dot {
-      width: 22px;
-      height: 22px;
-      border-radius: 50%;
-      border: 2px solid var(--border);
+    .sfb-color-popover {
+      position: fixed;
+      z-index: 10000;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 6px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+      display: none;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 176px;
+      animation: sfbPopUp 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .sfb-color-popover.open { display: flex; }
+    .sfb-color-opt {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      width: 100%;
+      padding: 7px 9px;
+      border: none;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--text-main);
+      font-size: 12.5px;
+      font-weight: 600;
       cursor: pointer;
+      text-align: left;
+    }
+    .sfb-color-opt:hover { background: var(--bg-card-hover); }
+    .color-dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      border: 1.5px solid var(--border);
       flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .sfb-popup {
@@ -1118,7 +1160,7 @@
       left: 10px;
       right: 10px;
       max-width: 340px;
-      z-index: 85;
+      z-index: 10000;
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 14px;
@@ -1129,6 +1171,7 @@
       gap: 2px;
       max-height: 52dvh;
       overflow-y: auto;
+      animation: sfbPopUp 0.16s cubic-bezier(0.22, 1, 0.36, 1);
     }
     .sfb-popup.open { display: flex; }
     .slash-cmd-item {
@@ -1501,6 +1544,36 @@
               <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.applyBlockSize('small')"><span style="font-size:12px;">Testo Piccolo</span><span class="slash-cmd-tag">S</span></button>
             </div>
 
+            <!-- POPOVER VERTICALE COLORE CARATTERE -->
+            <div class="sfb-color-popover" id="textColorPopover">
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('inherit')">
+                <span class="color-dot" style="background:transparent;">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#EF4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/></svg>
+                </span>
+                <span>Predefinito (Tema)</span>
+              </button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#EF4444')"><span class="color-dot" style="background:#EF4444;"></span><span>Rosso</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#3B82F6')"><span class="color-dot" style="background:#3B82F6;"></span><span>Blu</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#10B981')"><span class="color-dot" style="background:#10B981;"></span><span>Verde</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#F59E0B')"><span class="color-dot" style="background:#F59E0B;"></span><span>Arancione</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#A855F7')"><span class="color-dot" style="background:#A855F7;"></span><span>Viola</span></button>
+            </div>
+
+            <!-- POPOVER VERTICALE EVIDENZIATORE -->
+            <div class="sfb-color-popover" id="hiliteColorPopover">
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('transparent', 'inherit')">
+                <span class="color-dot" style="background:transparent;">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#EF4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="20" y2="4"/></svg>
+                </span>
+                <span>Trasparente / Rimuovi sfondo</span>
+              </button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#FEF08A', '#0F172A')"><span class="color-dot" style="background:#FEF08A;"></span><span>Giallo</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#BBF7D0', '#0F172A')"><span class="color-dot" style="background:#BBF7D0;"></span><span>Verde menta</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#BAE6FD', '#0F172A')"><span class="color-dot" style="background:#BAE6FD;"></span><span>Azzurro</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#FBCFE8', '#0F172A')"><span class="color-dot" style="background:#FBCFE8;"></span><span>Rosa</span></button>
+              <button class="sfb-color-opt" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#E9D5FF', '#0F172A')"><span class="color-dot" style="background:#E9D5FF;"></span><span>Viola chiaro</span></button>
+            </div>
+
             <!-- UNICA SMART FORMATTING BAR SOPRA LA TASTIERA -->
             <div class="smart-format-bar" id="smartFormatBar">
               <div class="sfb-fixed-left">
@@ -1510,31 +1583,15 @@
               <div class="sfb-scroll">
                 <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.toggleTextSizePopup()" title="Dimensione carattere">T↕</button>
                 <button class="sfb-btn" id="sfbBoldBtn" onmousedown="event.preventDefault()" onclick="app.execFormat('bold')" title="Grassetto"><strong>B</strong></button>
-                <button class="sfb-btn" id="sfbItalicBtn" onmousedown="event.preventDefault()" onclick="app.execFormat('italic')" title="Corsivo"><em>I</em></button>
+                <button class="sfb-btn" id="sfbItalicBtn" onmousedown="event.preventDefault()" onclick="app.execFormat('italic')" title="Corsivo"><span style="font-family: Georgia, 'Times New Roman', serif; font-style: italic; font-weight: 700; font-size: 17px;">S</span></button>
 
-                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.toggleInlinePalette('textColorPalette')" title="Colore carattere">
+                <button class="sfb-btn" id="sfbTextColorBtn" onmousedown="event.preventDefault()" onclick="app.toggleColorPopover('textColorPopover', this)" title="Colore carattere">
                   <span style="border-bottom:3px solid var(--accent); line-height:1.1;">A</span>
                 </button>
-                <div class="sfb-inline-palette" id="textColorPalette">
-                  <button class="color-dot" style="background:var(--text-main);" onmousedown="event.preventDefault()" onclick="app.applyTextColor('inherit')" title="Predefinito"></button>
-                  <button class="color-dot" style="background:#EF4444;" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#EF4444')" title="Rosso"></button>
-                  <button class="color-dot" style="background:#3B82F6;" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#3B82F6')" title="Blu"></button>
-                  <button class="color-dot" style="background:#10B981;" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#10B981')" title="Verde"></button>
-                  <button class="color-dot" style="background:#F59E0B;" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#F59E0B')" title="Arancione"></button>
-                  <button class="color-dot" style="background:#A855F7;" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#A855F7')" title="Viola"></button>
-                </div>
 
-                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.toggleInlinePalette('hiliteColorPalette')" title="Evidenziatore">
+                <button class="sfb-btn" id="sfbHiliteBtn" onmousedown="event.preventDefault()" onclick="app.toggleColorPopover('hiliteColorPopover', this)" title="Evidenziatore">
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
                 </button>
-                <div class="sfb-inline-palette" id="hiliteColorPalette">
-                  <button class="color-dot" style="background:#FEF08A;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#FEF08A', '#0F172A')" title="Giallo"></button>
-                  <button class="color-dot" style="background:#BBF7D0;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#BBF7D0', '#0F172A')" title="Verde menta"></button>
-                  <button class="color-dot" style="background:#BAE6FD;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#BAE6FD', '#0F172A')" title="Azzurro"></button>
-                  <button class="color-dot" style="background:#FBCFE8;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#FBCFE8', '#0F172A')" title="Rosa"></button>
-                  <button class="color-dot" style="background:#E9D5FF;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#E9D5FF', '#0F172A')" title="Viola chiaro"></button>
-                  <button class="color-dot" style="background:transparent;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('transparent', 'inherit')" title="Nessuno sfondo"></button>
-                </div>
 
                 <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.execFormat('undo')" title="Annulla">↶</button>
                 <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.execFormat('redo')" title="Ripeti">↷</button>
@@ -1942,6 +1999,11 @@
           const btn = document.getElementById('moreMenuBtn');
           if (menu && menu.classList.contains('open') && !menu.contains(e.target) && !btn.contains(e.target)) {
             menu.classList.remove('open');
+          }
+          const bar = document.getElementById('smartFormatBar');
+          const popIds = ['slashMenuPopup', 'textSizePopup', 'textColorPopover', 'hiliteColorPopover'];
+          if (bar && !bar.contains(e.target) && !popIds.some(id => document.getElementById(id)?.contains(e.target))) {
+            this.closeAllFormatPopovers();
           }
         });
 
@@ -3310,6 +3372,12 @@
       },
 
       // ---------------- SMART FORMATTING BAR + SLASH COMMANDS + FORMULA GUIDATA ----------------
+      closeAllFormatPopovers() {
+        ['slashMenuPopup', 'textSizePopup', 'textColorPopover', 'hiliteColorPopover'].forEach(id => {
+          document.getElementById(id)?.classList.remove('open');
+        });
+      },
+
       showSmartBar(show) {
         const bar = document.getElementById('smartFormatBar');
         if (!bar) return;
@@ -3321,8 +3389,7 @@
         } else {
           this._smartBarTimer = setTimeout(() => {
             bar.classList.remove('visible');
-            document.getElementById('slashMenuPopup')?.classList.remove('open');
-            document.getElementById('textSizePopup')?.classList.remove('open');
+            this.closeAllFormatPopovers();
           }, 180);
         }
       },
@@ -3334,15 +3401,23 @@
       positionSmartBar() {
         const bar = document.getElementById('smartFormatBar');
         if (!bar) return;
-        let offset = 0;
-        if (window.visualViewport) {
-          offset = Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop);
-        }
-        bar.style.bottom = `${offset}px`;
         const barH = bar.offsetHeight || 50;
-        ['slashMenuPopup', 'textSizePopup'].forEach(id => {
+        let barTop = window.innerHeight - barH;
+        if (window.visualViewport) {
+          barTop = window.visualViewport.offsetTop + window.visualViewport.height - barH;
+          bar.style.top = `${Math.max(0, barTop)}px`;
+          bar.style.bottom = 'auto';
+        } else {
+          bar.style.bottom = '0px';
+          bar.style.top = 'auto';
+        }
+        ['slashMenuPopup', 'textSizePopup', 'textColorPopover', 'hiliteColorPopover'].forEach(id => {
           const p = document.getElementById(id);
-          if (p) p.style.bottom = `${offset + barH + 8}px`;
+          if (p && p.classList.contains('open')) {
+            const pH = p.offsetHeight || 180;
+            p.style.top = `${Math.max(8, barTop - pH - 8)}px`;
+            p.style.bottom = 'auto';
+          }
         });
       },
 
@@ -3392,22 +3467,34 @@
         } catch {}
       },
 
-      toggleInlinePalette(id) {
-        ['textColorPalette', 'hiliteColorPalette'].forEach(pid => {
-          const el = document.getElementById(pid);
-          if (!el) return;
-          if (pid === id) el.classList.toggle('open');
-          else el.classList.remove('open');
-        });
+      toggleColorPopover(id, btnEl) {
+        const target = document.getElementById(id);
+        if (!target) return;
+        const wasOpen = target.classList.contains('open');
+        this.closeAllFormatPopovers();
+        if (!wasOpen) {
+          target.classList.add('open');
+          if (btnEl) {
+            const rect = btnEl.getBoundingClientRect();
+            const maxLeft = Math.max(8, window.innerWidth - (target.offsetWidth || 184) - 8);
+            target.style.left = `${Math.min(maxLeft, Math.max(8, rect.left - 16))}px`;
+            target.style.right = 'auto';
+          }
+          this.positionSmartBar();
+        }
       },
 
       applyTextColor(color) {
+        const ed = document.getElementById('noteVisualEditor');
+        if (ed) ed.focus();
         if (color === 'inherit') {
-          this.execFormat('removeFormat');
+          document.execCommand('foreColor', false, getComputedStyle(document.documentElement).getPropertyValue('--text-main').trim() || '#F8FAFC');
+          document.execCommand('removeFormat');
         } else {
-          this.execFormat('foreColor', color);
+          document.execCommand('foreColor', false, color);
         }
-        document.getElementById('textColorPalette')?.classList.remove('open');
+        this.closeAllFormatPopovers();
+        this.scheduleAutoSave();
       },
 
       applyHighlight(bg, fg) {
@@ -3416,22 +3503,40 @@
         ed.focus();
         if (bg === 'transparent') {
           document.execCommand('hiliteColor', false, 'transparent');
+          const sel = window.getSelection();
+          if (sel && sel.rangeCount > 0) {
+            let node = sel.anchorNode;
+            while (node && node !== ed) {
+              if (node.nodeType === Node.ELEMENT_NODE && (node.tagName === 'MARK' || (node.style && node.style.backgroundColor))) {
+                node.style.backgroundColor = 'transparent';
+                if (node.tagName === 'MARK') {
+                  node.replaceWith(...node.childNodes);
+                  break;
+                }
+              }
+              node = node.parentNode;
+            }
+          }
         } else {
           document.execCommand('hiliteColor', false, bg);
           if (fg) document.execCommand('foreColor', false, fg);
         }
-        document.getElementById('hiliteColorPalette')?.classList.remove('open');
+        this.closeAllFormatPopovers();
         this.scheduleAutoSave();
       },
 
       toggleTextSizePopup() {
-        document.getElementById('slashMenuPopup')?.classList.remove('open');
-        this.positionSmartBar();
-        document.getElementById('textSizePopup')?.classList.toggle('open');
+        const target = document.getElementById('textSizePopup');
+        const wasOpen = target && target.classList.contains('open');
+        this.closeAllFormatPopovers();
+        if (!wasOpen && target) {
+          target.classList.add('open');
+          this.positionSmartBar();
+        }
       },
 
       applyBlockSize(type) {
-        document.getElementById('textSizePopup')?.classList.remove('open');
+        this.closeAllFormatPopovers();
         const ed = document.getElementById('noteVisualEditor');
         if (!ed) return;
         ed.focus();
@@ -3449,9 +3554,13 @@
       },
 
       toggleSlashMenu() {
-        document.getElementById('textSizePopup')?.classList.remove('open');
-        this.positionSmartBar();
-        document.getElementById('slashMenuPopup')?.classList.toggle('open');
+        const target = document.getElementById('slashMenuPopup');
+        const wasOpen = target && target.classList.contains('open');
+        this.closeAllFormatPopovers();
+        if (!wasOpen && target) {
+          target.classList.add('open');
+          this.positionSmartBar();
+        }
       },
 
       async runSlashCmd(cmd) {
