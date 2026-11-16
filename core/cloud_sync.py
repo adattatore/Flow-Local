@@ -421,20 +421,46 @@ class CloudSyncManager:
         self.export_account_config()
         return library_payload
 
+    @staticmethod
+    def _discover_google_client_id() -> str:
+        """Recupera il client_id OAuth da settings, token o credentials.json."""
+        saved = (db.get_setting("google_client_id", "") or "").strip()
+        if saved:
+            return saved
+        for fname in ("token_drive.json", "token_calendar.json", "credentials.json"):
+            for p in (str(get_user_data_path(fname)), os.path.join(os.getcwd(), fname)):
+                if os.path.exists(p):
+                    try:
+                        with open(p, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        cid = (
+                            data.get("client_id")
+                            or (data.get("installed") or {}).get("client_id")
+                            or (data.get("web") or {}).get("client_id")
+                            or ""
+                        ).strip()
+                        if cid:
+                            return cid
+                    except Exception:
+                        pass
+        return ""
+
     def export_account_config(self, output_path: Optional[str] = None) -> Dict[str, Any]:
         """
-        Esporta la configurazione condivisa (gemini_api_key offuscata in XOR+Base64 e preferenze tema)
+        Esporta la configurazione condivisa (gemini_api_key offuscata in XOR+Base64, google_client_id e preferenze tema)
         in FlowLocal_Sync/account_config.json per la sincronizzazione automatica tra dispositivi.
         """
         api_key = (db.get_setting("gemini_api_key", "") or "").strip()
         theme = (db.get_setting("theme", "obsidian") or "obsidian").strip()
         reading_mode = (db.get_setting("reading_mode", "0") or "0").strip()
+        client_id = self._discover_google_client_id()
         now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         payload: Dict[str, Any] = {
             "schema_version": 2,
             "updated_at_utc": now_utc,
             "obfuscation": "xor-b64-v1",
             "gemini_api_key_obf": obfuscate_sync_secret(api_key) if api_key else "",
+            "google_client_id": client_id,
             "theme": theme,
             "reading_mode": reading_mode == "1",
         }
