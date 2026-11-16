@@ -548,20 +548,32 @@
       z-index: 30;
       display: flex;
       align-items: center;
-      gap: 6px;
+      justify-content: space-between;
+      gap: 8px;
       padding: 8px 10px;
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
     }
-    .editor-title-input {
-      flex: 1;
+    .editor-topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
       min-width: 0;
-      background: transparent !important;
-      border: none !important;
-      padding: 6px 4px !important;
-      font-size: 16px !important;
-      font-weight: 700 !important;
-      color: var(--text-main) !important;
+      flex: 1;
+    }
+    .editor-subj-crumb {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: none;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 150px;
     }
     .autosave-badge {
       font-size: 11px;
@@ -619,37 +631,110 @@
       flex: 1;
       display: flex;
       flex-direction: column;
-      padding: 10px 14px 20px;
-      gap: 10px;
+      padding: 14px 16px 76px;
+      gap: 8px;
     }
-    .editor-textarea {
-      flex: 1;
+    .sheet-title-input {
       width: 100%;
-      min-height: calc(100dvh - 140px);
       background: transparent !important;
       border: none !important;
-      padding: 4px 0 !important;
-      font-size: 15.5px !important;
-      line-height: 1.65 !important;
+      padding: 0 !important;
+      font-size: 23px !important;
+      font-weight: 800 !important;
+      line-height: 1.25 !important;
+      color: var(--text-main) !important;
       resize: none !important;
+      min-height: 32px !important;
+      overflow: hidden;
+      font-family: inherit;
     }
-
-    .md-preview {
+    .sheet-meta-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .visual-editor {
       flex: 1;
-      background: var(--bg-surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 14px;
-      line-height: 1.65;
-      font-size: 15px;
-      overflow-x: auto;
-      user-select: text;
+      width: 100%;
+      min-height: calc(100dvh - 190px);
+      outline: none;
+      font-size: 16px;
+      line-height: 1.68;
+      color: var(--text-main);
+      word-break: break-word;
+      padding: 6px 0 30px;
     }
-    .md-preview h1, .md-preview h2, .md-preview h3 { margin: 12px 0 6px; color: var(--text-main); }
-    .md-preview p { margin: 6px 0; }
-    .md-preview ul { padding-left: 20px; margin: 6px 0; }
-    .md-preview code { background: var(--bg-input); padding: 2px 5px; border-radius: 5px; font-size: 13px; }
-    .md-preview pre { background: var(--bg-input); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+    .visual-editor:empty::before {
+      content: attr(data-placeholder);
+      color: var(--text-dim);
+      pointer-events: none;
+    }
+    .visual-editor h1 { font-size: 22px; font-weight: 800; margin: 14px 0 6px; line-height: 1.3; }
+    .visual-editor h2 { font-size: 18px; font-weight: 700; margin: 12px 0 5px; line-height: 1.35; }
+    .visual-editor h3 { font-size: 16px; font-weight: 700; margin: 10px 0 4px; }
+    .visual-editor p, .visual-editor div { margin: 3px 0; }
+    .visual-editor pre {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      overflow-x: auto;
+      margin: 8px 0;
+    }
+    .visual-editor code {
+      background: var(--bg-input);
+      padding: 2px 5px;
+      border-radius: 5px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13.5px;
+    }
+    .visual-editor img {
+      max-width: 100%;
+      border-radius: 10px;
+      margin: 8px 0;
+      border: 1px solid var(--border);
+    }
+    .katex-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 6px;
+      margin: 0 2px;
+      border-radius: 8px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      cursor: pointer;
+      vertical-align: middle;
+    }
+    .katex-pill.block {
+      display: flex;
+      justify-content: center;
+      padding: 10px 12px;
+      margin: 8px 0;
+      width: 100%;
+    }
+    .todo-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin: 4px 0;
+    }
+    .todo-row input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      margin-top: 4px;
+      accent-color: var(--accent);
+      flex-shrink: 0;
+    }
+    .todo-row.done > span {
+      text-decoration: line-through;
+      color: var(--text-dim);
+    }
     .ts-chip {
       display: inline-flex;
       align-items: center;
@@ -940,8 +1025,8 @@
     }
     .pull-refresh-ind.show { display: flex; }
 
-    /* MATH & MARKDOWN QUICK BAR ABOVE KEYBOARD */
-    .math-quick-bar {
+    /* SMART FORMATTING BAR ABOVE KEYBOARD */
+    .smart-format-bar {
       position: fixed;
       left: 0;
       right: 0;
@@ -950,27 +1035,125 @@
       display: none;
       align-items: center;
       gap: 6px;
-      padding: 7px 10px calc(7px + var(--safe-bottom));
+      padding: 6px 8px calc(6px + var(--safe-bottom));
       background: var(--bg-surface);
       border-top: 1px solid var(--border);
+      box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.25);
+    }
+    .smart-format-bar.visible { display: flex; }
+
+    .sfb-fixed-left, .sfb-fixed-right {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+    }
+    .sfb-slash-btn {
+      width: 38px;
+      height: 36px;
+      border-radius: 10px;
+      border: none;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #FFFFFF;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .sfb-scroll {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 5px;
       overflow-x: auto;
       scrollbar-width: none;
+      padding: 0 2px;
     }
-    .math-quick-bar.visible { display: flex; }
-    .math-quick-bar::-webkit-scrollbar { display: none; }
-    .math-key {
+    .sfb-scroll::-webkit-scrollbar { display: none; }
+
+    .sfb-btn {
       flex-shrink: 0;
-      padding: 7px 11px;
-      border-radius: 8px;
+      height: 36px;
+      min-width: 36px;
+      padding: 0 9px;
+      border-radius: 9px;
       border: 1px solid var(--border);
       background: var(--bg-card);
       color: var(--text-main);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       font-size: 13px;
       font-weight: 700;
       cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
     }
-    .math-key:active { background: var(--accent-soft); border-color: var(--accent); }
+    .sfb-btn.active {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .sfb-inline-palette {
+      display: none;
+      align-items: center;
+      gap: 5px;
+      padding: 0 4px;
+      flex-shrink: 0;
+    }
+    .sfb-inline-palette.open { display: flex; }
+    .color-dot {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      border: 2px solid var(--border);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .sfb-popup {
+      position: fixed;
+      left: 10px;
+      right: 10px;
+      max-width: 340px;
+      z-index: 85;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 8px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+      display: none;
+      flex-direction: column;
+      gap: 2px;
+      max-height: 52dvh;
+      overflow-y: auto;
+    }
+    .sfb-popup.open { display: flex; }
+    .slash-cmd-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
+      padding: 9px 10px;
+      border: none;
+      border-radius: 9px;
+      background: transparent;
+      color: var(--text-main);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+    }
+    .slash-cmd-item:hover { background: var(--bg-card-hover); }
+    .slash-cmd-tag {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--accent);
+      font-weight: 700;
+    }
 
     /* FLOWTIME SEGMENTED BAR */
     .seg-bar {
@@ -1196,19 +1379,18 @@
             <div id="pwaGroupNotesList" style="display:flex; flex-direction:column; gap:8px;"></div>
           </div>
 
-          <!-- C) VISTA EDITOR FULLSCREEN (90% SCHERMO) -->
+          <!-- C) VISTA EDITOR FULLSCREEN (95% SCHERMO) -->
           <div id="fnEditorContainer" class="note-editor-shell">
             <div class="editor-topbar">
-              <button class="icon-btn ghost" onclick="app.closeEditor()" title="Torna alla lista">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-              </button>
-              <input type="text" id="noteTitleInput" class="editor-title-input" placeholder="Titolo nota..." oninput="app.scheduleAutoSave()">
-              <span class="autosave-badge" id="autoSaveLbl">Salvato</span>
+              <div class="editor-topbar-left">
+                <button class="icon-btn ghost" onclick="app.closeEditor()" title="Torna alla lista">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                </button>
+                <button class="editor-subj-crumb" id="editorSubjectCrumb" onclick="app.openFolderPickerForNote()" title="Cambia Materia / Cartella">Generale</button>
+                <span class="autosave-badge" id="autoSaveLbl">Salvato</span>
+              </div>
 
               <div class="editor-actions-right">
-                <button class="icon-btn ghost" id="togglePreviewBtn" onclick="app.toggleNotePreview()" title="Vista Studio (Markdown/KaTeX)">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                </button>
                 <button class="icon-btn ghost" onclick="app.openRsvp()" title="RSVP Speed-Reading">
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 </button>
@@ -1287,21 +1469,80 @@
                 <audio id="noteAudioPlayer" controls style="width:100%; height:36px;"></audio>
               </div>
 
-              <textarea id="noteBodyInput" class="editor-textarea" placeholder="Scrivi in Markdown o LaTeX ($E = mc^2$)..." oninput="app.scheduleAutoSave()" onfocus="app.showMathBar(true)" onblur="app.showMathBar(false)"></textarea>
-              <div id="notePreviewBox" class="md-preview" style="display:none;"></div>
+              <!-- TITOLO GRANDE DENTRO IL FOGLIO + RIGA DATA/MATERIA -->
+              <textarea id="noteTitleInput" class="sheet-title-input" rows="1" placeholder="Titolo della nota..." oninput="app.autoResizeTitle(); app.scheduleAutoSave();"></textarea>
+              <div class="sheet-meta-row">
+                <span id="sheetDateLbl">Oggi</span>
+                <span>·</span>
+                <span class="subject-chip" id="sheetSubjectChip" onclick="app.openFolderPickerForNote()" style="cursor:pointer;">Generale</span>
+              </div>
+
+              <!-- EDITOR VISUALE PULITO (CONTENTEDITABLE RICH TEXT + KATEX LIVE) -->
+              <div id="noteVisualEditor" class="visual-editor" contenteditable="true" data-placeholder="Tocca qui per scrivere gli appunti o digita / per i comandi..." oninput="app.onVisualEditorInput(event)" onfocus="app.showSmartBar(true)" onblur="app.onVisualEditorBlur()" onkeyup="app.updateFormatStates()" onmouseup="app.updateFormatStates()"></div>
             </div>
 
-            <!-- Barra Rapida Math & Markdown sopra la tastiera -->
-            <div class="math-quick-bar" id="mathQuickBar">
-              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('$', '$')">$..$</button>
-              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('$$\n', '\n$$')">$$</button>
-              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('\\frac{', '}{}')">\frac{}{}</button>
-              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('_', '')">_</button>
-              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('^', '')">^</button>
-              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet(' \\rightarrow ', '')">→</button>
-              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('- [ ] ', '')">- [ ]</button>
-              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('### ', '')">###</button>
-              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertTimestampMarker()">[HH:MM:SS]</button>
+            <!-- POPUP MENU / (STILE BOT TELEGRAM) -->
+            <div class="sfb-popup" id="slashMenuPopup">
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('formula')"><span>Formula Matematica (KaTeX)</span><span class="slash-cmd-tag">/formula</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('matrice')"><span>Matrice (N×M)</span><span class="slash-cmd-tag">/matrice</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('ocr')"><span>Scatta Foto / OCR Lavagna</span><span class="slash-cmd-tag">/ocr</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('disegno')"><span>Disegna Schema / S-Pen</span><span class="slash-cmd-tag">/disegno</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('todo')"><span>Lista Checkbox Interattiva</span><span class="slash-cmd-tag">/todo</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('codice')"><span>Blocco Codice</span><span class="slash-cmd-tag">/codice</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('audio')"><span>Marcatore Audio [HH:MM:SS]</span><span class="slash-cmd-tag">/audio</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.runSlashCmd('riassumi')"><span>Riassumi / Formatta con Gemini</span><span class="slash-cmd-tag">/riassumi</span></button>
+            </div>
+
+            <!-- POPUP DIMENSIONE TESTO -->
+            <div class="sfb-popup" id="textSizePopup" style="max-width:210px;">
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.applyBlockSize('h1')"><strong style="font-size:17px;">Titolo Grande</strong><span class="slash-cmd-tag">H1</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.applyBlockSize('h2')"><strong style="font-size:15px;">Sottotitolo</strong><span class="slash-cmd-tag">H2</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.applyBlockSize('p')"><span>Testo Normale</span><span class="slash-cmd-tag">P</span></button>
+              <button class="slash-cmd-item" onmousedown="event.preventDefault()" onclick="app.applyBlockSize('small')"><span style="font-size:12px;">Testo Piccolo</span><span class="slash-cmd-tag">S</span></button>
+            </div>
+
+            <!-- UNICA SMART FORMATTING BAR SOPRA LA TASTIERA -->
+            <div class="smart-format-bar" id="smartFormatBar">
+              <div class="sfb-fixed-left">
+                <button class="sfb-slash-btn" onmousedown="event.preventDefault()" onclick="app.toggleSlashMenu()" title="Comandi rapidi /">/</button>
+              </div>
+
+              <div class="sfb-scroll">
+                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.toggleTextSizePopup()" title="Dimensione carattere">T↕</button>
+                <button class="sfb-btn" id="sfbBoldBtn" onmousedown="event.preventDefault()" onclick="app.execFormat('bold')" title="Grassetto"><strong>B</strong></button>
+                <button class="sfb-btn" id="sfbItalicBtn" onmousedown="event.preventDefault()" onclick="app.execFormat('italic')" title="Corsivo"><em>I</em></button>
+
+                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.toggleInlinePalette('textColorPalette')" title="Colore carattere">
+                  <span style="border-bottom:3px solid var(--accent); line-height:1.1;">A</span>
+                </button>
+                <div class="sfb-inline-palette" id="textColorPalette">
+                  <button class="color-dot" style="background:var(--text-main);" onmousedown="event.preventDefault()" onclick="app.applyTextColor('inherit')" title="Predefinito"></button>
+                  <button class="color-dot" style="background:#EF4444;" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#EF4444')" title="Rosso"></button>
+                  <button class="color-dot" style="background:#3B82F6;" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#3B82F6')" title="Blu"></button>
+                  <button class="color-dot" style="background:#10B981;" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#10B981')" title="Verde"></button>
+                  <button class="color-dot" style="background:#F59E0B;" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#F59E0B')" title="Arancione"></button>
+                  <button class="color-dot" style="background:#A855F7;" onmousedown="event.preventDefault()" onclick="app.applyTextColor('#A855F7')" title="Viola"></button>
+                </div>
+
+                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.toggleInlinePalette('hiliteColorPalette')" title="Evidenziatore">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+                </button>
+                <div class="sfb-inline-palette" id="hiliteColorPalette">
+                  <button class="color-dot" style="background:#FEF08A;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#FEF08A', '#0F172A')" title="Giallo"></button>
+                  <button class="color-dot" style="background:#BBF7D0;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#BBF7D0', '#0F172A')" title="Verde menta"></button>
+                  <button class="color-dot" style="background:#BAE6FD;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#BAE6FD', '#0F172A')" title="Azzurro"></button>
+                  <button class="color-dot" style="background:#FBCFE8;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#FBCFE8', '#0F172A')" title="Rosa"></button>
+                  <button class="color-dot" style="background:#E9D5FF;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('#E9D5FF', '#0F172A')" title="Viola chiaro"></button>
+                  <button class="color-dot" style="background:transparent;" onmousedown="event.preventDefault()" onclick="app.applyHighlight('transparent', 'inherit')" title="Nessuno sfondo"></button>
+                </div>
+
+                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.execFormat('undo')" title="Annulla">↶</button>
+                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.execFormat('redo')" title="Ripeti">↷</button>
+              </div>
+
+              <div class="sfb-fixed-right">
+                <button class="sfb-btn" onmousedown="event.preventDefault()" onclick="app.dismissKeyboard()" title="Chiudi tastiera">✓</button>
+              </div>
             </div>
           </div>
         </section>
@@ -1557,6 +1798,26 @@
       <div class="row">
         <button class="btn" style="flex:1;" onclick="app.insertSketchToNote()">Inserisci nella Nota</button>
         <button class="btn btn-primary" style="flex:1;" onclick="app.convertSketchWithGemini()">Converti in LaTeX/Testo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FORMULA GUIDATA KATEX MODAL -->
+  <div class="modal-backdrop" id="formulaModal">
+    <div class="modal-box">
+      <div class="card-header">
+        <div class="card-title">Inserisci Formula (KaTeX)</div>
+        <button class="btn btn-sm" onclick="app.closeFormulaModal()">Chiudi</button>
+      </div>
+      <input type="text" id="formulaInput" placeholder="Es. \int_0^\infty e^{-x}\,dx oppure \frac{a}{b}" oninput="app.updateFormulaPreview()">
+      <div id="formulaPreview" class="md-preview" style="min-height:56px; display:flex; align-items:center; justify-content:center;"></div>
+      <div class="row">
+        <label class="row" style="font-size:12px; gap:6px; cursor:pointer;">
+          <input type="checkbox" id="formulaBlockChk" style="width:auto;">
+          <span>Formula centrata (blocco)</span>
+        </label>
+        <div style="flex:1"></div>
+        <button class="btn btn-primary" onclick="app.confirmFormulaInsert()">Inserisci</button>
       </div>
     </div>
   </div>
@@ -2124,22 +2385,35 @@
         this.openNoteEditor(id);
       },
 
+      autoResizeTitle() {
+        const el = document.getElementById('noteTitleInput');
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = el.scrollHeight + 'px';
+      },
+
       openNoteEditor(id) {
         const n = this.notes.find(x => String(x.id) === String(id));
         if (!n) return;
         this.activeNoteId = n.id;
         this.editorOpen = true;
-        this.previewMode = false;
         document.body.classList.add('editor-fullscreen');
         document.getElementById('fnListContainer').style.display = 'none';
         document.getElementById('fnGroupsContainer').style.display = 'none';
         document.getElementById('fnEditorContainer').classList.add('active');
 
-        document.getElementById('noteTitleInput').value = n.title || '';
-        document.getElementById('noteBodyInput').value = n.content_markdown || '';
-        document.getElementById('noteBodyInput').style.display = 'block';
-        document.getElementById('notePreviewBox').style.display = 'none';
-        document.getElementById('togglePreviewBtn').classList.remove('active');
+        const titleEl = document.getElementById('noteTitleInput');
+        titleEl.value = n.title || '';
+        setTimeout(() => this.autoResizeTitle(), 10);
+
+        const subj = n.subject || 'Generale';
+        document.getElementById('editorSubjectCrumb').textContent = subj;
+        document.getElementById('sheetSubjectChip').textContent = subj;
+        document.getElementById('sheetDateLbl').textContent = (n.updated_at || n.created_at || '').slice(0, 10) || 'Oggi';
+
+        const ed = document.getElementById('noteVisualEditor');
+        ed.innerHTML = this.markdownToHtml(n.content_markdown || '');
+
         document.getElementById('autoSaveLbl').textContent = 'Salvato';
         document.getElementById('autoSaveLbl').className = 'autosave-badge saved';
 
@@ -2154,10 +2428,12 @@
         } else {
           aw.style.display = 'none';
         }
+        this.showSmartBar(false);
       },
 
       async closeEditor(skipSwitch = false) {
         clearTimeout(this.autoSaveTimer);
+        this.showSmartBar(false);
         await this.saveCurrentNote(false);
         this.editorOpen = false;
         this.activeNoteId = null;
@@ -2187,10 +2463,9 @@
         if (idx < 0) return;
 
         const title = document.getElementById('noteTitleInput').value.trim() || 'Appunto senza titolo';
-        const body = document.getElementById('noteBodyInput').value;
+        const body = this.getEditorMarkdown();
         const cur = this.notes[idx];
 
-        // Se la nota è vuota e mai modificata, mantieni titolo vuoto finché non chiude
         const isEdited = title !== (cur.title || '') || body !== (cur.content_markdown || '');
         if (!isEdited && cur.title) {
           document.getElementById('autoSaveLbl').textContent = 'Salvato';
@@ -2288,6 +2563,8 @@
             this.notes[idx].folder_id = null;
           }
           await this.idbSet('notes', this.notes);
+          document.getElementById('editorSubjectCrumb').textContent = this.notes[idx].subject;
+          document.getElementById('sheetSubjectChip').textContent = this.notes[idx].subject;
           this.scheduleDriveSync();
           this.showToast(`Spostata in ${this.notes[idx].subject}`);
         }
@@ -2300,17 +2577,15 @@
         const h = String(Math.floor(secs / 3600)).padStart(2, '0');
         const m = String(Math.floor((secs % 3600) / 60)).padStart(2, '0');
         const s = String(secs % 60).padStart(2, '0');
-        const tb = document.getElementById('noteBodyInput');
-        const marker = `[${h}:${m}:${s}] `;
-        const pos = tb.selectionStart || tb.value.length;
-        tb.value = tb.value.slice(0, pos) + marker + tb.value.slice(pos);
+        const ts = `${h}:${m}:${s}`;
+        this.insertHtmlAtCursor(`<button type="button" class="ts-chip" contenteditable="false" onclick="app.seekAudio('${ts}')">${ts}</button>&nbsp;`);
         this.scheduleAutoSave();
       },
 
       exportActiveNoteMd() {
         document.getElementById('editorMoreMenu').classList.remove('open');
         const title = document.getElementById('noteTitleInput').value.trim() || 'nota';
-        const body = document.getElementById('noteBodyInput').value || '';
+        const body = this.getEditorMarkdown() || '';
         const blob = new Blob([`# ${title}\n\n${body}`], { type: 'text/markdown;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -2320,34 +2595,128 @@
         URL.revokeObjectURL(url);
       },
 
-      toggleNotePreview() {
-        this.previewMode = !this.previewMode;
-        document.getElementById('togglePreviewBtn').classList.toggle('active', this.previewMode);
-        document.getElementById('noteBodyInput').style.display = this.previewMode ? 'none' : 'block';
-        document.getElementById('notePreviewBox').style.display = this.previewMode ? 'block' : 'none';
-        if (this.previewMode) this.renderMarkdownPreview();
+      // ---------------- VISUAL EDITOR CONVERSION (MARKDOWN <-> HTML + KATEX LIVE) ----------------
+      renderKatexHtml(tex, displayMode = false) {
+        const clean = String(tex || '').trim();
+        let rendered = this.esc(clean);
+        if (window.katex) {
+          try { rendered = katex.renderToString(clean, { displayMode, throwOnError: false }); } catch {}
+        }
+        return `<span class="katex-pill${displayMode ? ' block' : ''}" contenteditable="false" data-tex="${this.esc(clean)}" data-display="${displayMode ? '1' : '0'}" onclick="app.editKatexPill(this)">${rendered}</span>`;
       },
 
-      renderMarkdownPreview() {
-        const raw = document.getElementById('noteBodyInput').value || '';
-        let html = this.esc(raw)
-          .replace(/^### (.*)$/gm, '<h3>$1</h3>')
-          .replace(/^## (.*)$/gm, '<h2>$1</h2>')
-          .replace(/^# (.*)$/gm, '<h1>$1</h1>')
-          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-          .replace(/`([^`]+)`/g, '<code>$1</code>')
-          .replace(/\[(\d{2}:\d{2}:\d{2})\]/g, '<button class="ts-chip" onclick="app.seekAudio(\'$1\')">$1</button>');
+      markdownToHtml(raw) {
+        if (!raw) return '';
+        let text = String(raw);
+        // Preserva blocchi di codice
+        const codeBlocks = [];
+        text = text.replace(/```([\s\S]*?)```/g, (_, code) => {
+          const idx = codeBlocks.length;
+          codeBlocks.push(`<pre><code>${this.esc(code.trim())}</code></pre>`);
+          return `@@CODEBLOCK_${idx}@@`;
+        });
+        // Preserva formule display $$...$$ e inline $...$
+        const mathBlocks = [];
+        text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => {
+          const idx = mathBlocks.length;
+          mathBlocks.push(this.renderKatexHtml(tex, true));
+          return `@@MATH_${idx}@@`;
+        });
+        text = text.replace(/\$([^$\n]+?)\$/g, (_, tex) => {
+          const idx = mathBlocks.length;
+          mathBlocks.push(this.renderKatexHtml(tex, false));
+          return `@@MATH_${idx}@@`;
+        });
 
-        if (window.katex) {
-          html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => {
-            try { return katex.renderToString(this.unesc(tex), { displayMode: true, throwOnError: false }); }
-            catch { return tex; }
-          }).replace(/\$([^$\n]+?)\$/g, (_, tex) => {
-            try { return katex.renderToString(this.unesc(tex), { displayMode: false, throwOnError: false }); }
-            catch { return tex; }
-          });
+        const lines = text.split('\n');
+        const outLines = lines.map(line => {
+          const t = line.trim();
+          if (t.startsWith('@@CODEBLOCK_')) return t;
+          if (/^###\s+/.test(line)) return `<h3>${this.formatInlineRich(line.replace(/^###\s+/, ''))}</h3>`;
+          if (/^##\s+/.test(line)) return `<h2>${this.formatInlineRich(line.replace(/^##\s+/, ''))}</h2>`;
+          if (/^#\s+/.test(line)) return `<h1>${this.formatInlineRich(line.replace(/^#\s+/, ''))}</h1>`;
+          const todoMatch = line.match(/^- \[([ xX])\]\s*(.*)$/);
+          if (todoMatch) {
+            const done = todoMatch[1].toLowerCase() === 'x';
+            return `<div class="todo-row${done ? ' done' : ''}"><input type="checkbox" ${done ? 'checked' : ''} onchange="this.parentElement.classList.toggle('done', this.checked); app.scheduleAutoSave();"><span>${this.formatInlineRich(todoMatch[2])}</span></div>`;
+          }
+          if (!t) return '<div><br></div>';
+          return `<div>${this.formatInlineRich(line)}</div>`;
+        });
+
+        let html = outLines.join('');
+        codeBlocks.forEach((cb, i) => { html = html.replace(`@@CODEBLOCK_${i}@@`, cb); });
+        mathBlocks.forEach((mb, i) => { html = html.replace(`@@MATH_${i}@@`, mb); });
+        return html;
+      },
+
+      formatInlineRich(line) {
+        // Consente span/mark inline sicuri già salvati, altrimenti formatta Markdown
+        let s = line
+          .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">')
+          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+          .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+          .replace(/`([^`]+)`/g, '<code>$1</code>')
+          .replace(/\[(\d{2}:\d{2}:\d{2})\]/g, '<button type="button" class="ts-chip" contenteditable="false" onclick="app.seekAudio(\'$1\')">$1</button>');
+        return s;
+      },
+
+      getEditorMarkdown() {
+        const ed = document.getElementById('noteVisualEditor');
+        if (!ed) return '';
+        const serialize = (node) => {
+          if (node.nodeType === Node.TEXT_NODE) return node.nodeValue;
+          if (node.nodeType !== Node.ELEMENT_NODE) return '';
+          const tag = node.tagName.toLowerCase();
+          if (node.classList.contains('katex-pill')) {
+            const tex = node.getAttribute('data-tex') || '';
+            return node.getAttribute('data-display') === '1' ? `$$${tex}$$` : `$${tex}$`;
+          }
+          if (node.classList.contains('ts-chip')) {
+            return `[${(node.textContent || '').trim()}]`;
+          }
+          if (node.classList.contains('todo-row')) {
+            const chk = node.querySelector('input[type="checkbox"]');
+            const txt = node.querySelector('span') ? serializeChildren(node.querySelector('span')) : '';
+            return `- [${chk && chk.checked ? 'x' : ' '}] ${txt}\n`;
+          }
+          if (tag === 'br') return '\n';
+          if (tag === 'img') return `![${node.getAttribute('alt') || 'Schizzo'}](${node.getAttribute('src') || ''})\n`;
+          if (tag === 'pre') return `\n\`\`\`\n${node.textContent.trim()}\n\`\`\`\n`;
+          if (tag === 'code') return `\`${node.textContent}\``;
+          if (tag === 'strong' || tag === 'b') return `**${serializeChildren(node)}**`;
+          if (tag === 'em' || tag === 'i') return `*${serializeChildren(node)}*`;
+          if (tag === 'h1') return `# ${serializeChildren(node).trim()}\n`;
+          if (tag === 'h2') return `## ${serializeChildren(node).trim()}\n`;
+          if (tag === 'h3') return `### ${serializeChildren(node).trim()}\n`;
+          if (tag === 'small') return `<small>${serializeChildren(node)}</small>`;
+          if (tag === 'span' || tag === 'mark' || tag === 'font') {
+            const st = node.getAttribute('style') || '';
+            const col = node.getAttribute('color') || '';
+            if (st || col) return node.outerHTML;
+            return serializeChildren(node);
+          }
+          if (tag === 'div' || tag === 'p') {
+            const inner = serializeChildren(node);
+            return inner.endsWith('\n') ? inner : inner + '\n';
+          }
+          return serializeChildren(node);
+        };
+        const serializeChildren = (el) => Array.from(el.childNodes).map(serialize).join('');
+        return serializeChildren(ed).replace(/\n{3,}/g, '\n\n').trim();
+      },
+
+      insertHtmlAtCursor(html) {
+        const ed = document.getElementById('noteVisualEditor');
+        if (!ed) return;
+        ed.focus();
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0 && ed.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+          document.execCommand('insertHTML', false, html);
+        } else {
+          ed.insertAdjacentHTML('beforeend', html);
         }
-        document.getElementById('notePreviewBox').innerHTML = html.replace(/\n/g, '<br>');
+        this.scheduleAutoSave();
       },
 
       seekAudio(hhmmss) {
@@ -2364,7 +2733,7 @@
 
       // ---------------- RSVP SPEED READING ----------------
       openRsvp() {
-        const text = (document.getElementById('noteBodyInput').value || '').replace(/[#*`$]/g, ' ').trim();
+        const text = (document.getElementById('noteVisualEditor').innerText || '').replace(/[#*`$]/g, ' ').trim();
         this.rsvpWords = text ? text.split(/\s+/) : ['Nessun', 'testo', 'nella', 'nota'];
         this.rsvpIdx = 0;
         this.renderRsvpWord();
@@ -2444,8 +2813,7 @@
             { text: 'Estrai il testo, le formule matematiche (in LaTeX $$...$$ o $...$) o tabelle (in Markdown) da questa immagine. Restituisci SOLO il contenuto strutturato senza commenti.' },
             { inlineData: { mimeType: file.type || 'image/jpeg', data: b64 } }
           ]);
-          const tb = document.getElementById('noteBodyInput');
-          tb.value = (tb.value ? tb.value + '\n\n' : '') + out;
+          this.insertHtmlAtCursor(this.markdownToHtml(out));
           await this.saveCurrentNote(true);
           this.showToast('OCR completato e inserito nella nota');
         } catch (err) {
@@ -2496,8 +2864,7 @@
               if (e.results[i].isFinal) txt += e.results[i][0].transcript + ' ';
             }
             if (txt) {
-              const tb = document.getElementById('noteBodyInput');
-              tb.value += txt;
+              this.insertHtmlAtCursor(this.esc(txt));
               this.scheduleAutoSave();
             }
           };
@@ -2572,8 +2939,7 @@
             { inlineData: { mimeType: blob.type || 'audio/webm', data: b64 } }
           ], sys);
 
-          const tb = document.getElementById('noteBodyInput');
-          tb.value = (tb.value ? tb.value + '\n\n' : '') + out;
+          this.insertHtmlAtCursor(this.markdownToHtml(out));
           if (mode === 'aula') {
             const audioUrl = URL.createObjectURL(blob);
             const idx = this.notes.findIndex(x => String(x.id) === String(this.activeNoteId));
@@ -2943,37 +3309,245 @@
         document.getElementById('flashcardModal').classList.remove('open');
       },
 
-      // ---------------- BARRA MATH & MARKDOWN SOPRA LA TASTIERA ----------------
-      showMathBar(show) {
-        const bar = document.getElementById('mathQuickBar');
+      // ---------------- SMART FORMATTING BAR + SLASH COMMANDS + FORMULA GUIDATA ----------------
+      showSmartBar(show) {
+        const bar = document.getElementById('smartFormatBar');
         if (!bar) return;
-        clearTimeout(this._mathBarTimer);
+        clearTimeout(this._smartBarTimer);
         if (show) {
           bar.classList.add('visible');
-          this.positionMathBar();
+          this.positionSmartBar();
+          this.updateFormatStates();
         } else {
-          this._mathBarTimer = setTimeout(() => bar.classList.remove('visible'), 180);
+          this._smartBarTimer = setTimeout(() => {
+            bar.classList.remove('visible');
+            document.getElementById('slashMenuPopup')?.classList.remove('open');
+            document.getElementById('textSizePopup')?.classList.remove('open');
+          }, 180);
         }
       },
 
-      positionMathBar() {
-        const bar = document.getElementById('mathQuickBar');
-        if (!bar || !window.visualViewport) return;
-        const offset = Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop);
-        bar.style.bottom = `${offset}px`;
+      onVisualEditorBlur() {
+        this.showSmartBar(false);
       },
 
-      insertMathSnippet(prefix, suffix) {
-        const tb = document.getElementById('noteBodyInput');
-        if (!tb) return;
-        const start = tb.selectionStart ?? tb.value.length;
-        const end = tb.selectionEnd ?? tb.value.length;
-        const sel = tb.value.slice(start, end);
-        tb.value = tb.value.slice(0, start) + prefix + sel + suffix + tb.value.slice(end);
-        const cursor = start + prefix.length + sel.length;
-        tb.focus();
-        tb.setSelectionRange(cursor, cursor);
+      positionSmartBar() {
+        const bar = document.getElementById('smartFormatBar');
+        if (!bar) return;
+        let offset = 0;
+        if (window.visualViewport) {
+          offset = Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop);
+        }
+        bar.style.bottom = `${offset}px`;
+        const barH = bar.offsetHeight || 50;
+        ['slashMenuPopup', 'textSizePopup'].forEach(id => {
+          const p = document.getElementById(id);
+          if (p) p.style.bottom = `${offset + barH + 8}px`;
+        });
+      },
+
+      onVisualEditorInput() {
         this.scheduleAutoSave();
+        this.updateFormatStates();
+        // Attiva menu / automaticamente se si digita / a inizio riga
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0 && sel.isCollapsed) {
+          const node = sel.anchorNode;
+          if (node && node.nodeType === Node.TEXT_NODE) {
+            const before = node.nodeValue.slice(0, sel.anchorOffset);
+            if (before === '/' || /(?:^|\s)\/$/.test(before)) {
+              this._slashRange = { node, offset: sel.anchorOffset };
+              this.positionSmartBar();
+              document.getElementById('slashMenuPopup').classList.add('open');
+            } else if (!before.endsWith('/')) {
+              document.getElementById('slashMenuPopup').classList.remove('open');
+            }
+          }
+        }
+      },
+
+      dismissKeyboard() {
+        const ed = document.getElementById('noteVisualEditor');
+        if (ed) ed.blur();
+        document.getElementById('slashMenuPopup')?.classList.remove('open');
+        document.getElementById('textSizePopup')?.classList.remove('open');
+        this.showSmartBar(false);
+      },
+
+      execFormat(cmd, val = null) {
+        const ed = document.getElementById('noteVisualEditor');
+        if (!ed) return;
+        ed.focus();
+        document.execCommand(cmd, false, val);
+        this.updateFormatStates();
+        this.scheduleAutoSave();
+      },
+
+      updateFormatStates() {
+        const boldBtn = document.getElementById('sfbBoldBtn');
+        const italicBtn = document.getElementById('sfbItalicBtn');
+        try {
+          if (boldBtn) boldBtn.classList.toggle('active', document.queryCommandState('bold'));
+          if (italicBtn) italicBtn.classList.toggle('active', document.queryCommandState('italic'));
+        } catch {}
+      },
+
+      toggleInlinePalette(id) {
+        ['textColorPalette', 'hiliteColorPalette'].forEach(pid => {
+          const el = document.getElementById(pid);
+          if (!el) return;
+          if (pid === id) el.classList.toggle('open');
+          else el.classList.remove('open');
+        });
+      },
+
+      applyTextColor(color) {
+        if (color === 'inherit') {
+          this.execFormat('removeFormat');
+        } else {
+          this.execFormat('foreColor', color);
+        }
+        document.getElementById('textColorPalette')?.classList.remove('open');
+      },
+
+      applyHighlight(bg, fg) {
+        const ed = document.getElementById('noteVisualEditor');
+        if (!ed) return;
+        ed.focus();
+        if (bg === 'transparent') {
+          document.execCommand('hiliteColor', false, 'transparent');
+        } else {
+          document.execCommand('hiliteColor', false, bg);
+          if (fg) document.execCommand('foreColor', false, fg);
+        }
+        document.getElementById('hiliteColorPalette')?.classList.remove('open');
+        this.scheduleAutoSave();
+      },
+
+      toggleTextSizePopup() {
+        document.getElementById('slashMenuPopup')?.classList.remove('open');
+        this.positionSmartBar();
+        document.getElementById('textSizePopup')?.classList.toggle('open');
+      },
+
+      applyBlockSize(type) {
+        document.getElementById('textSizePopup')?.classList.remove('open');
+        const ed = document.getElementById('noteVisualEditor');
+        if (!ed) return;
+        ed.focus();
+        if (type === 'h1' || type === 'h2' || type === 'p') {
+          document.execCommand('formatBlock', false, type.toUpperCase());
+        } else if (type === 'small') {
+          const sel = window.getSelection();
+          if (sel && !sel.isCollapsed) {
+            document.execCommand('insertHTML', false, `<small>${this.esc(sel.toString())}</small>`);
+          } else {
+            document.execCommand('fontSize', false, '2');
+          }
+        }
+        this.scheduleAutoSave();
+      },
+
+      toggleSlashMenu() {
+        document.getElementById('textSizePopup')?.classList.remove('open');
+        this.positionSmartBar();
+        document.getElementById('slashMenuPopup')?.classList.toggle('open');
+      },
+
+      async runSlashCmd(cmd) {
+        document.getElementById('slashMenuPopup')?.classList.remove('open');
+        // Rimuovi lo '/' appena digitato se presente
+        if (this._slashRange && this._slashRange.node && this._slashRange.node.nodeValue) {
+          const val = this._slashRange.node.nodeValue;
+          const off = this._slashRange.offset;
+          if (off > 0 && val[off - 1] === '/') {
+            this._slashRange.node.nodeValue = val.slice(0, off - 1) + val.slice(off);
+          }
+          this._slashRange = null;
+        }
+
+        if (cmd === 'formula') {
+          this.openFormulaModal('');
+        } else if (cmd === 'matrice') {
+          const dims = prompt('Dimensioni matrice (es. 3x3 o 2x2):', '3x3');
+          if (!dims) return;
+          const m = dims.match(/(\d+)\s*[x×*]\s*(\d+)/i);
+          const rows = Math.min(6, Math.max(1, parseInt(m ? m[1] : '3', 10)));
+          const cols = Math.min(6, Math.max(1, parseInt(m ? m[2] : '3', 10)));
+          const body = Array.from({ length: rows }, (_, r) =>
+            Array.from({ length: cols }, (_, c) => `a_{${r + 1}${c + 1}}`).join(' & ')
+          ).join(' \\\\ ');
+          const tex = `\\begin{pmatrix} ${body} \\end{pmatrix}`;
+          this.insertHtmlAtCursor(this.renderKatexHtml(tex, true) + '<div><br></div>');
+        } else if (cmd === 'ocr') {
+          document.getElementById('ocrImageInput')?.click();
+        } else if (cmd === 'disegno') {
+          this.openSketchModal();
+        } else if (cmd === 'todo') {
+          this.insertHtmlAtCursor(`<div class="todo-row"><input type="checkbox" onchange="this.parentElement.classList.toggle('done', this.checked); app.scheduleAutoSave();"><span>Nuova attività</span></div>`);
+        } else if (cmd === 'codice') {
+          this.insertHtmlAtCursor(`<pre><code>// codice qui</code></pre><div><br></div>`);
+        } else if (cmd === 'audio') {
+          this.insertTimestampMarker();
+        } else if (cmd === 'riassumi') {
+          const md = this.getEditorMarkdown();
+          if (!md.trim()) return this.showToast('Scrivi prima qualcosa nella nota');
+          try {
+            this.showToast('Sintesi con Gemini in corso...');
+            const summary = await this.callGemini([
+              { text: `Riassumi e struttura in punti chiave chiari (con eventuali formule LaTeX $...$) questo testo:\n\n${md.slice(0, 6000)}` }
+            ], 'Sei un assistente universitario sintetico e preciso.');
+            this.insertHtmlAtCursor(`<div><br></div><h2>Sintesi</h2>` + this.markdownToHtml(summary));
+            this.showToast('Sintesi inserita nella nota');
+          } catch (err) {
+            this.showToast('Errore Gemini: ' + err.message);
+          }
+        }
+      },
+
+      openFormulaModal(initialTex = '', editTarget = null) {
+        this._editingKatexEl = editTarget;
+        document.getElementById('formulaInput').value = initialTex;
+        document.getElementById('formulaBlockChk').checked = editTarget ? editTarget.getAttribute('data-display') === '1' : false;
+        this.updateFormulaPreview();
+        document.getElementById('formulaModal').classList.add('open');
+        setTimeout(() => document.getElementById('formulaInput').focus(), 60);
+      },
+
+      closeFormulaModal() {
+        this._editingKatexEl = null;
+        document.getElementById('formulaModal').classList.remove('open');
+      },
+
+      updateFormulaPreview() {
+        const tex = document.getElementById('formulaInput').value.trim();
+        const prev = document.getElementById('formulaPreview');
+        if (!tex) { prev.innerHTML = '<span class="muted">Anteprima KaTeX...</span>'; return; }
+        if (window.katex) {
+          try {
+            prev.innerHTML = katex.renderToString(tex, { displayMode: document.getElementById('formulaBlockChk').checked, throwOnError: false });
+          } catch { prev.textContent = tex; }
+        } else {
+          prev.textContent = tex;
+        }
+      },
+
+      confirmFormulaInsert() {
+        const tex = document.getElementById('formulaInput').value.trim();
+        const display = document.getElementById('formulaBlockChk').checked;
+        if (!tex) return this.closeFormulaModal();
+        const html = this.renderKatexHtml(tex, display) + '&nbsp;';
+        if (this._editingKatexEl) {
+          this._editingKatexEl.outerHTML = html;
+          this.scheduleAutoSave();
+        } else {
+          this.insertHtmlAtCursor(html);
+        }
+        this.closeFormulaModal();
+      },
+
+      editKatexPill(el) {
+        this.openFormulaModal(el.getAttribute('data-tex') || '', el);
       },
 
       // ---------------- BLOCCO SCHIZZO / S-PEN CANVAS ----------------
@@ -3034,8 +3608,7 @@
       async insertSketchToNote() {
         const canvas = document.getElementById('sketchCanvas');
         const dataUrl = canvas.toDataURL('image/png');
-        const tb = document.getElementById('noteBodyInput');
-        tb.value = (tb.value ? tb.value + '\n\n' : '') + `![Schizzo](${dataUrl})`;
+        this.insertHtmlAtCursor(`<img src="${dataUrl}" alt="Schizzo"><div><br></div>`);
         await this.saveCurrentNote(true);
         this.closeSketchModal();
         this.showToast('Schizzo inserito nella nota');
@@ -3050,8 +3623,7 @@
             { text: 'Converti questo schizzo o formula manoscritta in Markdown pulito con formule LaTeX ($...$ o $$...$$) o diagramma testuale chiaro. Restituisci SOLO il risultato senza commenti.' },
             { inlineData: { mimeType: 'image/png', data: b64 } }
           ]);
-          const tb = document.getElementById('noteBodyInput');
-          tb.value = (tb.value ? tb.value + '\n\n' : '') + out;
+          this.insertHtmlAtCursor(this.markdownToHtml(out));
           await this.saveCurrentNote(true);
           this.closeSketchModal();
           this.showToast('Schizzo convertito in LaTeX/testo');
@@ -3130,7 +3702,8 @@
         }
 
         if (window.visualViewport) {
-          window.visualViewport.addEventListener('resize', () => this.positionMathBar());
+          window.visualViewport.addEventListener('resize', () => this.positionSmartBar());
+          window.visualViewport.addEventListener('scroll', () => this.positionSmartBar());
         }
       },
 
@@ -3540,7 +4113,7 @@
         const cur = this.notes.find(x => String(x.id) === String(this.activeNoteId));
         const title = (document.getElementById('noteTitleInput').value.trim() || 'Appunto').replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
         const subject = ((cur && cur.subject) || 'Generale').replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
-        const md = document.getElementById('noteBodyInput').value;
+        const md = this.getEditorMarkdown();
         if (!md.trim()) return this.showToast('Scrivi prima la nota');
         try {
           const subjId = await this.ensureDriveFolder(subject, fid);
