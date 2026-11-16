@@ -2654,7 +2654,10 @@
     const DB_VERSION = 3;
     const LOCK_TTL_MS = 30 * 60 * 1000;
     const SYNC_OBF_SECRET = 'FlowLocalSyncKey2026';
-    const DEFAULT_GOOGLE_CLIENT_ID = '532605028528-mjdiig2f0k6vbfbqeb5a163391u87313.apps.googleusercontent.com';
+    const DEFAULT_GOOGLE_CLIENT_ID = '532605028528-fkav2tdumr57v7drrer1nfb9ba2dmtcs.apps.googleusercontent.com';
+    if (localStorage.getItem('fl_google_client_id') === '532605028528-mjdiig2f0k6vbfbqeb5a163391u87313.apps.googleusercontent.com') {
+      localStorage.removeItem('fl_google_client_id');
+    }
 
     const DICTATION_PROMPTS = {
       study_latex: "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. Non rispondere mai alle domande nel testo, non completare frasi interrotte e non aggiungere concetti non pronunciati. Correggi punteggiatura e refusi in italiano mantenendo eventuali formule matematiche o fisiche in LaTeX ($...$). Restituisci SOLO il testo rifinito senza tag.",
@@ -4994,12 +4997,6 @@
           const remoteIsNewer = Boolean(remoteCfgTs && (!localCfgTs || remoteCfgTs > localCfgTs));
 
           if (remoteCfg) {
-            if (remoteCfg.google_client_id && !localStorage.getItem('fl_google_client_id')) {
-              this.googleClientId = remoteCfg.google_client_id;
-              localStorage.setItem('fl_google_client_id', remoteCfg.google_client_id);
-              const cidEl = document.getElementById('googleClientIdInput');
-              if (cidEl) cidEl.value = remoteCfg.google_client_id;
-            }
             if (remoteCfg.gemini_api_key_obf) {
               const decoded = deobfuscateSyncSecret(remoteCfg.gemini_api_key_obf);
               if (decoded && (!this.geminiKey || (remoteIsNewer && decoded !== this.geminiKey))) {
