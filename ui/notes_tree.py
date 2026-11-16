@@ -10,9 +10,10 @@ Albero gerarchico stile Samsung Notes per la sidebar di FlowNotes:
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import QModelIndex, QPoint, QRect, QRectF, Qt, pyqtSignal
+from PyQt6.QtCore import QMimeData, QModelIndex, QPoint, QRect, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QBrush,
     QColor,
@@ -26,6 +27,7 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QMenu,
     QStyle,
     QStyledItemDelegate,
@@ -193,6 +195,7 @@ class SamsungNotesTreeWidget(QTreeWidget):
     toggleNoteStudiedRequested = pyqtSignal(int)   # note_id
     openInNewTabRequested = pyqtSignal(object)     # node_data tuple
     openInSplitRequested = pyqtSignal(object)      # node_data tuple
+    nodeLeftClicked = pyqtSignal(object)           # node_data tuple
     nodeMiddleClicked = pyqtSignal(object)         # node_data tuple
     nodeDoubleClicked = pyqtSignal(object)         # node_data tuple
 
@@ -206,6 +209,8 @@ class SamsungNotesTreeWidget(QTreeWidget):
             "badge_text": "#CBD5E1",
         }
         self._hovered_action_rect: Optional[tuple[QRectF, QModelIndex]] = None
+        self._left_press_pos: Optional[QPoint] = None
+        self._left_press_item: Optional[QTreeWidgetItem] = None
 
         self.setObjectName("NKTree")
         self.setHeaderHidden(True)
@@ -217,11 +222,12 @@ class SamsungNotesTreeWidget(QTreeWidget):
         self.header().setStretchLastSection(True)
         self.setItemDelegate(SamsungNotesItemDelegate(self))
 
-        # Drag & Drop interno
+        # Drag & Drop interno + verso TabBar/EditorPane
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.setDefaultDropAction(Qt.DropAction.MoveAction)
 
         # Menu contestuale tasto destro
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -282,11 +288,14 @@ class SamsungNotesTreeWidget(QTreeWidget):
                     event.accept()
                     return
         if event.button() == Qt.MouseButton.LeftButton:
+            self._left_press_pos = event.pos()
+            self._left_press_item = self.itemAt(event.pos())
             if self._hovered_action_rect is not None:
                 btn_rect, idx = self._hovered_action_rect
                 if btn_rect.contains(event.position()):
                     item = self.itemFromIndex(idx)
                     if item is not None:
+                        self._left_press_pos = None
                         self._open_item_menu(item, self.viewport().mapToGlobal(event.pos()))
                         return
             item = self.itemAt(event.pos())
@@ -300,6 +309,35 @@ class SamsungNotesTreeWidget(QTreeWidget):
                     item.setExpanded(not item.isExpanded())
                 return
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton and self._left_press_pos is not None:
+            dist = (event.pos() - self._left_press_pos).manhattanLength()
+            item = self.itemAt(event.pos())
+            if dist < QApplication.startDragDistance() and item is not None and item is self._left_press_item:
+                data = item.data(0, ROLE_NODE_DATA)
+                if data and data[0] in ("note", "group_note", "group_board"):
+                    self.nodeLeftClicked.emit(data)
+            self._left_press_pos = None
+            self._left_press_item = None
+        super().mouseReleaseEvent(event)
+
+    def mimeTypes(self) -> List[str]:
+        types = list(super().mimeTypes())
+        if "application/x-flownotes-node" not in types:
+            types.append("application/x-flownotes-node")
+        return types
+
+    def mimeData(self, items: List[QTreeWidgetItem]) -> QMimeData:
+        md = super().mimeData(items)
+        if items:
+            data = items[0].data(0, ROLE_NODE_DATA)
+            if data and data[0] in ("note", "group_note", "group_board"):
+                try:
+                    md.setData("application/x-flownotes-node", json.dumps(list(data)).encode("utf-8"))
+                except Exception:
+                    pass
+        return md
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -369,19 +407,24 @@ class SamsungNotesTreeWidget(QTreeWidget):
         elif data[0] == "note":
             note_id = int(data[1])
             act_tab = menu.addAction(get_icon("plus", size=14), "Apri in nuova scheda")
-            act_tab.triggered.connect(lambda: self.openInNewTabRequested.emit(data))
             act_split = menu.addAction(get_icon("split_h", size=14), "Affianca a destra (Split View)")
-            act_split.triggered.connect(lambda: self.openInSplitRequested.emit(data))
             menu.addSeparator()
             act_st = menu.addAction(get_icon("check", role="success", size=14), "Segna / Rimuovi Studiata")
-            act_st.triggered.connect(lambda: self.toggleNoteStudiedRequested.emit(note_id))
-            menu.exec(global_pos)
+            chosen = menu.exec(global_pos)
+            if chosen == act_tab:
+                self.openInNewTabRequested.emit(data)
+            elif chosen == act_split:
+                self.openInSplitRequested.emit(data)
+            elif chosen == act_st:
+                self.toggleNoteStudiedRequested.emit(note_id)
         elif data[0] in ("group_note", "group_board"):
             act_tab = menu.addAction(get_icon("plus", size=14), "Apri in nuova scheda")
-            act_tab.triggered.connect(lambda: self.openInNewTabRequested.emit(data))
             act_split = menu.addAction(get_icon("split_h", size=14), "Affianca a destra (Split View)")
-            act_split.triggered.connect(lambda: self.openInSplitRequested.emit(data))
-            menu.exec(global_pos)
+            chosen = menu.exec(global_pos)
+            if chosen == act_tab:
+                self.openInNewTabRequested.emit(data)
+            elif chosen == act_split:
+                self.openInSplitRequested.emit(data)
 
     def dropEvent(self, event):
         """Gestisce Drag & Drop di note e sottocartelle mantenendo integrità su SQLite."""

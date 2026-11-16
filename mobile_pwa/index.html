@@ -845,6 +845,183 @@
       text-align: center;
     }
     .toast.show { display: block; }
+
+    /* BREADCRUMB & CONTEXTUAL TOOLS */
+    .breadcrumb-bar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      min-width: 0;
+      white-space: nowrap;
+    }
+    .breadcrumb-bar::-webkit-scrollbar { display: none; }
+    .bc-crumb {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 700;
+      padding: 4px 6px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .bc-crumb:hover { background: var(--bg-input); color: var(--text-main); }
+    .bc-crumb.current { color: var(--text-main); }
+    .bc-sep { color: var(--text-dim); font-size: 13px; user-select: none; }
+
+    .context-tools-bar {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+    }
+    .context-tools-bar.active { display: flex; }
+
+    .ctx-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .ctx-pill:hover { border-color: var(--accent); }
+    .ctx-pill.running {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .pomo-floating-pill {
+      position: fixed;
+      top: calc(10px + var(--safe-top));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 95;
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: var(--bg-card);
+      border: 1px solid var(--accent);
+      color: var(--text-main);
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+      cursor: pointer;
+    }
+    .pomo-floating-pill.visible { display: inline-flex; }
+
+    /* PULL TO REFRESH */
+    .pull-refresh-ind {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-radius: 10px;
+    }
+    .pull-refresh-ind.show { display: flex; }
+
+    /* MATH & MARKDOWN QUICK BAR ABOVE KEYBOARD */
+    .math-quick-bar {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 75;
+      display: none;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px calc(7px + var(--safe-bottom));
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .math-quick-bar.visible { display: flex; }
+    .math-quick-bar::-webkit-scrollbar { display: none; }
+    .math-key {
+      flex-shrink: 0;
+      padding: 7px 11px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text-main);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .math-key:active { background: var(--accent-soft); border-color: var(--accent); }
+
+    /* FLOWTIME SEGMENTED BAR */
+    .seg-bar {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      border-radius: 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      width: fit-content;
+    }
+    .seg-btn {
+      padding: 7px 14px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .seg-btn.active { background: var(--accent-soft); color: var(--accent); }
+
+    /* FLASHCARDS SWIPEABLE */
+    .flashcard-stage {
+      min-height: 190px;
+      padding: 20px;
+      border-radius: 14px;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 10px;
+      cursor: pointer;
+      user-select: none;
+      touch-action: pan-y;
+    }
+
+    /* SKETCH CANVAS */
+    .sketch-canvas {
+      width: 100%;
+      height: 280px;
+      background: #FFFFFF;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      touch-action: none;
+      cursor: crosshair;
+    }
   </style>
 </head>
 <body>
@@ -894,9 +1071,16 @@
 
     <button class="btn btn-sm" style="margin-top:8px; width:100%;" onclick="app.createFolderPrompt()">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      + Nuova Cartella / Materia
+      Nuova Cartella / Materia
     </button>
   </aside>
+
+  <!-- PILLOLA POMODORO FLOTTANTE (SEMPRE VISIBILE QUANDO ATTIVO) -->
+  <button class="pomo-floating-pill" id="pomoFloatingPill" onclick="app.togglePomodoro()" title="Metti in pausa / Riprendi Pomodoro">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    <span id="pomoPillTimer">25:00</span>
+    <span id="pomoPillSubject" style="color:var(--text-muted); font-weight:600;"></span>
+  </button>
 
   <div class="app-shell">
     <!-- SIDEBAR RAIL (TABLET / DESKTOP >= 768px) -->
@@ -930,19 +1114,18 @@
     <!-- MAIN WORKSPACE -->
     <div class="main-area">
       <header class="global-topbar">
-        <div class="topbar-left">
+        <div class="topbar-left" style="flex:1; min-width:0;">
           <button class="icon-btn" id="drawerTriggerBtn" onclick="app.openDrawer()" title="Menu Cartelle">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
           </button>
-          <div class="topbar-title" id="topbarTitle">Tutte le note</div>
+          <div class="breadcrumb-bar" id="topbarBreadcrumb">
+            <button class="bc-crumb current" onclick="app.selectFolderFilter('all')">Quaderno</button>
+          </div>
         </div>
         <div class="topbar-actions">
           <button class="pill-status" onclick="app.syncAllWithDrive(true)" title="Sincronizza con Google Drive">
             <span class="pill-dot" id="driveDot"></span>
             <span id="driveStatusText">Drive Offline</span>
-          </button>
-          <button class="icon-btn" onclick="app.switchEnv('settings')" title="Impostazioni">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
           </button>
         </div>
       </header>
@@ -952,8 +1135,32 @@
         <section class="view active" id="view-flownotes">
           <!-- A) VISTA LISTA / GRIGLIA -->
           <div id="fnListContainer" style="display:flex; flex-direction:column; gap:12px;">
+            <div class="pull-refresh-ind" id="pullRefreshInd">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+              <span id="pullRefreshText">Trascina per sincronizzare...</span>
+            </div>
+
+            <!-- Strumenti Contestuali Materia (Pomodoro + Esame + Flashcard) -->
+            <div class="context-tools-bar" id="subjectContextBar">
+              <button class="ctx-pill" id="ctxPomoBtn" onclick="app.toggleContextualPomodoro()">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span id="ctxPomoLbl">25:00</span>
+              </button>
+              <button class="ctx-pill" id="ctxExamBtn" onclick="app.editSubjectExam()">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                <span id="ctxExamLbl">Imposta Esame</span>
+              </button>
+              <button class="ctx-pill" id="ctxFlashBtn" onclick="app.openSubjectFlashcards()">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                <span>Flashcard</span>
+              </button>
+            </div>
+
             <div class="notes-list-header">
               <div class="row grow" style="gap:8px; flex-wrap:nowrap;">
+                <button class="icon-btn" onclick="app.openDrawer()" title="Apri Cartelle">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                </button>
                 <input type="text" id="notesSearchInput" placeholder="Cerca note per titolo, materia o testo..." oninput="app.renderNotesList()">
                 <button class="icon-btn" id="layoutToggleBtn" onclick="app.toggleNotesLayout()" title="Cambia vista Griglia / Lista">
                   <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
@@ -1018,6 +1225,10 @@
                     <span>Scatta Foto / OCR LaTeX</span>
                     <input type="file" id="ocrImageInput" accept="image/*" capture="environment" style="display:none" onchange="app.runOcrFromFile(event)">
                   </label>
+                  <button class="menu-action" onclick="app.openSketchModal()">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/></svg>
+                    <span>Disegna Schema / S-Pen</span>
+                  </button>
                   <button class="menu-action" onclick="app.openFolderPickerForNote()">
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                     <span>Cambia Materia / Cartella</span>
@@ -1076,16 +1287,72 @@
                 <audio id="noteAudioPlayer" controls style="width:100%; height:36px;"></audio>
               </div>
 
-              <textarea id="noteBodyInput" class="editor-textarea" placeholder="Scrivi in Markdown o LaTeX ($E = mc^2$)..." oninput="app.scheduleAutoSave()"></textarea>
+              <textarea id="noteBodyInput" class="editor-textarea" placeholder="Scrivi in Markdown o LaTeX ($E = mc^2$)..." oninput="app.scheduleAutoSave()" onfocus="app.showMathBar(true)" onblur="app.showMathBar(false)"></textarea>
               <div id="notePreviewBox" class="md-preview" style="display:none;"></div>
+            </div>
+
+            <!-- Barra Rapida Math & Markdown sopra la tastiera -->
+            <div class="math-quick-bar" id="mathQuickBar">
+              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('$', '$')">$..$</button>
+              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('$$\n', '\n$$')">$$</button>
+              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('\\frac{', '}{}')">\frac{}{}</button>
+              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('_', '')">_</button>
+              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('^', '')">^</button>
+              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet(' \\rightarrow ', '')">→</button>
+              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('- [ ] ', '')">- [ ]</button>
+              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertMathSnippet('### ', '')">###</button>
+              <button class="math-key" onmousedown="event.preventDefault()" onclick="app.insertTimestampMarker()">[HH:MM:SS]</button>
             </div>
           </div>
         </section>
 
-        <!-- 2. FLOWTIME (CALENDARIO + AGENDA + ESAMI + POMODORO) -->
+        <!-- 2. FLOWTIME (FOCUS & ESAMI + CALENDARIO) -->
         <section class="view" id="view-flowtime">
+          <div class="row" style="justify-content:space-between;">
+            <div class="seg-bar">
+              <button class="seg-btn active" id="ftSegFocus" onclick="app.switchFlowTimeTab('focus')">Focus &amp; Esami</button>
+              <button class="seg-btn" id="ftSegCal" onclick="app.switchFlowTimeTab('cal')">Calendario</button>
+            </div>
+          </div>
+
+          <!-- Focus & Esami (in primo piano) -->
+          <div id="ftFocusSection" class="grid-2">
+            <!-- Pomodoro Focus -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  Pomodoro Focus
+                </div>
+                <select id="pomoSubjectSelect" style="width:160px;"></select>
+              </div>
+              <div class="row" style="justify-content:center;">
+                <button class="btn btn-sm" onclick="app.setPomoPreset(25, 5)">25m / 5m</button>
+                <button class="btn btn-sm" onclick="app.setPomoPreset(50, 10)">50m / 10m</button>
+              </div>
+              <div class="pomo-display" id="pomoTimerLbl">25:00</div>
+              <div class="row" style="justify-content:center;">
+                <button class="btn btn-primary" id="pomoToggleBtn" onclick="app.togglePomodoro()">Avvia</button>
+                <button class="btn" onclick="app.resetPomodoro()">Reset</button>
+              </div>
+              <div class="muted" id="pomoWeeklyLbl" style="text-align:center;">0 min studiati questa settimana</div>
+            </div>
+
+            <!-- Prossimi Esami -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                  Prossimi Esami
+                </div>
+                <button class="btn btn-sm btn-primary" onclick="app.addExamPrompt()">+ Esame</button>
+              </div>
+              <div id="examsListBox" style="display:flex; flex-direction:column; gap:10px;"></div>
+            </div>
+          </div>
+
           <!-- Calendario & Agenda -->
-          <div class="card">
+          <div id="ftCalSection" class="card" style="display:none;">
             <div class="cal-header">
               <div class="card-title">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -1119,41 +1386,6 @@
               <span class="muted" id="agendaCountLbl">0 impegni</span>
             </div>
             <div id="agendaListBox" style="display:flex; flex-direction:column; gap:8px;"></div>
-          </div>
-
-          <div class="grid-2">
-            <!-- Prossimi Esami -->
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
-                  Prossimi Esami
-                </div>
-                <button class="btn btn-sm btn-primary" onclick="app.addExamPrompt()">+ Esame</button>
-              </div>
-              <div id="examsListBox" style="display:flex; flex-direction:column; gap:10px;"></div>
-            </div>
-
-            <!-- Pomodoro Focus -->
-            <div class="card">
-              <div class="card-header">
-                <div class="card-title">
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                  Pomodoro Focus
-                </div>
-                <select id="pomoSubjectSelect" style="width:160px;"></select>
-              </div>
-              <div class="row" style="justify-content:center;">
-                <button class="btn btn-sm" onclick="app.setPomoPreset(25, 5)">25m / 5m</button>
-                <button class="btn btn-sm" onclick="app.setPomoPreset(50, 10)">50m / 10m</button>
-              </div>
-              <div class="pomo-display" id="pomoTimerLbl">25:00</div>
-              <div class="row" style="justify-content:center;">
-                <button class="btn btn-primary" id="pomoToggleBtn" onclick="app.togglePomodoro()">Avvia</button>
-                <button class="btn" onclick="app.resetPomodoro()">Reset</button>
-              </div>
-              <div class="muted" id="pomoWeeklyLbl" style="text-align:center;">0 min studiati questa settimana</div>
-            </div>
           </div>
         </section>
 
@@ -1215,7 +1447,7 @@
 
     <!-- BOTTOM NAVIGATION (MOBILE < 768px) — ONLY 3 ITEMS -->
     <nav class="bottom-nav">
-      <button class="bnav-btn active" data-nav="flownotes" onclick="app.switchEnv('flownotes')">
+      <button class="bnav-btn active" data-nav="flownotes" onclick="app.onFlowNotesNavTap()">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
         <span>FlowNotes</span>
       </button>
@@ -1286,6 +1518,49 @@
     </div>
   </div>
 
+  <!-- FLASHCARD SWIPEABILI MODAL -->
+  <div class="modal-backdrop" id="flashcardModal">
+    <div class="modal-box">
+      <div class="card-header">
+        <div class="card-title" id="fcModalTitle">Flashcard Ripasso</div>
+        <button class="btn btn-sm" onclick="app.closeFlashcards()">Chiudi</button>
+      </div>
+      <div class="muted" id="fcProgressLbl">0 / 0</div>
+      <div class="flashcard-stage" id="fcStage" onclick="app.flipFlashcard()">
+        <div id="fcSideBadge" class="subject-chip">Domanda</div>
+        <div id="fcText" style="font-size:17px; font-weight:700; line-height:1.45;"></div>
+        <div class="muted" style="font-size:11px;">Tocca per girare · Scorri a sinistra/destra</div>
+      </div>
+      <div class="row" style="justify-content:space-between;">
+        <button class="btn btn-danger" style="flex:1;" onclick="app.nextFlashcard(false)">Da ripassare</button>
+        <button class="btn btn-primary" style="flex:1;" onclick="app.nextFlashcard(true)">Ricordata</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BLOCCO SCHIZZO / S-PEN CANVAS MODAL -->
+  <div class="modal-backdrop" id="sketchModal">
+    <div class="modal-box">
+      <div class="card-header">
+        <div class="card-title">Disegna Schema / S-Pen</div>
+        <button class="btn btn-sm" onclick="app.closeSketchModal()">Chiudi</button>
+      </div>
+      <div class="row" style="justify-content:space-between;">
+        <div class="row" style="gap:6px;">
+          <button class="btn btn-sm" onclick="app.setSketchPen('#0F172A', 2.5)">Penna</button>
+          <button class="btn btn-sm" onclick="app.setSketchPen('#4F46E5', 3)">Blu</button>
+          <button class="btn btn-sm" onclick="app.setSketchPen('#FFFFFF', 14)">Gomma</button>
+        </div>
+        <button class="btn btn-sm btn-danger" onclick="app.clearSketchCanvas()">Pulisci</button>
+      </div>
+      <canvas id="sketchCanvas" class="sketch-canvas"></canvas>
+      <div class="row">
+        <button class="btn" style="flex:1;" onclick="app.insertSketchToNote()">Inserisci nella Nota</button>
+        <button class="btn btn-primary" style="flex:1;" onclick="app.convertSketchWithGemini()">Converti in LaTeX/Testo</button>
+      </div>
+    </div>
+  </div>
+
   <div class="toast" id="toastBox"></div>
 
   <script>
@@ -1325,6 +1600,7 @@
       weeklyStudy: [],
 
       // FlowNotes navigation & editor state
+      currentEnv: 'flownotes',
       activeFolderFilter: 'all', // 'all' | 'groups' | 'trash' | 'folder:<id>' | 'subject:<name>'
       expandedFolders: new Set(),
       notesGridMode: true,
@@ -1333,6 +1609,15 @@
       previewMode: false,
       autoSaveTimer: null,
       driveSyncTimer: null,
+
+      // Flashcards & Sketch state
+      fcDeck: [],
+      fcIdx: 0,
+      fcFlipped: false,
+      sketchCtx: null,
+      sketchDrawing: false,
+      sketchColor: '#0F172A',
+      sketchWidth: 2.5,
 
       // Calendar state
       calYear: new Date().getFullYear(),
@@ -1380,12 +1665,16 @@
         await this.openIDB();
         await this.loadFromIDB();
         this.renderDrawer();
+        this.renderBreadcrumb();
+        this.renderSubjectContextBar();
         this.renderNotesList();
         this.renderGroupSelect();
         this.renderCalendar();
         this.renderExams();
         this.renderSubjects();
         this.updateDrivePill();
+        this.initGestures();
+        this.initAudioMediaSession();
 
         document.addEventListener('click', (e) => {
           const menu = document.getElementById('editorMoreMenu');
@@ -1438,7 +1727,16 @@
         this.showToast('Impostazioni salvate');
       },
 
+      onFlowNotesNavTap() {
+        if (this.currentEnv === 'flownotes' && !this.editorOpen) {
+          this.openDrawer();
+        } else {
+          this.switchEnv('flownotes');
+        }
+      },
+
       switchEnv(env) {
+        this.currentEnv = env;
         if (this.editorOpen && env !== 'flownotes') {
           this.closeEditor(true);
         }
@@ -1446,13 +1744,84 @@
         document.getElementById(`view-${env}`).classList.add('active');
         document.querySelectorAll('[data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === env));
         document.getElementById('drawerTriggerBtn').style.display = (env === 'flownotes') ? 'inline-flex' : 'none';
-        const titles = {
-          flownotes: this.getActiveFolderTitle(),
-          flowtime: 'FlowTime',
-          whis: 'Whis',
-          settings: 'Impostazioni'
-        };
-        document.getElementById('topbarTitle').textContent = titles[env] || 'FlowLocal';
+        this.renderBreadcrumb();
+      },
+
+      renderBreadcrumb() {
+        const bc = document.getElementById('topbarBreadcrumb');
+        if (!bc) return;
+        if (this.currentEnv !== 'flownotes') {
+          const titles = { flowtime: 'FlowTime', whis: 'Whis', settings: 'Impostazioni' };
+          bc.innerHTML = `<button class="bc-crumb current">${titles[this.currentEnv] || 'FlowLocal'}</button>`;
+          return;
+        }
+        const crumbs = [{ label: 'Quaderno', filter: 'all' }];
+        if (this.activeFolderFilter === 'groups') {
+          crumbs.push({ label: 'FlowGroups', filter: 'groups' });
+        } else if (this.activeFolderFilter === 'trash') {
+          crumbs.push({ label: 'Cestino', filter: 'trash' });
+        } else if (this.activeFolderFilter.startsWith('subject:')) {
+          crumbs.push({ label: this.activeFolderFilter.slice(8), filter: this.activeFolderFilter });
+        } else if (this.activeFolderFilter.startsWith('folder:')) {
+          const fid = this.activeFolderFilter.slice(7);
+          const f = this.folders.find(x => String(x.id) === String(fid));
+          if (f) {
+            if (f.parent_id) {
+              const p = this.folders.find(x => String(x.id) === String(f.parent_id));
+              if (p) crumbs.push({ label: p.name, filter: `folder:${p.id}` });
+            }
+            crumbs.push({ label: f.name, filter: `folder:${f.id}` });
+          }
+        }
+        bc.innerHTML = crumbs.map((c, idx) => {
+          const isLast = idx === crumbs.length - 1;
+          const sep = idx > 0 ? '<span class="bc-sep">›</span>' : '';
+          return `${sep}<button class="bc-crumb${isLast ? ' current' : ''}" onclick="app.selectFolderFilter('${this.esc(c.filter)}')">${this.esc(c.label)}</button>`;
+        }).join('');
+      },
+
+      getCurrentSubjectName() {
+        if (this.activeFolderFilter.startsWith('subject:')) {
+          return this.activeFolderFilter.slice(8);
+        }
+        if (this.activeFolderFilter.startsWith('folder:')) {
+          const fid = this.activeFolderFilter.slice(7);
+          const f = this.folders.find(x => String(x.id) === String(fid));
+          if (f) {
+            if (f.parent_id) {
+              const p = this.folders.find(x => String(x.id) === String(f.parent_id));
+              return p ? p.name : f.name;
+            }
+            return f.name;
+          }
+        }
+        if (this.editorOpen && this.activeNoteId) {
+          const n = this.notes.find(x => String(x.id) === String(this.activeNoteId));
+          if (n && n.subject && n.subject !== 'Generale') return n.subject;
+        }
+        return '';
+      },
+
+      renderSubjectContextBar() {
+        const bar = document.getElementById('subjectContextBar');
+        if (!bar) return;
+        const subj = this.getCurrentSubjectName();
+        if (!subj || this.activeFolderFilter === 'groups' || this.activeFolderFilter === 'trash') {
+          bar.classList.remove('active');
+          return;
+        }
+        bar.classList.add('active');
+        const ex = (this.exams || []).find(e => (e.subject_name || '').toLowerCase() === subj.toLowerCase());
+        const examLbl = document.getElementById('ctxExamLbl');
+        if (ex) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const diff = Math.round((new Date(ex.exam_date) - today) / 86400000);
+          examLbl.textContent = diff > 0 ? `-${diff}g · ${ex.exam_title}` : (diff === 0 ? `Oggi · ${ex.exam_title}` : ex.exam_title);
+        } else {
+          examLbl.textContent = `Esame ${subj}`;
+        }
+        this.updatePomoUI();
       },
 
       // ---------------- DRAWER & FOLDERS ----------------
@@ -1489,7 +1858,8 @@
         document.getElementById('fnListContainer').style.display = showGroups ? 'none' : 'flex';
         document.getElementById('fnGroupsContainer').style.display = showGroups ? 'flex' : 'none';
         document.getElementById('emptyTrashBtn').style.display = (filter === 'trash') ? 'inline-flex' : 'none';
-        document.getElementById('topbarTitle').textContent = this.getActiveFolderTitle();
+        this.renderBreadcrumb();
+        this.renderSubjectContextBar();
         this.renderDrawer();
         if (!showGroups) this.renderNotesList();
       },
@@ -2406,11 +2776,362 @@
         this.updatePomoUI();
       },
 
+      switchFlowTimeTab(tab) {
+        const isFocus = tab === 'focus';
+        document.getElementById('ftSegFocus').classList.toggle('active', isFocus);
+        document.getElementById('ftSegCal').classList.toggle('active', !isFocus);
+        document.getElementById('ftFocusSection').style.display = isFocus ? 'grid' : 'none';
+        document.getElementById('ftCalSection').style.display = isFocus ? 'none' : 'flex';
+      },
+
+      toggleContextualPomodoro() {
+        const subj = this.getCurrentSubjectName();
+        const sel = document.getElementById('pomoSubjectSelect');
+        if (subj && sel) {
+          if (![...sel.options].some(o => o.value === subj)) {
+            const opt = document.createElement('option');
+            opt.value = subj;
+            opt.textContent = subj;
+            sel.appendChild(opt);
+          }
+          sel.value = subj;
+        }
+        this.togglePomodoro();
+      },
+
       updatePomoUI() {
         const m = String(Math.floor(this.pomoRemaining / 60)).padStart(2, '0');
         const s = String(this.pomoRemaining % 60).padStart(2, '0');
-        document.getElementById('pomoTimerLbl').textContent = `${m}:${s}`;
+        const timeStr = `${m}:${s}`;
+        document.getElementById('pomoTimerLbl').textContent = timeStr;
         document.getElementById('pomoToggleBtn').textContent = this.pomoRunning ? 'Pausa' : 'Avvia';
+
+        const ctxLbl = document.getElementById('ctxPomoLbl');
+        const ctxBtn = document.getElementById('ctxPomoBtn');
+        if (ctxLbl) ctxLbl.textContent = timeStr;
+        if (ctxBtn) ctxBtn.classList.toggle('running', this.pomoRunning);
+
+        const pill = document.getElementById('pomoFloatingPill');
+        const pillTimer = document.getElementById('pomoPillTimer');
+        const pillSubj = document.getElementById('pomoPillSubject');
+        const isMidSession = this.pomoRunning || this.pomoRemaining < (this.pomoMode === 'focus' ? this.pomoFocusMins * 60 : this.pomoBreakMins * 60);
+        if (pill && pillTimer) {
+          pill.classList.toggle('visible', isMidSession);
+          pillTimer.textContent = timeStr;
+          const sel = document.getElementById('pomoSubjectSelect');
+          if (pillSubj) pillSubj.textContent = sel ? sel.value : 'Focus';
+        }
+        this.updatePomodoroMediaSession(timeStr);
+      },
+
+      updatePomodoroMediaSession(timeStr) {
+        if (!('mediaSession' in navigator)) return;
+        const sel = document.getElementById('pomoSubjectSelect');
+        const subj = (sel && sel.value) || 'Studio';
+        try {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: `Pomodoro ${timeStr} (${this.pomoMode === 'focus' ? 'Focus' : 'Pausa'})`,
+            artist: subj,
+            album: 'FlowLocal FlowTime'
+          });
+          navigator.mediaSession.playbackState = this.pomoRunning ? 'playing' : 'paused';
+          navigator.mediaSession.setActionHandler('play', () => { if (!this.pomoRunning) this.togglePomodoro(); });
+          navigator.mediaSession.setActionHandler('pause', () => { if (this.pomoRunning) this.togglePomodoro(); });
+          navigator.mediaSession.setActionHandler('stop', () => this.resetPomodoro());
+        } catch {}
+      },
+
+      initAudioMediaSession() {
+        const ap = document.getElementById('noteAudioPlayer');
+        if (!ap || !('mediaSession' in navigator)) return;
+        ap.addEventListener('play', () => {
+          const title = document.getElementById('noteTitleInput').value || 'Lezione Audio';
+          try {
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title,
+              artist: this.getCurrentSubjectName() || 'FlowNotes',
+              album: 'FlowLocal Aula'
+            });
+            navigator.mediaSession.playbackState = 'playing';
+            navigator.mediaSession.setActionHandler('play', () => ap.play().catch(() => {}));
+            navigator.mediaSession.setActionHandler('pause', () => ap.pause());
+          } catch {}
+        });
+        ap.addEventListener('pause', () => {
+          if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+        });
+      },
+
+      async editSubjectExam() {
+        const subj = this.getCurrentSubjectName() || 'Generale';
+        const existingIdx = (this.exams || []).findIndex(e => (e.subject_name || '').toLowerCase() === subj.toLowerCase());
+        const cur = existingIdx >= 0 ? this.exams[existingIdx] : null;
+        const title = prompt(`Titolo esame per ${subj}:`, cur ? cur.exam_title : `Esame ${subj}`);
+        if (!title) return;
+        const date = prompt('Data appello (YYYY-MM-DD):', cur ? cur.exam_date : new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10));
+        if (!date) return;
+        if (existingIdx >= 0) {
+          this.exams[existingIdx] = { ...cur, exam_title: title, exam_date: date };
+        } else {
+          this.exams.push({ id: 'ex_' + Date.now(), exam_title: title, exam_date: date, subject_name: subj, cfu: 9, total_notes: 0, studied_notes: 0 });
+        }
+        await this.idbSet('exams', this.exams);
+        this.renderSubjectContextBar();
+        this.renderExams();
+        this.renderCalendar();
+        this.scheduleDriveSync();
+        this.showToast('Data esame aggiornata');
+      },
+
+      async openSubjectFlashcards() {
+        const subj = this.getCurrentSubjectName() || 'Generale';
+        const subjNotes = this.notes.filter(n => !n.trashed && (n.subject || '').toLowerCase() === subj.toLowerCase());
+        const cards = [];
+        subjNotes.forEach(n => {
+          const text = n.content_markdown || '';
+          const lines = text.split('\n').filter(l => l.trim().startsWith('## ') || l.trim().startsWith('### ') || l.includes('**Domanda:**'));
+          if (n.summary) {
+            cards.push({ q: `Riassunto: ${n.title}`, a: n.summary });
+          } else if (lines.length) {
+            lines.slice(0, 4).forEach(h => {
+              const cleanH = h.replace(/^#+\s*/, '').replace(/\*\*/g, '').trim();
+              if (cleanH) cards.push({ q: `${cleanH} (${n.title})`, a: text.slice(0, 260) + (text.length > 260 ? '...' : '') });
+            });
+          } else if (text.trim()) {
+            cards.push({ q: n.title || 'Appunto', a: text.slice(0, 280) });
+          }
+        });
+        if (!cards.length) {
+          return this.showToast(`Nessuna nota trovata in ${subj} per generare flashcard`);
+        }
+        this.fcDeck = cards;
+        this.fcIdx = 0;
+        this.fcFlipped = false;
+        document.getElementById('fcModalTitle').textContent = `Flashcard · ${subj}`;
+        this.renderFlashcard();
+        document.getElementById('flashcardModal').classList.add('open');
+      },
+
+      renderFlashcard() {
+        const card = this.fcDeck[this.fcIdx];
+        if (!card) return;
+        document.getElementById('fcProgressLbl').textContent = `${this.fcIdx + 1} / ${this.fcDeck.length}`;
+        document.getElementById('fcSideBadge').textContent = this.fcFlipped ? 'Risposta' : 'Domanda';
+        document.getElementById('fcText').textContent = this.fcFlipped ? card.a : card.q;
+      },
+
+      flipFlashcard() {
+        this.fcFlipped = !this.fcFlipped;
+        this.renderFlashcard();
+      },
+
+      nextFlashcard(known) {
+        if (!known && this.fcDeck[this.fcIdx]) {
+          this.fcDeck.push(this.fcDeck[this.fcIdx]);
+        }
+        if (this.fcIdx < this.fcDeck.length - 1) {
+          this.fcIdx++;
+          this.fcFlipped = false;
+          this.renderFlashcard();
+        } else {
+          this.closeFlashcards();
+          this.showToast('Sessione flashcard completata!');
+        }
+      },
+
+      closeFlashcards() {
+        document.getElementById('flashcardModal').classList.remove('open');
+      },
+
+      // ---------------- BARRA MATH & MARKDOWN SOPRA LA TASTIERA ----------------
+      showMathBar(show) {
+        const bar = document.getElementById('mathQuickBar');
+        if (!bar) return;
+        clearTimeout(this._mathBarTimer);
+        if (show) {
+          bar.classList.add('visible');
+          this.positionMathBar();
+        } else {
+          this._mathBarTimer = setTimeout(() => bar.classList.remove('visible'), 180);
+        }
+      },
+
+      positionMathBar() {
+        const bar = document.getElementById('mathQuickBar');
+        if (!bar || !window.visualViewport) return;
+        const offset = Math.max(0, window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop);
+        bar.style.bottom = `${offset}px`;
+      },
+
+      insertMathSnippet(prefix, suffix) {
+        const tb = document.getElementById('noteBodyInput');
+        if (!tb) return;
+        const start = tb.selectionStart ?? tb.value.length;
+        const end = tb.selectionEnd ?? tb.value.length;
+        const sel = tb.value.slice(start, end);
+        tb.value = tb.value.slice(0, start) + prefix + sel + suffix + tb.value.slice(end);
+        const cursor = start + prefix.length + sel.length;
+        tb.focus();
+        tb.setSelectionRange(cursor, cursor);
+        this.scheduleAutoSave();
+      },
+
+      // ---------------- BLOCCO SCHIZZO / S-PEN CANVAS ----------------
+      openSketchModal() {
+        document.getElementById('editorMoreMenu').classList.remove('open');
+        document.getElementById('sketchModal').classList.add('open');
+        const canvas = document.getElementById('sketchCanvas');
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = Math.max(300, Math.round(rect.width || 320));
+        canvas.height = 280;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        this.sketchCtx = ctx;
+
+        if (!canvas.dataset.bound) {
+          canvas.dataset.bound = '1';
+          const getPos = (e) => {
+            const r = canvas.getBoundingClientRect();
+            return { x: (e.clientX - r.left) * (canvas.width / r.width), y: (e.clientY - r.top) * (canvas.height / r.height) };
+          };
+          canvas.addEventListener('pointerdown', (e) => {
+            this.sketchDrawing = true;
+            const p = getPos(e);
+            ctx.beginPath();
+            ctx.moveTo(p.x, p.y);
+          });
+          canvas.addEventListener('pointermove', (e) => {
+            if (!this.sketchDrawing) return;
+            const p = getPos(e);
+            ctx.strokeStyle = this.sketchColor;
+            ctx.lineWidth = this.sketchWidth;
+            ctx.lineTo(p.x, p.y);
+            ctx.stroke();
+          });
+          window.addEventListener('pointerup', () => { this.sketchDrawing = false; });
+        }
+      },
+
+      closeSketchModal() {
+        document.getElementById('sketchModal').classList.remove('open');
+      },
+
+      setSketchPen(color, width) {
+        this.sketchColor = color;
+        this.sketchWidth = width;
+      },
+
+      clearSketchCanvas() {
+        const canvas = document.getElementById('sketchCanvas');
+        if (!this.sketchCtx) return;
+        this.sketchCtx.fillStyle = '#FFFFFF';
+        this.sketchCtx.fillRect(0, 0, canvas.width, canvas.height);
+      },
+
+      async insertSketchToNote() {
+        const canvas = document.getElementById('sketchCanvas');
+        const dataUrl = canvas.toDataURL('image/png');
+        const tb = document.getElementById('noteBodyInput');
+        tb.value = (tb.value ? tb.value + '\n\n' : '') + `![Schizzo](${dataUrl})`;
+        await this.saveCurrentNote(true);
+        this.closeSketchModal();
+        this.showToast('Schizzo inserito nella nota');
+      },
+
+      async convertSketchWithGemini() {
+        const canvas = document.getElementById('sketchCanvas');
+        const b64 = canvas.toDataURL('image/png').split(',')[1];
+        try {
+          this.showToast('Conversione schizzo con Gemini Vision...');
+          const out = await this.callGemini([
+            { text: 'Converti questo schizzo o formula manoscritta in Markdown pulito con formule LaTeX ($...$ o $$...$$) o diagramma testuale chiaro. Restituisci SOLO il risultato senza commenti.' },
+            { inlineData: { mimeType: 'image/png', data: b64 } }
+          ]);
+          const tb = document.getElementById('noteBodyInput');
+          tb.value = (tb.value ? tb.value + '\n\n' : '') + out;
+          await this.saveCurrentNote(true);
+          this.closeSketchModal();
+          this.showToast('Schizzo convertito in LaTeX/testo');
+        } catch (err) {
+          this.showToast('Errore Gemini Vision: ' + err.message);
+        }
+      },
+
+      // ---------------- GESTURE ONE-HAND (SWIPE DRAWER + PULL-TO-REFRESH + APTICO) ----------------
+      initGestures() {
+        let sx = 0, sy = 0, pullStartY = 0, isPulling = false;
+        const listEl = document.getElementById('fnListContainer');
+        const drawer = document.getElementById('sideDrawer');
+        const pullInd = document.getElementById('pullRefreshInd');
+        const pullTxt = document.getElementById('pullRefreshText');
+
+        document.addEventListener('touchstart', (e) => {
+          if (e.touches.length !== 1) return;
+          sx = e.touches[0].clientX;
+          sy = e.touches[0].clientY;
+          if (this.currentEnv === 'flownotes' && !this.editorOpen && window.scrollY <= 2) {
+            pullStartY = sy;
+            isPulling = true;
+          } else {
+            isPulling = false;
+          }
+        }, { passive: true });
+
+        document.addEventListener('touchmove', (e) => {
+          if (!isPulling || e.touches.length !== 1) return;
+          const dy = e.touches[0].clientY - pullStartY;
+          const dx = Math.abs(e.touches[0].clientX - sx);
+          if (dy > 38 && dy > dx * 1.4 && window.scrollY <= 2) {
+            pullInd.classList.add('show');
+            pullTxt.textContent = dy > 90 ? 'Rilascia per sincronizzare Drive...' : 'Trascina per sincronizzare...';
+          }
+        }, { passive: true });
+
+        document.addEventListener('touchend', async (e) => {
+          const t = e.changedTouches[0];
+          const dx = t.clientX - sx;
+          const dy = t.clientY - sy;
+
+          // Pull-to-refresh
+          if (isPulling && dy > 90 && Math.abs(dy) > Math.abs(dx) * 1.4 && window.scrollY <= 2) {
+            pullTxt.textContent = 'Sincronizzazione FlowLocal_Sync & FlowGroups...';
+            if (navigator.vibrate) navigator.vibrate(15);
+            await this.syncAllWithDrive(true);
+            if (this.activeFolderFilter === 'groups') await this.loadSelectedGroupNotes();
+            setTimeout(() => pullInd.classList.remove('show'), 400);
+          } else if (pullInd) {
+            pullInd.classList.remove('show');
+          }
+          isPulling = false;
+
+          // Swipe orizzontale apertura/chiusura Drawer
+          if (Math.abs(dx) > 65 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+            const isDrawerOpen = drawer.classList.contains('open');
+            if (dx > 0 && !isDrawerOpen && this.currentEnv === 'flownotes' && !this.editorOpen) {
+              this.openDrawer();
+            } else if (dx < 0 && isDrawerOpen) {
+              this.closeDrawer();
+            }
+          }
+        }, { passive: true });
+
+        // Swipe su Flashcard stage
+        const fcStage = document.getElementById('fcStage');
+        if (fcStage) {
+          let fx = 0;
+          fcStage.addEventListener('touchstart', (e) => { fx = e.touches[0].clientX; }, { passive: true });
+          fcStage.addEventListener('touchend', (e) => {
+            const fdx = e.changedTouches[0].clientX - fx;
+            if (Math.abs(fdx) > 55) this.nextFlashcard(fdx > 0);
+          }, { passive: true });
+        }
+
+        if (window.visualViewport) {
+          window.visualViewport.addEventListener('resize', () => this.positionMathBar());
+        }
       },
 
       playSoftChime() {

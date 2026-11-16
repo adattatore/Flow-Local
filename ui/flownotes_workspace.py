@@ -11,13 +11,15 @@ Componenti modulari per FlowNotes Multi-Tab, Workspace Switcher (Notion-style) e
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from PyQt6.QtCore import QEvent, QPoint, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFont, QIcon, QMouseEvent
+from PyQt6.QtCore import QEvent, QMimeData, QPoint, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QDrag, QFont, QIcon, QMouseEvent
 from PyQt6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -404,19 +406,28 @@ class Win11TabBar(QWidget):
 
     tabSelected = pyqtSignal(int)
     tabCloseRequested = pyqtSignal(int)
+    tabMoved = pyqtSignal(int, int)
     newTabRequested = pyqtSignal()
     splitTabRequested = pyqtSignal(int)
     duplicateTabRequested = pyqtSignal(int)
     closeOtherTabsRequested = pyqtSignal(int)
     closeAllTabsRequested = pyqtSignal()
+    nodeDroppedFromTree = pyqtSignal(object)
 
-    def __init__(self, theme_key: str = "obsidian", parent: Optional[QWidget] = None):
+    def __init__(self, theme_key: str = "obsidian", is_dark: bool = True, pane_id: str = "left", parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._theme_key = theme_key
+        self._is_dark = is_dark
+        self._pane_id = pane_id
         self._palette: Dict[str, str] = {}
+        self._drag_start_pos: Optional[QPoint] = None
+        self._drag_tab_idx: int = -1
+        self.setObjectName("NKWin11TabStrip")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAcceptDrops(True)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 2, 0, 2)
+        lay.setContentsMargins(8, 6, 8, 0)
         lay.setSpacing(4)
 
         self.tab_bar = QTabBar(self)
@@ -428,6 +439,7 @@ class Win11TabBar(QWidget):
         self.tab_bar.setElideMode(Qt.TextElideMode.ElideRight)
         self.tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tab_bar.currentChanged.connect(self.tabSelected.emit)
+        self.tab_bar.tabMoved.connect(self.tabMoved.emit)
         self.tab_bar.customContextMenuRequested.connect(self._on_context_menu)
         self.tab_bar.installEventFilter(self)
         lay.addWidget(self.tab_bar, 1)
@@ -441,31 +453,43 @@ class Win11TabBar(QWidget):
         self.new_tab_btn.clicked.connect(self.newTabRequested.emit)
         lay.addWidget(self.new_tab_btn)
 
-    def set_theme(self, theme_key: str, palette: Dict[str, str]):
+    def set_theme(self, theme_key: str, palette: Dict[str, str], is_dark: Optional[bool] = None):
         self._theme_key = theme_key
         self._palette = dict(palette or {})
+        if is_dark is not None:
+            self._is_dark = bool(is_dark)
         self.new_tab_btn.setIcon(get_icon("plus", theme_key=theme_key, role="subtitle", size=14))
         p = self._palette
-        bg = p.get("card_bg") or p.get("input_bg") or "rgba(148,163,184,0.08)"
-        sel_bg = p.get("editor_bg") or p.get("dialog_bg") or p.get("bg") or "#1E293B"
-        bd = p.get("card_border") or p.get("border") or "#334155"
-        fg = p.get("subtitle") or "#94A3B8"
-        sel_fg = p.get("title") or "#F8FAFC"
-        hv = p.get("nav_hover") or "rgba(148,163,184,0.14)"
+        strip_bg = (
+            p.get("sidebar_bg")
+            or p.get("nav_bg")
+            or ("#0D1117" if self._is_dark else "#ECEFF5")
+        )
+        sel_bg = p.get("editor_bg") or p.get("card_bg") or ("#161B24" if self._is_dark else "#FFFFFF")
+        bd = p.get("card_border") or p.get("border") or ("#2A3342" if self._is_dark else "#D8DEE9")
+        fg = p.get("subtitle") or ("#94A3B8" if self._is_dark else "#64748B")
+        sel_fg = p.get("title") or ("#F8FAFC" if self._is_dark else "#0F172A")
+        tab_hv = "rgba(255, 255, 255, 0.06)" if self._is_dark else "rgba(15, 23, 42, 0.05)"
+        btn_hv = "rgba(255, 255, 255, 0.10)" if self._is_dark else "rgba(15, 23, 42, 0.07)"
+        self.setStyleSheet(
+            f"QWidget#NKWin11TabStrip {{ background-color: {strip_bg}; "
+            f"border-top-left-radius: 10px; border-top-right-radius: 10px; }}"
+        )
         self.tab_bar.setStyleSheet(
             f"QTabBar#NKWin11TabBar {{ background: transparent; border: none; }}"
             f"QTabBar#NKWin11TabBar::tab {{ "
-            f"background-color: {bg}; color: {fg}; border: 1px solid transparent; "
-            f"border-top-left-radius: 8px; border-top-right-radius: 8px; "
-            f"padding: 5px 10px; margin-right: 3px; min-width: 100px; max-width: 210px; font-size: 12px; }}"
-            f"QTabBar#NKWin11TabBar::tab:hover {{ background-color: {hv}; color: {sel_fg}; }}"
+            f"background-color: transparent; color: {fg}; border: 1px solid transparent; "
+            f"border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; "
+            f"padding: 7px 8px 7px 12px; margin-right: 2px; min-width: 110px; max-width: 220px; font-size: 12px; }}"
+            f"QTabBar#NKWin11TabBar::tab:hover {{ background-color: {tab_hv}; color: {sel_fg}; }}"
             f"QTabBar#NKWin11TabBar::tab:selected {{ "
             f"background-color: {sel_bg}; color: {sel_fg}; border: 1px solid {bd}; "
             f"border-bottom: none; font-weight: 600; }}"
         )
         self.new_tab_btn.setStyleSheet(
-            f"QPushButton#NKNewTabBtn {{ background: transparent; border: none; border-radius: 6px; }}"
-            f"QPushButton#NKNewTabBtn:hover {{ background-color: {hv}; }}"
+            f"QPushButton#NKNewTabBtn {{ background: transparent; border: none; border-radius: 6px; "
+            f"min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; padding: 0px; margin-bottom: 3px; }}"
+            f"QPushButton#NKNewTabBtn:hover {{ background-color: {btn_hv}; }}"
         )
 
     def sync_tabs(self, tabs: List[TabContext], active_idx: int):
@@ -486,33 +510,102 @@ class Win11TabBar(QWidget):
             self.tab_bar.setTabToolTip(idx, f"{tab.title} ({'Gruppo' if tab.workspace_type != 'local' else 'Locale'})")
 
             close_btn = QPushButton()
-            close_btn.setFixedSize(16, 16)
-            close_btn.setIcon(get_icon("close", theme_key=self._theme_key, role="muted", size=11))
+            close_btn.setObjectName("NKTabCloseBtn")
+            close_btn.setFixedSize(18, 18)
+            close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            close_btn.setIcon(get_icon("close", theme_key=self._theme_key, role="subtitle", size=10))
             close_btn.setToolTip("Chiudi scheda (Ctrl+W)")
+            close_hv = "rgba(255, 255, 255, 0.11)" if self._is_dark else "rgba(15, 23, 42, 0.08)"
+            close_pr = "rgba(255, 255, 255, 0.16)" if self._is_dark else "rgba(15, 23, 42, 0.14)"
             close_btn.setStyleSheet(
-                "QPushButton { background: transparent; border: none; border-radius: 4px; }"
-                "QPushButton:hover { background-color: rgba(248, 113, 113, 0.22); }"
+                "QPushButton#NKTabCloseBtn { background: transparent; border: none; border-radius: 4px; "
+                "min-width: 18px; max-width: 18px; min-height: 18px; max-height: 18px; padding: 0px; margin: 0px; }"
+                f"QPushButton#NKTabCloseBtn:hover {{ background-color: {close_hv}; }}"
+                f"QPushButton#NKTabCloseBtn:pressed {{ background-color: {close_pr}; }}"
             )
-            close_btn.clicked.connect(lambda _chk=False, t_idx=i: self.tabCloseRequested.emit(t_idx))
+            close_btn.clicked.connect(lambda _chk=False, btn=close_btn: self._on_close_btn_clicked(btn))
             self.tab_bar.setTabButton(idx, QTabBar.ButtonPosition.RightSide, close_btn)
 
         if 0 <= active_idx < self.tab_bar.count():
             self.tab_bar.setCurrentIndex(active_idx)
         self.tab_bar.blockSignals(False)
 
+    def _on_close_btn_clicked(self, btn: QPushButton):
+        for idx in range(self.tab_bar.count()):
+            if self.tab_bar.tabButton(idx, QTabBar.ButtonPosition.RightSide) is btn:
+                self.tabCloseRequested.emit(idx)
+                return
+
     def update_tab_title(self, idx: int, tab: TabContext):
         if 0 <= idx < self.tab_bar.count():
             self.tab_bar.setTabText(idx, tab.display_title())
 
     def eventFilter(self, watched, event):
-        if watched is self.tab_bar and event.type() == QEvent.Type.MouseButtonPress:
-            me = event
-            if isinstance(me, QMouseEvent) and me.button() == Qt.MouseButton.MiddleButton:
-                idx = self.tab_bar.tabAt(me.pos())
-                if idx >= 0:
-                    self.tabCloseRequested.emit(idx)
-                    return True
+        if watched is self.tab_bar:
+            etype = event.type()
+            if etype == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+                if event.button() == Qt.MouseButton.MiddleButton:
+                    idx = self.tab_bar.tabAt(event.pos())
+                    if idx >= 0:
+                        self.tabCloseRequested.emit(idx)
+                        return True
+                elif event.button() == Qt.MouseButton.LeftButton:
+                    self._drag_start_pos = event.pos()
+                    self._drag_tab_idx = self.tab_bar.tabAt(event.pos())
+            elif etype == QEvent.Type.MouseMove and isinstance(event, QMouseEvent):
+                if (
+                    (event.buttons() & Qt.MouseButton.LeftButton)
+                    and self._drag_start_pos is not None
+                    and self._drag_tab_idx >= 0
+                ):
+                    pos = event.pos()
+                    # Se l'utente trascina fuori dalla barra delle schede (stile Chrome), avvia il drag tra pannelli
+                    if pos.y() < -14 or pos.y() > self.tab_bar.height() + 14:
+                        idx = self._drag_tab_idx
+                        self._drag_start_pos = None
+                        self._drag_tab_idx = -1
+                        if 0 <= idx < self.tab_bar.count():
+                            drag = QDrag(self)
+                            mime = QMimeData()
+                            payload = json.dumps({"source_pane_id": self._pane_id, "tab_idx": idx}).encode("utf-8")
+                            mime.setData("application/x-flownotes-tab", payload)
+                            drag.setMimeData(mime)
+                            t_rect = self.tab_bar.tabRect(idx)
+                            if t_rect.isValid():
+                                pix = self.tab_bar.grab(t_rect)
+                                drag.setPixmap(pix)
+                                drag.setHotSpot(QPoint(min(t_rect.width() // 2, 60), t_rect.height() // 2))
+                            drag.exec(Qt.DropAction.MoveAction)
+                            return True
+            elif etype == QEvent.Type.MouseButtonRelease:
+                self._drag_start_pos = None
+                self._drag_tab_idx = -1
         return super().eventFilter(watched, event)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat("application/x-flownotes-node"):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat("application/x-flownotes-node"):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat("application/x-flownotes-node"):
+            try:
+                raw = bytes(event.mimeData().data("application/x-flownotes-node")).decode("utf-8")
+                data = json.loads(raw)
+                if data:
+                    self.nodeDroppedFromTree.emit(tuple(data))
+                    event.acceptProposedAction()
+                    return
+            except Exception:
+                pass
+        super().dropEvent(event)
 
     def _on_context_menu(self, pos: QPoint):
         idx = self.tab_bar.tabAt(pos)
@@ -553,14 +646,17 @@ class BreadcrumbBar(QWidget):
     rootClicked = pyqtSignal()
     subjectClicked = pyqtSignal(str)
 
-    def __init__(self, theme_key: str = "obsidian", parent: Optional[QWidget] = None):
+    def __init__(self, theme_key: str = "obsidian", is_dark: bool = True, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._theme_key = theme_key
+        self._is_dark = is_dark
         self._palette: Dict[str, str] = {}
         self._current_subject: str = "Generale"
+        self.setObjectName("NKBreadcrumbBar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(2, 2, 2, 4)
+        lay.setContentsMargins(12, 6, 10, 6)
         lay.setSpacing(4)
 
         self.root_btn = QPushButton("Il mio Quaderno")
@@ -629,9 +725,16 @@ class BreadcrumbBar(QWidget):
         self.toolbar_slot.setSpacing(4)
         lay.addLayout(self.toolbar_slot)
 
-    def set_theme(self, theme_key: str, palette: Dict[str, str]):
+    def set_theme(self, theme_key: str, palette: Dict[str, str], is_dark: Optional[bool] = None):
         self._theme_key = theme_key
         self._palette = dict(palette or {})
+        if is_dark is not None:
+            self._is_dark = bool(is_dark)
+        surface_bg = self._palette.get("editor_bg") or self._palette.get("card_bg") or ("#161B24" if self._is_dark else "#FFFFFF")
+        soft_bd = self._palette.get("card_border") or self._palette.get("border") or ("#2A3342" if self._is_dark else "#E2E8F0")
+        self.setStyleSheet(
+            f"QWidget#NKBreadcrumbBar {{ background-color: {surface_bg}; border-bottom: 1px solid {soft_bd}; }}"
+        )
         sub_col = self._palette.get("subtitle") or "#94A3B8"
         title_col = self._palette.get("title") or "#F8FAFC"
         btn_qss = (
@@ -905,6 +1008,8 @@ class EditorPane(QWidget):
     openGroupNoteFromBoardRequested = pyqtSignal(object, dict)
     refreshBoardRequested = pyqtSignal(object)
     splitTabRequested = pyqtSignal(object, int)
+    tabDroppedFromPane = pyqtSignal(str, int, object, object)  # source_pane_id, tab_idx, target_pane, drop_pos
+    nodeDroppedFromTree = pyqtSignal(object, object)  # node_data, target_pane
 
     def __init__(
         self,
@@ -936,26 +1041,30 @@ class EditorPane(QWidget):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(4)
+        root.setSpacing(0)
 
         # Indicatore superiore sottile (colore accento quando il pannello ha il focus)
         self.active_indicator = QFrame()
         self.active_indicator.setFixedHeight(2)
         root.addWidget(self.active_indicator)
 
+        self.setAcceptDrops(True)
+
         # Barra delle schede stile Windows 11 Explorer
-        self.tab_bar_widget = Win11TabBar(theme_key=theme_key, parent=self)
+        self.tab_bar_widget = Win11TabBar(theme_key=theme_key, is_dark=is_dark, pane_id=pane_id, parent=self)
         self.tab_bar_widget.tabSelected.connect(self.switch_to_tab)
         self.tab_bar_widget.tabCloseRequested.connect(self.close_tab)
+        self.tab_bar_widget.tabMoved.connect(self._on_tab_moved)
         self.tab_bar_widget.newTabRequested.connect(self.open_new_empty_tab)
         self.tab_bar_widget.splitTabRequested.connect(lambda idx: self.splitTabRequested.emit(self, idx))
         self.tab_bar_widget.duplicateTabRequested.connect(self.duplicate_tab)
         self.tab_bar_widget.closeOtherTabsRequested.connect(self.close_other_tabs)
         self.tab_bar_widget.closeAllTabsRequested.connect(self.close_all_tabs)
+        self.tab_bar_widget.nodeDroppedFromTree.connect(lambda data: self.nodeDroppedFromTree.emit(data, self))
         root.addWidget(self.tab_bar_widget)
 
         # Breadcrumb & Azioni Contestuali
-        self.breadcrumb = BreadcrumbBar(theme_key=theme_key, parent=self)
+        self.breadcrumb = BreadcrumbBar(theme_key=theme_key, is_dark=is_dark, parent=self)
         self.breadcrumb.acquireLockRequested.connect(lambda: self.acquireLockRequested.emit(self))
         self.breadcrumb.publishGroupRequested.connect(lambda: self.publishGroupRequested.emit(self))
         self.breadcrumb.copyToLocalRequested.connect(lambda: self.copyToLocalRequested.emit(self))
@@ -967,9 +1076,11 @@ class EditorPane(QWidget):
         root.addWidget(self.stack, 1)
 
         # Pagina 0: Editor
-        editor_page = QWidget()
-        ed_lay = QVBoxLayout(editor_page)
-        ed_lay.setContentsMargins(0, 2, 0, 0)
+        self.editor_page = QWidget()
+        self.editor_page.setObjectName("NKEditorSurface")
+        self.editor_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        ed_lay = QVBoxLayout(self.editor_page)
+        ed_lay.setContentsMargins(12, 10, 12, 6)
         ed_lay.setSpacing(6)
 
         self.editor_title = DictationGhostLineEdit(dark_mode=is_dark)
@@ -1054,7 +1165,7 @@ class EditorPane(QWidget):
         self.editor_body.seekRequested.connect(lambda ms: self.audio_bar.seek_ms(ms, auto_play=True))
         self.editor_body.togglePlayRequested.connect(self.audio_bar.toggle_play_pause)
 
-        self.stack.addWidget(editor_page)
+        self.stack.addWidget(self.editor_page)
 
         # Pagina 1: Bacheca Gruppo
         self.board_widget = GroupBoardWidget(theme_key=theme_key, parent=self)
@@ -1093,6 +1204,31 @@ class EditorPane(QWidget):
             self.activated.emit(self)
         return super().eventFilter(watched, event)
 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat("application/x-flownotes-node"):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat("application/x-flownotes-node"):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat("application/x-flownotes-node"):
+            try:
+                raw = bytes(event.mimeData().data("application/x-flownotes-node")).decode("utf-8")
+                data = json.loads(raw)
+                if data:
+                    self.nodeDroppedFromTree.emit(tuple(data))
+                    event.acceptProposedAction()
+                    return
+            except Exception:
+                pass
+        super().dropEvent(event)
+
     def set_active_pane(self, active: bool):
         self._is_active_pane = bool(active)
         tab = self.active_tab()
@@ -1118,8 +1254,11 @@ class EditorPane(QWidget):
         self._is_dark = is_dark
         self._reading_mode = reading_mode
         self._palette = dict(palette or {})
-        self.tab_bar_widget.set_theme(theme_key, self._palette)
-        self.breadcrumb.set_theme(theme_key, self._palette)
+        surface_bg = self._palette.get("editor_bg") or self._palette.get("card_bg") or ("#161B24" if is_dark else "#FFFFFF")
+        if hasattr(self, "editor_page"):
+            self.editor_page.setStyleSheet(f"QWidget#NKEditorSurface {{ background-color: {surface_bg}; }}")
+        self.tab_bar_widget.set_theme(theme_key, self._palette, is_dark=is_dark)
+        self.breadcrumb.set_theme(theme_key, self._palette, is_dark=is_dark)
         self.board_widget.set_theme(theme_key, self._palette)
         if hasattr(self.editor_body, "set_theme_modes"):
             self.editor_body.set_theme_modes(is_dark, reading_mode)
@@ -1209,6 +1348,71 @@ class EditorPane(QWidget):
             return
         nxt = (self.current_tab_index + step) % len(self.tabs)
         self.switch_to_tab(nxt)
+
+    def _on_tab_moved(self, from_idx: int, to_idx: int):
+        if not (0 <= from_idx < len(self.tabs) and 0 <= to_idx < len(self.tabs)) or from_idx == to_idx:
+            return
+        tab = self.tabs.pop(from_idx)
+        self.tabs.insert(to_idx, tab)
+        self.current_tab_index = self.tab_bar_widget.tab_bar.currentIndex()
+
+    def take_tab(self, idx: int) -> Optional[TabContext]:
+        """Rimuove e restituisce una scheda senza chiedere conferma (usata per spostamento drag & drop)."""
+        if idx < 0 or idx >= len(self.tabs):
+            return None
+        if idx == self.current_tab_index:
+            self._capture_current_tab_state()
+        tab = self.tabs.pop(idx)
+        if not self.tabs:
+            self.current_tab_index = -1
+            self.tab_bar_widget.sync_tabs(self.tabs, -1)
+            self.lastTabClosed.emit(self)
+        else:
+            if self.current_tab_index >= len(self.tabs):
+                self.current_tab_index = len(self.tabs) - 1
+            elif self.current_tab_index > idx:
+                self.current_tab_index -= 1
+            self.tab_bar_widget.sync_tabs(self.tabs, self.current_tab_index)
+            self._render_tab(self.tabs[self.current_tab_index])
+            self.activeTabChanged.emit(self.tabs[self.current_tab_index])
+        return tab
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat("application/x-flownotes-tab") or event.mimeData().hasFormat("application/x-flownotes-node"):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat("application/x-flownotes-tab") or event.mimeData().hasFormat("application/x-flownotes-node"):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat("application/x-flownotes-tab"):
+            try:
+                raw = bytes(event.mimeData().data("application/x-flownotes-tab")).decode("utf-8")
+                info = json.loads(raw)
+                src_pane_id = str(info.get("source_pane_id") or "")
+                tab_idx = int(info.get("tab_idx", -1))
+                if src_pane_id and tab_idx >= 0:
+                    self.tabDroppedFromPane.emit(src_pane_id, tab_idx, self, event.position().toPoint())
+                    event.acceptProposedAction()
+                    return
+            except Exception:
+                pass
+        if event.mimeData().hasFormat("application/x-flownotes-node"):
+            try:
+                raw = bytes(event.mimeData().data("application/x-flownotes-node")).decode("utf-8")
+                data = json.loads(raw)
+                if data:
+                    self.nodeDroppedFromTree.emit(tuple(data), self)
+                    event.acceptProposedAction()
+                    return
+            except Exception:
+                pass
+        super().dropEvent(event)
 
     def close_tab(self, idx: int):
         if idx < 0 or idx >= len(self.tabs):

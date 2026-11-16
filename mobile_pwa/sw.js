@@ -1,5 +1,5 @@
 // Service Worker per FlowLocal Mobile/Web PWA (Autonoma & Offline-First)
-const CACHE_NAME = 'flowlocal-pwa-v8';
+const CACHE_NAME = 'flowlocal-pwa-v9';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',

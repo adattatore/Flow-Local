@@ -1769,6 +1769,7 @@ class FlowLocalHub(QMainWindow):
         self.nk_tree.changeFolderColorRequested.connect(self._on_nk_change_folder_color)
         self.nk_tree.deleteFolderRequested.connect(self._on_nk_delete_folder)
         self.nk_tree.toggleNoteStudiedRequested.connect(self._on_nk_toggle_studied)
+        self.nk_tree.nodeLeftClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=False))
         self.nk_tree.nodeMiddleClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
         self.nk_tree.nodeDoubleClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
         self.nk_tree.openInNewTabRequested.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
@@ -2005,6 +2006,8 @@ class FlowLocalHub(QMainWindow):
             pane.openGroupNoteFromBoardRequested.connect(self._on_nk_open_group_note_from_board)
             pane.refreshBoardRequested.connect(self._on_nk_refresh_group_board)
             pane.splitTabRequested.connect(self._on_nk_split_specific_tab)
+            pane.tabDroppedFromPane.connect(self._on_nk_tab_dropped_from_pane)
+            pane.nodeDroppedFromTree.connect(self._on_nk_node_dropped_from_tree)
             pane.breadcrumb.rootClicked.connect(self._on_nk_breadcrumb_root_clicked)
             pane.breadcrumb.subjectClicked.connect(self._on_nk_breadcrumb_subject_clicked)
 
@@ -2365,6 +2368,31 @@ class FlowLocalHub(QMainWindow):
             target_pane.open_new_empty_tab(profile=self._nk_author_name())
         self._on_nk_pane_activated(target_pane)
         self._sync_toolbar_from_active_pane()
+
+    def _on_nk_tab_dropped_from_pane(self, source_pane_id: str, tab_idx: int, target_pane: EditorPane, drop_pos: QPoint):
+        source_pane = self.nk_pane_left if source_pane_id == "left" else self.nk_pane_right
+        if tab_idx < 0 or tab_idx >= len(source_pane.tabs):
+            return
+        # Se rilasciato sulla metà destra del pannello singolo, attiva Split View e sposta a destra
+        if source_pane is target_pane and self.nk_pane_right.isHidden() and drop_pos.x() > max(200, int(target_pane.width() * 0.55)):
+            self.nk_pane_right.show()
+            w = max(self.nk_panes_splitter.width(), 840)
+            self.nk_panes_splitter.setSizes([w // 2, w // 2])
+            target_pane = self.nk_pane_right
+        if source_pane is target_pane:
+            return
+        tab = source_pane.take_tab(tab_idx)
+        if tab is None:
+            return
+        target_pane.open_tab(tab, in_new_tab=True)
+        self._on_nk_pane_activated(target_pane)
+        self._sync_toolbar_from_active_pane()
+
+    def _on_nk_node_dropped_from_tree(self, data: object, target_pane: EditorPane):
+        if not data:
+            return
+        self._on_nk_pane_activated(target_pane)
+        self._open_nk_tree_node(data, in_new_tab=True)
 
     def _on_nk_send_selection_to_other_pane(self):
         pane = self._active_nk_pane()
@@ -2825,7 +2853,11 @@ class FlowLocalHub(QMainWindow):
                 else:
                     leaf.setToolTip(0, f"{item.get('title')} ({subj})")
 
-                leaf.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                leaf.setFlags(
+                    Qt.ItemFlag.ItemIsEnabled
+                    | Qt.ItemFlag.ItemIsSelectable
+                    | Qt.ItemFlag.ItemIsDragEnabled
+                )
                 f_item.addChild(leaf)
 
             self.nk_tree.addTopLevelItem(f_item)
@@ -2854,7 +2886,8 @@ class FlowLocalHub(QMainWindow):
         if not data:
             return
         if data[0] in ("note", "group_board", "group_note"):
-            self._open_nk_tree_node(data, in_new_tab=False)
+            # L'apertura della nota avviene su click sinistro rilasciato (nodeLeftClicked),
+            # mai su currentItemChanged, così tasto destro e drag & drop non la aprono per errore.
             return
         if data[0] in ("all", "recent"):
             self._nk_current_filter_folder_id = None
@@ -3146,7 +3179,24 @@ class FlowLocalHub(QMainWindow):
         layout.addLayout(meta_row)
 
         card.setCursor(Qt.CursorShape.PointingHandCursor)
-        card.mousePressEvent = lambda _e, nid=note_id: self._load_note_into_nk_editor(nid)
+
+        def _on_card_press(ev, nid=note_id):
+            if ev.button() == Qt.MouseButton.MiddleButton:
+                self._load_note_into_nk_editor(nid, in_new_tab=True)
+                return
+            if ev.button() == Qt.MouseButton.RightButton:
+                menu = QMenu(card)
+                act_tab = menu.addAction(get_icon("plus", theme_key=self._current_theme, size=14), "Apri in nuova scheda")
+                act_split = menu.addAction(get_icon("split_h", theme_key=self._current_theme, size=14), "Affianca a destra (Split View)")
+                chosen = menu.exec(card.mapToGlobal(ev.pos()))
+                if chosen == act_tab:
+                    self._load_note_into_nk_editor(nid, in_new_tab=True)
+                elif chosen == act_split:
+                    self._open_nk_tree_node(("note", nid), in_split=True)
+                return
+            self._load_note_into_nk_editor(nid)
+
+        card.mousePressEvent = _on_card_press
         return card
 
     def _load_note_into_nk_editor(
