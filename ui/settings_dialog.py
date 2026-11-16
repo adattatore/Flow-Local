@@ -18,6 +18,7 @@ from database import db
 from core.audio_ducker import audio_ducker
 from core.audio_feedback import audio_feedback, MODE_VOICE, MODE_SOFT_CHIME, MODE_MUTE
 from core.cloud_sync import cloud_sync
+from core.flow_groups import flow_groups
 from core.hardware_profiler import (
     HardwareTier,
     build_profile,
@@ -804,14 +805,15 @@ class HubSettingsDialog(QDialog):
         self.gemini_model_combo = QComboBox()
         self.gemini_model_combo.setMinimumHeight(32)
         self.gemini_model_combo.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.gemini_model_combo.addItem("gemini-2.5-flash · Consigliato", "gemini-2.5-flash")
+        self.gemini_model_combo.addItem("gemini-3.5-flash-lite · Ultra-rapido (Consigliato)", "gemini-3.5-flash-lite")
+        self.gemini_model_combo.addItem("gemini-3.5-flash · Bilanciato", "gemini-3.5-flash")
         self.gemini_model_combo.addItem("gemini-2.5-pro · Ragionamento", "gemini-2.5-pro")
-        saved_gm = db.get_setting("gemini_model", "gemini-2.5-flash") or "gemini-2.5-flash"
+        saved_gm = db.get_setting("gemini_model", "gemini-3.5-flash-lite") or "gemini-3.5-flash-lite"
         gm_idx = self.gemini_model_combo.findData(saved_gm)
         if gm_idx >= 0:
             self.gemini_model_combo.setCurrentIndex(gm_idx)
         self.gemini_model_combo.currentIndexChanged.connect(
-            lambda: db.set_setting("gemini_model", self.gemini_model_combo.currentData() or "gemini-2.5-flash")
+            lambda: db.set_setting("gemini_model", self.gemini_model_combo.currentData() or "gemini-3.5-flash-lite")
         )
         gm_row.addWidget(self.gemini_model_combo, 1)
         adv_layout.addLayout(gm_row)
@@ -960,6 +962,10 @@ class HubSettingsDialog(QDialog):
         self.drive_folder_btn = _make_button("Cambia Cartella", "ghost")
         self.drive_folder_btn.clicked.connect(self._on_change_drive_folder)
         dc_btns.addWidget(self.drive_folder_btn)
+
+        self.drive_oauth_btn = _make_button("Connetti Drive API (drive.file)", "ghost")
+        self.drive_oauth_btn.clicked.connect(self._on_toggle_drive_oauth)
+        dc_btns.addWidget(self.drive_oauth_btn)
         dc_btns.addStretch(1)
         drive_sec.addLayout(dc_btns)
         layout.addLayout(drive_sec)
@@ -1105,7 +1111,7 @@ class HubSettingsDialog(QDialog):
 
         self.gemini_verify_btn.setEnabled(False)
         self.gemini_status_lbl.setText("Verifica in corso...")
-        model = (self.gemini_model_combo.currentData() or "gemini-2.5-flash") if hasattr(self, "gemini_model_combo") else "gemini-2.5-flash"
+        model = (self.gemini_model_combo.currentData() or "gemini-3.5-flash-lite") if hasattr(self, "gemini_model_combo") else "gemini-3.5-flash-lite"
 
         worker = _GeminiVerifyWorker(key, str(model), parent=self)
         worker.verifyFinished.connect(self._on_verify_gemini_done, Qt.ConnectionType.QueuedConnection)
@@ -1188,14 +1194,38 @@ class HubSettingsDialog(QDialog):
         pending = cloud_sync.get_pending_count()
         outbox_lib = os.path.join(cloud_sync.get_outbox_study_dir(), "library.json")
         lib_ok = os.path.exists(outbox_lib)
+        oauth_ok = flow_groups.has_token()
+        groups_cnt = len(db.get_flow_groups())
         self.drive_status_badge.setText(
-            f"{pending} in coda" if pending > 0 else ("Sincronizzato" if lib_ok else "Pronto")
+            f"{pending} in coda" if pending > 0 else ("Drive API + Locale" if oauth_ok and lib_ok else ("Drive API Attiva" if oauth_ok else ("Sincronizzato" if lib_ok else "Pronto")))
         )
-        self.drive_status_lbl.setText(f"Cartella: {sync_dir}")
+        self.drive_status_lbl.setText(
+            f"Cartella locale: {sync_dir} • Gruppi collegati: {groups_cnt}"
+        )
+        if hasattr(self, "drive_oauth_btn"):
+            self.drive_oauth_btn.setText(
+                "Disconnetti Drive API" if oauth_ok else "Connetti Drive API (drive.file)"
+            )
+
+    def _on_toggle_drive_oauth(self):
+        if flow_groups.has_token():
+            flow_groups.disconnect_drive()
+            self._refresh_drive_status()
+            return
+        try:
+            self.drive_oauth_btn.setEnabled(False)
+            self.drive_oauth_btn.setText("Connessione...")
+            flow_groups.get_drive_service(interactive=True)
+        except Exception as exc:
+            self.drive_status_lbl.setText(f"Errore OAuth Drive: {exc}")
+        finally:
+            self.drive_oauth_btn.setEnabled(True)
+            self._refresh_drive_status()
 
     def _on_sync_drive_now(self):
         try:
             cloud_sync.generate_library_json()
+            cloud_sync.export_user_state()
             self._refresh_drive_status()
             self.drive_status_lbl.setText(
                 f"{self.drive_status_lbl.text()} • Indice aggiornato."

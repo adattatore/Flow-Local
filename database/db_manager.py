@@ -332,6 +332,20 @@ class DatabaseManager:
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_note_history_note ON note_history(note_id, id DESC);")
 
+        # 13. Blocco 6: Gruppi FlowGroups (Google Drive API + Fallback Cartella Locale)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS flow_groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_name TEXT NOT NULL,
+                drive_folder_id TEXT DEFAULT '',
+                local_fallback_path TEXT DEFAULT '',
+                role TEXT DEFAULT 'member',
+                last_sync_at TIMESTAMP DEFAULT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_flow_groups_folder ON flow_groups(drive_folder_id);")
+
         conn.commit()
         self._seed_default_data()
         self._ensure_updated_defaults()
@@ -2294,6 +2308,62 @@ class DatabaseManager:
             (int(note_id), max(1, int(limit))),
         )
         return [dict(r) for r in cursor.fetchall()]
+
+    # -----------------------------------------------------------------
+    # BLOCCO 6: FLOWGROUPS (GOOGLE DRIVE API + FALLBACK LOCALE)
+    # -----------------------------------------------------------------
+    def add_flow_group(
+        self,
+        group_name: str,
+        drive_folder_id: str = "",
+        local_fallback_path: str = "",
+        role: str = "member",
+    ) -> int:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        fid = (drive_folder_id or "").strip()
+        lpath = (local_fallback_path or "").strip()
+        if fid:
+            cursor.execute("SELECT id FROM flow_groups WHERE drive_folder_id = ?", (fid,))
+            existing = cursor.fetchone()
+            if existing:
+                cursor.execute(
+                    "UPDATE flow_groups SET group_name = ?, local_fallback_path = ?, role = ? WHERE id = ?",
+                    ((group_name or "Gruppo").strip(), lpath, role or "member", int(existing["id"])),
+                )
+                conn.commit()
+                return int(existing["id"])
+        cursor.execute(
+            """
+            INSERT INTO flow_groups (group_name, drive_folder_id, local_fallback_path, role)
+            VALUES (?, ?, ?, ?)
+            """,
+            ((group_name or "Gruppo").strip(), fid, lpath, role or "member"),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+    def get_flow_groups(self) -> List[Dict[str, Any]]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM flow_groups ORDER BY id DESC")
+        return [dict(r) for r in cursor.fetchall()]
+
+    def delete_flow_group(self, group_id: int) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM flow_groups WHERE id = ?", (int(group_id),))
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def update_flow_group_sync(self, group_id: int):
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE flow_groups SET last_sync_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (int(group_id),),
+        )
+        conn.commit()
 
 
 db = DatabaseManager()

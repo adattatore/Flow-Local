@@ -86,7 +86,8 @@ Tutti gli agenti AI che modificano questo repository **DEVONO** rispettare rigor
   > Es. "F uguale m per a" -> `$F = m \cdot a$`
   > Es. "vettore v" -> `$\vec{v}$`
 
-### 6. Pulizia del Repository Git
+### 6. Pulizia del Repository Git & Divieto di Commit/Push Automatici
+- **NON eseguire MAI `git add`, `git commit` o `git push` (in particolare su `origin/master`) senza autorizzazione esplicita dell'utente.**
 - **NON tracciare mai su Git**:
   - Database SQLite e relativi file di write-ahead log: `*.db`, `*.db-shm`, `*.db-wal`, `flow_hub.db*`.
   - Ambiente virtuale: `.venv/`.

@@ -15,8 +15,8 @@ import urllib.request
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
-DEFAULT_GEMINI_TIMEOUT = 3.0
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_GEMINI_TIMEOUT = 8.0
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 _runtime_lock = threading.Lock()

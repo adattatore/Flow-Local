@@ -1,2009 +1,1847 @@
 <!DOCTYPE html>
-<html lang="it">
-
+<html lang="it" data-theme="obsidian">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport"
-    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="FlowLocal">
   <meta name="theme-color" content="#0B0F19">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon-192.png">
-  <title>FlowLocal Mobile — Sbobine & Studio</title>
+  <title>FlowLocal Mobile &amp; Web</title>
 
-  <!-- Google Identity Services (GIS) -->
+  <!-- Google Identity Services & Google Picker API -->
   <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://apis.google.com/js/api.js" async defer></script>
+
+  <!-- KaTeX per rendering formule matematiche LaTeX -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous" defer></script>
 
   <style>
-    :root {
+    :root, [data-theme="obsidian"] {
       --bg-canvas: #0B0F19;
-      --bg-card: #131722;
-      --bg-card-hover: #1A2030;
+      --bg-surface: #111827;
+      --bg-card: #151C2C;
+      --bg-card-hover: #1D263B;
       --bg-input: #1E293B;
-      --border-color: #242E42;
-      --border-focus: #0284C7;
-      --primary: #0284C7;
-      --primary-hover: #0369A1;
-      --accent-cyan: #38BDF8;
-      --accent-green: #10B981;
-      --accent-amber: #F59E0B;
-      --accent-rose: #F43F5E;
-      --accent-purple: #A855F7;
+      --border: #263147;
+      --accent: #6366F1;
+      --accent-2: #38BDF8;
+      --accent-soft: rgba(99, 102, 241, 0.16);
       --text-main: #F8FAFC;
       --text-muted: #94A3B8;
       --text-dim: #64748B;
+      --success: #10B981;
+      --warning: #F59E0B;
+      --danger: #EF4444;
+      --radius: 12px;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
     }
 
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      -webkit-tap-highlight-color: transparent;
+    [data-theme="dark_orb"] {
+      --bg-canvas: #060913;
+      --bg-surface: #0C1222;
+      --bg-card: #10192E;
+      --bg-card-hover: #17233F;
+      --bg-input: #16213A;
+      --border: #1E2E50;
+      --accent: #0EA5E9;
+      --accent-2: #A855F7;
+      --accent-soft: rgba(14, 165, 233, 0.16);
+      --text-main: #F1F5F9;
+      --text-muted: #94A3B8;
+      --text-dim: #64748B;
     }
 
+    [data-theme="pixel_chill"] {
+      --bg-canvas: #1B2123;
+      --bg-surface: #232B2D;
+      --bg-card: #2A3437;
+      --bg-card-hover: #334044;
+      --bg-input: #20282A;
+      --border: #3E4D52;
+      --accent: #7DD3FC;
+      --accent-2: #86EFAC;
+      --accent-soft: rgba(125, 211, 252, 0.16);
+      --text-main: #EDF2F4;
+      --text-muted: #A3B4B9;
+      --text-dim: #73848A;
+      --radius: 6px;
+    }
+
+    [data-theme="chiaro"] {
+      --bg-canvas: #F3F6FB;
+      --bg-surface: #FFFFFF;
+      --bg-card: #FFFFFF;
+      --bg-card-hover: #F8FAFC;
+      --bg-input: #F1F5F9;
+      --border: #E2E8F0;
+      --accent: #4F46E5;
+      --accent-2: #0284C7;
+      --accent-soft: rgba(79, 70, 229, 0.12);
+      --text-main: #0F172A;
+      --text-muted: #475569;
+      --text-dim: #94A3B8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background-color: var(--bg-canvas);
+      font-family: var(--font-sans);
+      background: var(--bg-canvas);
       color: var(--text-main);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
-      overflow-x: hidden;
       padding-top: var(--safe-top);
-      padding-bottom: calc(72px + var(--safe-bottom));
-      user-select: none;
+      overflow-x: hidden;
     }
 
-    /* HEADER */
-    header {
+    svg.icon {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 1.9;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      fill: none;
+      flex-shrink: 0;
+    }
+    svg.icon-lg { width: 22px; height: 22px; }
+    svg.icon-sm { width: 15px; height: 15px; }
+
+    /* APP SHELL */
+    .app-shell {
+      display: flex;
+      flex: 1;
+      min-height: 100vh;
+    }
+
+    /* SIDEBAR RAIL (TABLET / DESKTOP >= 768px) */
+    .sidebar-rail {
+      display: none;
+      width: 220px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      padding: 18px 12px;
+      flex-direction: column;
+      gap: 6px;
       position: sticky;
       top: 0;
-      z-index: 50;
-      background: rgba(11, 15, 25, 0.92);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border-color);
-      padding: 12px 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      height: 100vh;
     }
 
-    .brand {
+    .brand-row {
       display: flex;
       align-items: center;
       gap: 10px;
-    }
-
-    .brand-orb {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: radial-gradient(circle at 35% 35%, #38BDF8, #0284C7 60%, #03426A);
-      box-shadow: 0 0 12px rgba(2, 132, 199, 0.6);
-      display: inline-block;
-      animation: pulse-orb 3s infinite ease-in-out;
-    }
-
-    @keyframes pulse-orb {
-
-      0%,
-      100% {
-        transform: scale(1);
-        opacity: 0.95;
-      }
-
-      50% {
-        transform: scale(1.08);
-        opacity: 1;
-        filter: drop-shadow(0 0 10px #38BDF8);
-      }
-    }
-
-    .brand-title {
-      font-size: 19px;
-      font-weight: 700;
-      letter-spacing: -0.4px;
-      color: #FFFFFF;
-    }
-
-    .brand-subtitle {
-      font-size: 11px;
-      color: var(--text-muted);
-      font-weight: 500;
-    }
-
-    .header-actions {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .status-pill {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 4px 10px;
-      border-radius: 20px;
-      background: #1E293B;
-      color: var(--text-muted);
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      border: 1px solid var(--border-color);
-      cursor: pointer;
-    }
-
-    .status-pill.online {
-      background: rgba(16, 185, 129, 0.15);
-      color: #34D399;
-      border-color: rgba(16, 185, 129, 0.3);
-    }
-
-    .status-pill.offline {
-      background: rgba(245, 158, 11, 0.15);
-      color: #FBBF24;
-      border-color: rgba(245, 158, 11, 0.3);
-    }
-
-    .icon-btn {
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      color: var(--text-main);
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 15px;
-      cursor: pointer;
-    }
-
-    .icon-btn:active {
-      transform: scale(0.95);
-      background: var(--bg-card-hover);
-    }
-
-    /* MAIN CONTAINER & TABS */
-    main {
-      flex: 1;
-      padding: 16px;
-      max-width: 720px;
-      width: 100%;
-      margin: 0 auto;
-    }
-
-    .tab-view {
-      display: none;
-    }
-
-    .tab-view.active {
-      display: block;
-      animation: fadeIn 0.2s ease-in;
-    }
-
-    @keyframes fadeIn {
-      from {
-        opacity: 0;
-        transform: translateY(4px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    /* CARD STYLING */
-    .card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 14px;
-      padding: 18px;
-      margin-bottom: 16px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
-    }
-
-    .card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 14px;
-    }
-
-    .card-title {
-      font-size: 16px;
-      font-weight: 700;
-      color: #FFFFFF;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    /* FORMS & INPUTS */
-    .form-group {
-      margin-bottom: 14px;
-    }
-
-    label {
-      display: block;
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 6px;
-    }
-
-    input[type="text"],
-    input[type="password"],
-    select {
-      width: 100%;
-      background: var(--bg-input);
-      border: 1px solid var(--border-color);
-      color: var(--text-main);
-      padding: 11px 14px;
-      border-radius: 9px;
-      font-size: 14px;
-      outline: none;
-      transition: border-color 0.15s ease;
-      user-select: text;
-    }
-
-    input:focus,
-    select:focus {
-      border-color: var(--border-focus);
-    }
-
-    /* SEGMENTED PROFILE BUTTONS */
-    .segmented-control {
-      display: flex;
-      background: var(--bg-input);
-      border-radius: 10px;
-      padding: 4px;
-      border: 1px solid var(--border-color);
-      gap: 4px;
-    }
-
-    .seg-btn {
-      flex: 1;
-      padding: 9px;
-      text-align: center;
-      background: transparent;
-      border: none;
-      color: var(--text-muted);
-      font-size: 13px;
-      font-weight: 600;
-      border-radius: 8px;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-
-    .seg-btn.active {
-      background: var(--primary);
-      color: #FFFFFF;
-      box-shadow: 0 2px 6px rgba(2, 132, 199, 0.4);
-    }
-
-    /* QUICK CHIPS */
-    .chip-container {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 8px;
-    }
-
-    .chip {
-      background: #1E293B;
-      color: var(--text-muted);
-      border: 1px solid var(--border-color);
-      font-size: 11.5px;
-      font-weight: 500;
-      padding: 4px 10px;
-      border-radius: 16px;
-      cursor: pointer;
-    }
-
-    .chip.active {
-      background: rgba(2, 132, 199, 0.25);
-      color: var(--accent-cyan);
-      border-color: var(--primary);
-    }
-
-    /* BUTTONS */
-    .btn {
-      width: 100%;
-      padding: 13px;
-      border-radius: 10px;
-      border: none;
-      font-size: 14.5px;
-      font-weight: 700;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      transition: transform 0.1s ease, background 0.15s ease;
-    }
-
-    .btn:active {
-      transform: scale(0.98);
-    }
-
-    .btn-primary {
-      background: linear-gradient(135deg, #0284C7, #0369A1);
-      color: #FFFFFF;
-      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
-    }
-
-    .btn-success {
-      background: linear-gradient(135deg, #10B981, #059669);
-      color: #FFFFFF;
-      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
-    }
-
-    .btn-danger {
-      background: #E11D48;
-      color: #FFFFFF;
-    }
-
-    .btn-outline {
-      background: transparent;
-      border: 1px solid var(--border-color);
-      color: var(--text-main);
-    }
-
-    .btn:disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-      box-shadow: none;
-    }
-
-    /* AUDIO RECORDER MODULE */
-    .rec-box {
-      background: #0E131E;
-      border: 1px dashed var(--border-color);
-      border-radius: 12px;
-      padding: 20px 14px;
-      text-align: center;
-      margin-bottom: 14px;
-    }
-
-    .rec-timer {
-      font-size: 32px;
-      font-weight: 800;
-      letter-spacing: 1px;
-      font-variant-numeric: tabular-nums;
-      color: #FFFFFF;
-      margin-bottom: 12px;
-    }
-
-    .rec-timer.recording {
-      color: var(--accent-rose);
-      animation: blink-rec 1s infinite;
-    }
-
-    @keyframes blink-rec {
-      50% {
-        opacity: 0.6;
-      }
-    }
-
-    .rec-pulse-btn {
-      width: 72px;
-      height: 72px;
-      border-radius: 50%;
-      background: var(--accent-rose);
-      border: 4px solid rgba(244, 63, 94, 0.25);
-      color: #FFFFFF;
-      font-size: 26px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin: 0 auto 12px auto;
-      cursor: pointer;
-      box-shadow: 0 0 20px rgba(244, 63, 94, 0.4);
-      transition: transform 0.15s ease;
-    }
-
-    .rec-pulse-btn.active {
-      animation: pulse-ring 1.5s infinite;
-      background: #EF4444;
-    }
-
-    @keyframes pulse-ring {
-      0% {
-        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
-      }
-
-      70% {
-        box-shadow: 0 0 0 16px rgba(239, 68, 68, 0);
-      }
-
-      100% {
-        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
-      }
-    }
-
-    .rec-actions {
-      display: flex;
-      gap: 10px;
-      justify-content: center;
-      margin-top: 10px;
-    }
-
-    audio {
-      width: 100%;
-      margin-top: 10px;
-      border-radius: 8px;
-    }
-
-    /* FILE INPUT STYLING */
-    .file-drop-area {
-      position: relative;
-      background: #0E131E;
-      border: 1px dashed var(--border-color);
-      border-radius: 12px;
-      padding: 18px;
-      text-align: center;
-      cursor: pointer;
-      margin-bottom: 14px;
-    }
-
-    .file-drop-area input[type="file"] {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      opacity: 0;
-      cursor: pointer;
-    }
-
-    /* SEARCH & FILTER BAR IN LIBRARY */
-    .search-row {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 12px;
-    }
-
-    .filter-pills {
-      display: flex;
-      gap: 6px;
-      overflow-x: auto;
-      padding-bottom: 6px;
-      margin-bottom: 12px;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    .filter-pills::-webkit-scrollbar {
-      display: none;
-    }
-
-    .fpill {
-      white-space: nowrap;
-      font-size: 12px;
-      font-weight: 600;
-      padding: 5px 12px;
-      border-radius: 20px;
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      color: var(--text-muted);
-      cursor: pointer;
-    }
-
-    .fpill.active {
-      background: var(--primary);
-      border-color: var(--primary);
-      color: #FFFFFF;
-    }
-
-    /* SBOBINE & NOTES LIST */
-    .note-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 12px;
-      padding: 14px;
-      margin-bottom: 10px;
-      cursor: pointer;
-      transition: background 0.15s ease;
-    }
-
-    .note-card:active {
-      background: var(--bg-card-hover);
-    }
-
-    .note-meta {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 6px;
-    }
-
-    .badge {
-      font-size: 10.5px;
-      font-weight: 700;
-      padding: 3px 8px;
-      border-radius: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-    }
-
-    .badge-profile-alessandro {
-      background: rgba(56, 189, 248, 0.18);
-      color: #38BDF8;
-      border: 1px solid rgba(56, 189, 248, 0.4);
-    }
-
-    .badge-profile-giada,
-    .badge-profile-lei {
-      background: rgba(168, 85, 247, 0.18);
-      color: #C084FC;
-      border: 1px solid rgba(168, 85, 247, 0.4);
-    }
-
-    .badge-subject {
-      background: rgba(245, 158, 11, 0.15);
-      color: #FBBF24;
-      border: 1px solid rgba(245, 158, 11, 0.3);
-    }
-
-    .note-date {
-      font-size: 11px;
-      color: var(--text-dim);
-    }
-
-    .note-card-title {
-      font-size: 15px;
-      font-weight: 700;
-      color: #FFFFFF;
-      margin-bottom: 5px;
-      line-height: 1.3;
-    }
-
-    .note-preview {
-      font-size: 12.5px;
-      color: var(--text-muted);
-      line-height: 1.45;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-
-    /* NOTE DETAIL MODAL */
-    .detail-overlay {
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.85);
-      z-index: 100;
-      display: none;
-      padding: calc(var(--safe-top) + 12px) 12px calc(var(--safe-bottom) + 12px) 12px;
-      overflow-y: auto;
-    }
-
-    .detail-overlay.active {
-      display: block;
-    }
-
-    .detail-container {
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 16px;
-      padding: 20px;
-      max-width: 720px;
-      margin: 0 auto;
-      user-select: text;
-    }
-
-    .detail-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 12px;
-      border-bottom: 1px solid var(--border-color);
-      padding-bottom: 12px;
-    }
-
-    .detail-title {
-      font-size: 18px;
-      font-weight: 800;
-      color: #FFFFFF;
-    }
-
-    .detail-content {
-      font-size: 14px;
-      line-height: 1.65;
-      color: #E2E8F0;
-    }
-
-    .detail-content h1,
-    .detail-content h2,
-    .detail-content h3 {
-      color: #F8FAFC;
-      margin-top: 18px;
+      padding: 4px 8px 16px;
+      border-bottom: 1px solid var(--border);
       margin-bottom: 8px;
     }
 
-    .detail-content p {
-      margin-bottom: 12px;
+    .brand-orb {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, var(--accent-2), var(--accent) 65%, #1E1B4B);
+      box-shadow: 0 0 12px var(--accent-soft);
+      flex-shrink: 0;
     }
 
-    .detail-content ul,
-    .detail-content ol {
-      margin-left: 20px;
-      margin-bottom: 12px;
-    }
+    .brand-name { font-size: 16px; font-weight: 700; letter-spacing: -0.3px; }
+    .brand-sub { font-size: 11px; color: var(--text-muted); }
 
-    .detail-summary-box {
-      background: rgba(2, 132, 199, 0.1);
-      border-left: 4px solid var(--accent-cyan);
-      padding: 12px 14px;
-      border-radius: 6px;
-      margin-bottom: 16px;
-      font-size: 13px;
-    }
-
-    /* BADGE AUDIO NON CHIARO EVITENZIATO */
-    .unclear-audio-tag {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      background: rgba(245, 158, 11, 0.2);
-      border: 1px solid rgba(245, 158, 11, 0.6);
-      color: #FDE047;
-      padding: 3px 8px;
-      border-radius: 6px;
-      font-weight: 700;
-      font-size: 12px;
-      margin: 2px 0;
-    }
-
-    /* FLASHCARD INTERATTIVE */
-    .fc-box {
-      background: #111726;
-      border: 1px solid var(--border-color);
-      border-radius: 16px;
-      padding: 24px 18px;
-      min-height: 220px;
+    .nav-btn {
       display: flex;
-      flex-direction: column;
-      justify-content: center;
-      text-align: center;
-      cursor: pointer;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-      position: relative;
-      transition: transform 0.15s ease, border-color 0.15s ease;
-    }
-
-    .fc-box:active {
-      transform: scale(0.99);
-    }
-
-    .fc-box.flipped {
-      border-color: var(--accent-cyan);
-      background: #151F33;
-    }
-
-    .fc-indicator {
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--text-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      margin-bottom: 12px;
-    }
-
-    .fc-question {
-      font-size: 17px;
-      font-weight: 700;
-      color: #FFFFFF;
-      line-height: 1.4;
-      margin-bottom: 12px;
-    }
-
-    .fc-answer {
-      font-size: 15px;
-      color: var(--accent-cyan);
-      line-height: 1.5;
-      font-weight: 500;
-      display: none;
-      padding-top: 12px;
-      border-top: 1px dashed var(--border-color);
-    }
-
-    .fc-box.flipped .fc-answer {
-      display: block;
-      animation: fadeIn 0.2s ease;
-    }
-
-    .fc-prompt {
-      font-size: 12px;
-      color: var(--text-dim);
-      font-weight: 600;
-      margin-top: 10px;
-    }
-
-    .fc-controls {
-      display: flex;
-      justify-content: space-between;
       align-items: center;
       gap: 10px;
-      margin-top: 16px;
-    }
-
-    /* PROGRESS BAR */
-    .progress-bar-bg {
       width: 100%;
-      height: 6px;
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      text-align: left;
+    }
+    .nav-btn:hover { background: var(--bg-card-hover); color: var(--text-main); }
+    .nav-btn.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: rgba(99, 102, 241, 0.25);
+    }
+
+    /* MAIN CONTENT */
+    .main-area {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      padding-bottom: calc(74px + var(--safe-bottom));
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 16px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .topbar-title { font-size: 16px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .topbar-actions { display: flex; align-items: center; gap: 8px; }
+
+    .pill-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 999px;
       background: var(--bg-input);
-      border-radius: 4px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+    .pill-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
+    .pill-dot.ok { background: var(--success); }
+    .pill-dot.warn { background: var(--warning); }
+
+    .view-container {
+      padding: 16px;
+      max-width: 1120px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .view { display: none; flex-direction: column; gap: 14px; }
+    .view.active { display: flex; }
+
+    /* CARDS, BUTTONS, INPUTS */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .card-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+    .card-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .muted { color: var(--text-muted); font-size: 13px; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr; gap: 14px; }
+    @media (min-width: 860px) {
+      .grid-2 { grid-template-columns: 1fr 1fr; }
+    }
+
+    .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .grow { flex: 1; min-width: 0; }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 9px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg-input);
+      color: var(--text-main);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .btn:hover { background: var(--bg-card-hover); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      border-color: transparent;
+      color: #FFFFFF;
+    }
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.35);
+      color: #FCA5A5;
+    }
+    [data-theme="chiaro"] .btn-danger { color: #B91C1C; }
+    .btn-sm { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
+
+    input[type="text"], input[type="password"], input[type="date"], input[type="number"], select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg-input);
+      color: var(--text-main);
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; min-height: 150px; line-height: 1.55; }
+
+    /* SUB-PILLS */
+    .seg-bar {
+      display: inline-flex;
+      gap: 4px;
+      padding: 4px;
+      border-radius: 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .seg-btn {
+      padding: 7px 12px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .seg-btn.active { background: var(--accent-soft); color: var(--accent); }
+
+    /* NOTES LIST & EDITOR */
+    .note-item {
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg-surface);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .note-item:hover { border-color: var(--accent); }
+    .note-item.active { border-color: var(--accent); background: var(--accent-soft); }
+    .note-item-title { font-weight: 700; font-size: 14px; }
+    .note-item-meta { font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between; gap: 8px; }
+
+    .md-preview {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      line-height: 1.65;
+      font-size: 14.5px;
+      overflow-x: auto;
+      user-select: text;
+    }
+    .md-preview h1, .md-preview h2, .md-preview h3 { margin: 12px 0 6px; color: var(--text-main); }
+    .md-preview p { margin: 6px 0; }
+    .md-preview ul { padding-left: 20px; margin: 6px 0; }
+    .md-preview code { background: var(--bg-input); padding: 2px 5px; border-radius: 5px; font-size: 13px; }
+    .md-preview pre { background: var(--bg-input); padding: 10px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+    .ts-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 6px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      margin: 0 2px;
+    }
+
+    /* RECORDER / MODALITA AULA */
+    .aula-panel {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      background: var(--bg-surface);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .aula-panel.recording {
+      background: #04060C;
+      border-color: var(--danger);
+      color: #E2E8F0;
+    }
+    .rec-timer { font-size: 28px; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 1px; }
+
+    /* POMODORO RING & PROGRESS */
+    .pomo-display {
+      font-size: 46px;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+      padding: 14px 0;
+    }
+    .progress-track {
+      width: 100%;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--bg-input);
       overflow: hidden;
-      margin-top: 10px;
-      display: none;
     }
-
-    .progress-bar-fill {
-      width: 0%;
+    .progress-fill {
       height: 100%;
-      background: var(--primary);
-      transition: width 0.2s ease;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width 0.25s;
     }
 
-    /* BOTTOM NAV BAR */
+    /* RSVP MODAL */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.72);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-box {
+      width: 100%;
+      max-width: 560px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .rsvp-stage {
+      min-height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      padding: 20px;
+      text-align: center;
+    }
+    .rsvp-orp { color: var(--danger); }
+
+    /* BOTTOM NAV (MOBILE < 768px) */
     .bottom-nav {
       position: fixed;
       bottom: 0;
       left: 0;
       right: 0;
-      z-index: 50;
-      background: rgba(11, 15, 25, 0.94);
-      backdrop-filter: blur(14px);
-      -webkit-backdrop-filter: blur(14px);
-      border-top: 1px solid var(--border-color);
+      z-index: 40;
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border);
       display: flex;
-      padding: 6px 12px calc(6px + var(--safe-bottom)) 12px;
+      justify-content: space-around;
+      padding: 6px 4px calc(6px + var(--safe-bottom));
     }
-
-    .nav-item {
-      flex: 1;
+    .bnav-btn {
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      padding: 6px 0;
-      color: var(--text-dim);
-      text-decoration: none;
-      cursor: pointer;
-      font-size: 10.5px;
-      font-weight: 600;
       gap: 3px;
-      transition: color 0.15s ease;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 10px;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    .bnav-btn.active { color: var(--accent); background: var(--accent-soft); }
+
+    @media (min-width: 768px) {
+      .sidebar-rail { display: flex; }
+      .bottom-nav { display: none; }
+      .main-area { padding-bottom: 24px; }
+      .mobile-brand { display: none; }
     }
 
-    .nav-item.active {
-      color: var(--accent-cyan);
-    }
-
-    .nav-item svg {
-      width: 22px;
-      height: 22px;
-      fill: currentColor;
-    }
-
-    /* NOTIFICATION TOAST */
+    /* TOAST */
     .toast {
       position: fixed;
-      top: calc(var(--safe-top) + 60px);
+      bottom: calc(80px + var(--safe-bottom));
       left: 50%;
-      transform: translateX(-50%) translateY(-20px);
-      background: #1E293B;
-      color: #FFFFFF;
-      padding: 10px 18px;
-      border-radius: 20px;
+      transform: translateX(-50%);
+      z-index: 120;
+      background: var(--bg-card);
+      border: 1px solid var(--accent);
+      color: var(--text-main);
+      padding: 10px 16px;
+      border-radius: 999px;
       font-size: 13px;
       font-weight: 600;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-      border: 1px solid var(--border-color);
-      z-index: 200;
-      opacity: 0;
-      pointer-events: none;
-      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      display: none;
     }
-
-    .toast.show {
-      transform: translateX(-50%) translateY(0);
-      opacity: 1;
-    }
-
-    /* EMPTY STATE */
-    .empty-state {
-      text-align: center;
-      padding: 40px 16px;
-      color: var(--text-dim);
-    }
-
-    .empty-state-icon {
-      font-size: 42px;
-      margin-bottom: 12px;
-      opacity: 0.8;
-    }
+    .toast.show { display: block; }
   </style>
 </head>
-
 <body>
-
-  <!-- HEADER -->
-  <header>
-    <div class="brand">
-      <span class="brand-orb"></span>
-      <div>
-        <div class="brand-title">FlowLocal</div>
-        <div class="brand-subtitle">Studio & Sbobine Cloud</div>
+  <div class="app-shell">
+    <!-- SIDEBAR RAIL (TABLET / DESKTOP) -->
+    <aside class="sidebar-rail">
+      <div class="brand-row">
+        <div class="brand-orb"></div>
+        <div>
+          <div class="brand-name">FlowLocal</div>
+          <div class="brand-sub">Mobile &amp; Web</div>
+        </div>
       </div>
-    </div>
-    <div class="header-actions">
-      <div id="syncStatusBadge" class="status-pill offline" onclick="app.syncFromDrive()">
-        <span>●</span> <span id="syncStatusText">Offline</span>
-      </div>
-      <button class="icon-btn" onclick="app.showTab('settings')" title="Impostazioni">⚙️</button>
-    </div>
-  </header>
+      <button class="nav-btn active" data-nav="flownotes" onclick="app.switchEnv('flownotes')">
+        <svg class="icon"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        <span>FlowNotes</span>
+      </button>
+      <button class="nav-btn" data-nav="flowtype" onclick="app.switchEnv('flowtype')">
+        <svg class="icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+        <span>FlowType</span>
+      </button>
+      <button class="nav-btn" data-nav="flowtime" onclick="app.switchEnv('flowtime')">
+        <svg class="icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>FlowTime</span>
+      </button>
+      <button class="nav-btn" data-nav="whis" onclick="app.switchEnv('whis')">
+        <svg class="icon"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+        <span>Whis</span>
+      </button>
+      <div style="flex:1"></div>
+      <button class="nav-btn" data-nav="settings" onclick="app.switchEnv('settings')">
+        <svg class="icon"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
+        <span>Impostazioni</span>
+      </button>
+    </aside>
 
-  <!-- TOAST NOTIFICATION -->
-  <div id="toast" class="toast">Notifica</div>
-
-  <!-- MAIN VIEWS -->
-  <main>
-    <!-- TAB 1: INVIA AUDIO AL PC -->
-    <section id="tab-upload" class="tab-view active">
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">🎙️ Invia Registrazione al PC</div>
+    <!-- MAIN WORKSPACE -->
+    <div class="main-area">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="brand-orb mobile-brand"></div>
+          <div class="topbar-title" id="topbarTitle">FlowNotes</div>
         </div>
-
-        <!-- Selettore Profilo -->
-        <div class="form-group">
-          <label>Profilo Studente</label>
-          <div class="segmented-control">
-            <button type="button" class="seg-btn active"
-              onclick="app.setProfile('Alessandro', this)">Alessandro</button>
-            <button type="button" class="seg-btn" onclick="app.setProfile('Giada', this)">Giada</button>
-          </div>
-        </div>
-
-        <!-- Materia / Corso -->
-        <div class="form-group">
-          <label>Materia / Corso</label>
-          <input type="text" id="subjectInput" placeholder="Es. Meccanica dei Robot, Sistemi Dinamici..."
-            value="" oninput="app.onSubjectInput(this.value)" onchange="if(this.value.trim()) app.saveRecentSubject(this.value.trim());">
-          <div class="chip-container" id="subjectChipsContainer">
-            <span class="chip" onclick="app.selectSubjectChip('Meccanica dei Robot', this)">Meccanica dei Robot</span>
-            <span class="chip" onclick="app.selectSubjectChip('Azionamenti Elettrici', this)">Azionamenti Elettrici</span>
-            <span class="chip" onclick="app.selectSubjectChip('Reti Wireless', this)">Reti Wireless</span>
-            <span class="chip" onclick="app.selectSubjectChip('Fisica 1', this)">Fisica 1</span>
-            <span class="chip" onclick="app.selectSubjectChip('Sistemi Dinamici', this)">Sistemi Dinamici</span>
-          </div>
-        </div>
-
-        <!-- Titolo / Note Aggiuntive -->
-        <div class="form-group">
-          <label>Titolo Lezione (Opzionale)</label>
-          <input type="text" id="titleInput" placeholder="Es. Lezione 3 - Cinematica braccio robotico, Teorema di Gauss...">
-        </div>
-
-        <!-- REGISTRATORE MICROFONO BROWSER -->
-        <div class="rec-box">
-          <div id="recTimer" class="rec-timer">00:00:00</div>
-          <button id="recBtn" class="rec-pulse-btn" onclick="app.toggleRecording()">🎙️</button>
-          <div id="recHint" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">
-            Tocca per registrare direttamente dal microfono
-          </div>
-
-          <div id="recActionsRow" class="rec-actions" style="display: none;">
-            <button class="btn btn-outline" style="width: auto; padding: 6px 14px; font-size: 12px;"
-              onclick="app.cancelRecording()">✕ Scarta</button>
-          </div>
-
-          <audio id="audioPreview" controls style="display: none;"></audio>
-        </div>
-
-        <!-- OPPURE CARICA FILE ESISTENTE -->
-        <div class="file-drop-area">
-          <input type="file" id="audioFileInput" accept="audio/*,video/*,.m4a,.mp3,.wav,.mp4,.ogg,.webm,.aac"
-            onchange="app.onAudioFileSelected(event)">
-          <div style="font-size: 24px; margin-bottom: 4px;">📂</div>
-          <div id="fileUploadLabel" style="font-size: 13px; font-weight: 600; color: #FFFFFF;">
-            Oppure tocca qui per scegliere un file audio dal telefono
-          </div>
-          <div id="fileUploadSub" style="font-size: 11px; color: var(--text-dim); margin-top: 3px;">
-            Supporta .m4a, .mp3, .mp4, .wav, .aac
-          </div>
-        </div>
-
-        <!-- PROGRESS BAR UPLOAD -->
-        <div id="uploadProgressBox" class="progress-bar-bg">
-          <div id="uploadProgressBar" class="progress-bar-fill"></div>
-        </div>
-
-        <button id="uploadSubmitBtn" class="btn btn-primary" onclick="app.uploadAudioJob()" style="margin-top: 12px;">
-          🚀 Invia alla Coda Cloud del PC
-        </button>
-      </div>
-    </section>
-
-    <!-- TAB 2: LIBRERIA SBOBINE & NOTE -->
-    <section id="tab-library" class="tab-view">
-      <div class="search-row">
-        <input type="text" id="librarySearchInput" placeholder="🔍 Cerca nelle sbobine e appunti…"
-          oninput="app.renderLibrary()">
-        <button class="icon-btn" onclick="app.syncFromDrive()" title="Sincronizza subito">🔄</button>
-      </div>
-
-      <!-- Filtri Profilo & Tipo -->
-      <div class="filter-pills" id="profileFilterPills">
-        <button class="fpill active" onclick="app.setLibraryProfileFilter('ALL', this)">Tutti i Profili</button>
-        <button class="fpill" onclick="app.setLibraryProfileFilter('Alessandro', this)">Alessandro</button>
-        <button class="fpill" onclick="app.setLibraryProfileFilter('Giada', this)">Giada</button>
-      </div>
-
-      <div class="filter-pills" id="subjectFilterPills">
-        <button class="fpill active" onclick="app.setLibrarySubjectFilter('ALL', this)">Tutte le Materie</button>
-      </div>
-
-      <div id="libraryListContainer"></div>
-    </section>
-
-    <!-- TAB 3: FLASHCARD INTERATTIVE -->
-    <section id="tab-flashcards" class="tab-view">
-      <div class="filter-pills" id="fcProfileFilterPills">
-        <button class="fpill active" onclick="app.setFcProfileFilter('ALL', this)">Tutti</button>
-        <button class="fpill" onclick="app.setFcProfileFilter('Alessandro', this)">Alessandro</button>
-        <button class="fpill" onclick="app.setFcProfileFilter('Giada', this)">Giada</button>
-      </div>
-
-      <div id="flashcardBoxContainer">
-        <!-- Render dinamico card studio attiva -->
-      </div>
-    </section>
-
-    <!-- TAB 4: IMPOSTAZIONI & DRIVE API -->
-    <section id="tab-settings" class="tab-view">
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title">🔑 Integrazione Google Drive API</div>
-        </div>
-        <p style="font-size: 12.5px; color: var(--text-muted); line-height: 1.5; margin-bottom: 14px;">
-          Collega il tuo Google Drive per sincronizzare automaticamente la cartella <code>FlowLocal_Sync</code> senza
-          aprire l'app di Drive.
-        </p>
-
-        <div class="form-group">
-          <label>Google OAuth Client ID</label>
-          <input type="text" id="googleClientIdInput" placeholder="7123456789-xxxx.apps.googleusercontent.com"
-            onchange="app.saveGoogleClientId()" onblur="app.saveGoogleClientId()">
-          <div style="font-size: 11px; color: var(--text-dim); margin-top: 5px; line-height: 1.4;">
-            Crea un <em>Client ID applicazione Web</em> su Google Cloud Console (Aggiungi le origini JavaScript
-            autorizzate es. <code>http://localhost</code> o il tuo dominio PWA).
-          </div>
-        </div>
-
-        <button id="authDriveBtn" class="btn btn-success" onclick="app.connectGoogleDrive()"
-          style="margin-bottom: 10px;">
-          🔑 Collega Google Drive
-        </button>
-
-        <button class="btn btn-primary" onclick="app.syncFromDrive()" style="margin-bottom: 10px;">
-          🔄 Sincronizza Libreria Ora
-        </button>
-
-        <div style="border-top: 1px solid var(--border-color); padding-top: 14px; margin-top: 14px;">
-          <div class="card-title" style="font-size: 14px; margin-bottom: 8px;">📁 Riserva Offline / Import Manuale</div>
-          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">
-            Puoi caricare manualmente il file <code>outbox_study/library.json</code> esportato dal PC senza account
-            Google.
-          </p>
-          <input type="file" id="manualJsonInput" accept=".json" onchange="app.importManualJson(event)"
-            style="display: none;">
-          <button class="btn btn-outline" onclick="document.getElementById('manualJsonInput').click()">
-            📥 Carica library.json dal telefono
+        <div class="topbar-actions">
+          <button class="pill-status" onclick="app.syncAllWithDrive()" title="Sincronizza con Google Drive">
+            <span class="pill-dot" id="driveDot"></span>
+            <span id="driveStatusText">Drive Offline</span>
+          </button>
+          <button class="btn btn-sm" onclick="app.switchEnv('settings')" title="Impostazioni">
+            <svg class="icon icon-sm"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 0 1 0 4h-.09c-.66 0-1.25.4-1.51 1Z"/></svg>
           </button>
         </div>
-      </div>
+      </header>
 
-      <div class="card">
-        <div class="card-title" style="font-size: 14px; margin-bottom: 10px;">💾 Memoria Locale IndexedDB</div>
-        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;" id="storageStats">
-          Archivio locale attivo per visualizzazione in aula.
-        </div>
-        <button class="btn btn-outline" style="border-color: #3F2A2E; color: #F87171;"
-          onclick="app.clearOfflineCache()">
-          🗑️ Svuota Cache Offline
-        </button>
-      </div>
-    </section>
-  </main>
+      <main class="view-container">
+        <!-- 1. FLOWNOTES -->
+        <section class="view active" id="view-flownotes">
+          <div class="row" style="justify-content: space-between;">
+            <div class="seg-bar">
+              <button class="seg-btn active" data-fntab="notes" onclick="app.switchNotesTab('notes')">
+                <svg class="icon icon-sm"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                Quaderno
+              </button>
+              <button class="seg-btn" data-fntab="aula" onclick="app.switchNotesTab('aula')">
+                <svg class="icon icon-sm"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                Registra Lezione
+              </button>
+              <button class="seg-btn" data-fntab="groups" onclick="app.switchNotesTab('groups')">
+                <svg class="icon icon-sm"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                FlowGroups
+              </button>
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="app.newNote()">
+              <svg class="icon icon-sm"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Nuova Nota
+            </button>
+          </div>
 
-  <!-- MODALE DETTAGLIO SBOBINA -->
-  <div id="detailOverlay" class="detail-overlay" onclick="app.closeDetail(event)">
-    <div class="detail-container" onclick="event.stopPropagation()">
-      <div class="detail-header">
-        <div>
-          <div id="detailTitle" class="detail-title">Titolo Sbobina</div>
-          <div id="detailBadges" style="margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap;"></div>
-        </div>
-        <button class="icon-btn" onclick="app.closeDetail()">✕</button>
-      </div>
+          <!-- Subtab: Quaderno & Editor -->
+          <div id="fntab-notes" class="grid-2">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">Archivio Note</div>
+                <span class="muted" id="notesCountLbl">0 note</span>
+              </div>
+              <input type="text" id="notesSearchInput" placeholder="Cerca per titolo, materia o contenuto..." oninput="app.renderNotesList()">
+              <div id="notesListBox" style="display:flex; flex-direction:column; gap:8px; max-height: 460px; overflow-y:auto;"></div>
+            </div>
 
-      <div id="detailSummary" class="detail-summary-box" style="display: none;"></div>
-      <div id="detailBody" class="detail-content"></div>
+            <div class="card">
+              <div class="card-header">
+                <input type="text" id="noteTitleInput" placeholder="Titolo della nota..." class="grow" style="font-weight:700;">
+                <input type="text" id="noteSubjectInput" placeholder="Materia" style="width: 140px;">
+              </div>
+              <div class="row">
+                <button class="btn btn-sm" id="togglePreviewBtn" onclick="app.toggleNotePreview()">
+                  <svg class="icon icon-sm"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  Anteprima
+                </button>
+                <button class="btn btn-sm" onclick="app.openRsvp()">
+                  <svg class="icon icon-sm"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  RSVP
+                </button>
+                <label class="btn btn-sm" title="OCR da Fotocamera o Screenshot">
+                  <svg class="icon icon-sm"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                  OCR Foto
+                  <input type="file" id="ocrImageInput" accept="image/*" capture="environment" style="display:none" onchange="app.runOcrFromFile(event)">
+                </label>
+                <button class="btn btn-sm btn-primary" onclick="app.saveCurrentNote(true)">
+                  <svg class="icon icon-sm"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+                  Salva
+                </button>
+                <button class="btn btn-sm btn-danger" onclick="app.deleteCurrentNote()" title="Elimina nota">
+                  <svg class="icon icon-sm"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+              </div>
+
+              <div id="audioSyncWrap" style="display:none;">
+                <audio id="noteAudioPlayer" controls style="width:100%; height:36px;"></audio>
+              </div>
+
+              <textarea id="noteBodyInput" placeholder="Scrivi in Markdown o LaTeX ($E = mc^2$)..." oninput="app.scheduleAutoSave()"></textarea>
+              <div id="notePreviewBox" class="md-preview" style="display:none;"></div>
+            </div>
+          </div>
+
+          <!-- Subtab: Registra Lezione (Modalita Aula + Wake Lock + Gemini In-Loco) -->
+          <div id="fntab-aula" class="card" style="display:none;">
+            <div class="card-header">
+              <div class="card-title">
+                <svg class="icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+                Modalita Aula — Sbobinatura In-Loco
+              </div>
+              <span class="muted" id="wakeLockStatusLbl">Wake Lock: Pronto</span>
+            </div>
+            <p class="muted">Registra la lezione mantenendo lo schermo attivo (Screen Wake Lock). Al termine, la PWA elabora la sbobina Markdown + LaTeX direttamente tramite la tua chiave Gemini API.</p>
+            <div class="row">
+              <input type="text" id="aulaTitleInput" placeholder="Titolo lezione (es. Lezione 05 - Termodinamica)" class="grow">
+              <input type="text" id="aulaSubjectInput" placeholder="Materia" style="width:160px;">
+            </div>
+            <div class="aula-panel" id="aulaPanel">
+              <div class="row" style="justify-content: space-between;">
+                <div class="rec-timer" id="aulaTimerLbl">00:00:00</div>
+                <label class="row" style="font-size:13px; cursor:pointer;">
+                  <input type="checkbox" id="wakeLockToggle" checked style="width:auto;">
+                  <span>Schermo sempre attivo</span>
+                </label>
+              </div>
+              <div class="row">
+                <button class="btn btn-primary" id="aulaStartBtn" onclick="app.startAulaRecording()">
+                  <svg class="icon icon-sm"><circle cx="12" cy="12" r="6"/></svg>
+                  Avvia Registrazione
+                </button>
+                <button class="btn btn-danger" id="aulaStopBtn" onclick="app.stopAulaRecording()" disabled>
+                  <svg class="icon icon-sm"><rect x="6" y="6" width="12" height="12"/></svg>
+                  Termina ed Elabora In-Loco
+                </button>
+              </div>
+              <div class="muted" id="aulaStatusMsg">Pronto per registrare.</div>
+            </div>
+          </div>
+
+          <!-- Subtab: FlowGroups -->
+          <div id="fntab-groups" class="card" style="display:none;">
+            <div class="card-header">
+              <div class="card-title">
+                <svg class="icon"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                FlowGroups (Google Drive API + Picker)
+              </div>
+              <div class="row">
+                <button class="btn btn-sm btn-primary" onclick="app.openGooglePickerForGroup()">
+                  <svg class="icon icon-sm"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                  Seleziona con Google Picker
+                </button>
+                <button class="btn btn-sm" onclick="app.joinGroupByPrompt()">Unisciti con ID/Link</button>
+              </div>
+            </div>
+            <div class="row">
+              <select id="pwaGroupSelect" class="grow" onchange="app.loadSelectedGroupNotes()"></select>
+              <button class="btn btn-sm" onclick="app.loadSelectedGroupNotes()">Aggiorna</button>
+              <button class="btn btn-sm btn-primary" onclick="app.publishActiveNoteToGroup()">Pubblica Nota Corrente</button>
+            </div>
+            <div id="pwaGroupNotesList" style="display:flex; flex-direction:column; gap:8px;"></div>
+          </div>
+        </section>
+
+        <!-- 2. FLOWTYPE (DETTATURA IN-LOCO) -->
+        <section class="view" id="view-flowtype">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <svg class="icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                FlowType — Dettatura Vocale In-Loco
+              </div>
+              <select id="flowtypeModeSelect" style="width:auto;">
+                <option value="study_latex">Studio / LaTeX</option>
+                <option value="natural">Naturale</option>
+                <option value="formal">Formale</option>
+                <option value="code">Code (Italiano + Tech)</option>
+              </select>
+            </div>
+            <div class="row">
+              <button class="btn btn-primary" id="ftStartBtn" onclick="app.startDictation()">
+                <svg class="icon icon-sm"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/></svg>
+                Avvia Dettatura
+              </button>
+              <button class="btn btn-danger" id="ftStopBtn" onclick="app.stopDictation()" disabled>
+                <svg class="icon icon-sm"><rect x="6" y="6" width="12" height="12"/></svg>
+                Stop &amp; Raffina
+              </button>
+              <span class="muted" id="ftStatusLbl">Usa Gemini Audio o fallback Web Speech API.</span>
+            </div>
+            <textarea id="ftOutputText" placeholder="Il testo dettato e raffinato apparira qui..."></textarea>
+            <div class="row">
+              <button class="btn btn-sm" onclick="app.copyFlowType()">Copia Testo</button>
+              <button class="btn btn-sm btn-primary" onclick="app.sendFlowTypeToNotes()">Salva come Nota FlowNotes</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. FLOWTIME (POMODORO + EXAM COUNTDOWN) -->
+        <section class="view" id="view-flowtime">
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <svg class="icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  Pomodoro Focus
+                </div>
+                <select id="pomoSubjectSelect" style="width:170px;"></select>
+              </div>
+              <div class="row" style="justify-content:center;">
+                <button class="btn btn-sm" onclick="app.setPomoPreset(25, 5)">25m / 5m</button>
+                <button class="btn btn-sm" onclick="app.setPomoPreset(50, 10)">50m / 10m</button>
+              </div>
+              <div class="pomo-display" id="pomoTimerLbl">25:00</div>
+              <div class="row" style="justify-content:center;">
+                <button class="btn btn-primary" id="pomoToggleBtn" onclick="app.togglePomodoro()">Avvia</button>
+                <button class="btn" onclick="app.resetPomodoro()">Reset</button>
+              </div>
+              <div class="muted" id="pomoWeeklyLbl" style="text-align:center;">0 min studiati questa settimana</div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">
+                  <svg class="icon"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+                  Prossimi Esami
+                </div>
+                <button class="btn btn-sm btn-primary" onclick="app.addExamPrompt()">+ Aggiungi Esame</button>
+              </div>
+              <div id="examsListBox" style="display:flex; flex-direction:column; gap:10px;"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. WHIS (ASSISTENTE STUDIO IN-LOCO) -->
+        <section class="view" id="view-whis">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <svg class="icon"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+                Whis — Assistente Studio In-Loco
+              </div>
+              <span class="muted">Basato sulle tue note in IndexedDB</span>
+            </div>
+            <div id="whisChatBox" style="display:flex; flex-direction:column; gap:10px; min-height:240px; max-height:420px; overflow-y:auto;"></div>
+            <div class="row">
+              <input type="text" id="whisPromptInput" class="grow" placeholder="Chiedi a Whis di spiegare un concetto delle tue note..." onkeydown="if(event.key==='Enter') app.askWhis()">
+              <button class="btn btn-primary" onclick="app.askWhis()">Invia</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. IMPOSTAZIONI -->
+        <section class="view" id="view-settings">
+          <div class="grid-2">
+            <div class="card">
+              <div class="card-title">Gemini API Key (BYOK In-Loco)</div>
+              <p class="muted">Necessaria per sbobine audio, dettatura multimodale, OCR foto e Whis direttamente dal dispositivo.</p>
+              <input type="password" id="geminiKeyInput" placeholder="Incolla la tua Gemini API Key (AIza...)">
+              <div class="row">
+                <button class="btn btn-primary btn-sm" onclick="app.saveSettings()">Salva Chiave</button>
+                <a class="btn btn-sm" href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Ottieni Chiave Gratuita su AI Studio</a>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Tema Interfaccia</div>
+              <select id="themeSelect" onchange="app.setTheme(this.value)">
+                <option value="obsidian">Obsidian</option>
+                <option value="dark_orb">Dark Orb</option>
+                <option value="pixel_chill">Pixel Chill</option>
+                <option value="chiaro">Chiaro</option>
+              </select>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Google Drive &amp; Google Picker (drive.file)</div>
+              <input type="text" id="googleClientIdInput" placeholder="Google OAuth Client ID (.apps.googleusercontent.com)">
+              <input type="text" id="googlePickerKeyInput" placeholder="Google API Key per Picker (opzionale per sfogliare gruppi)">
+              <div class="row">
+                <button class="btn btn-primary btn-sm" onclick="app.connectGoogleDrive()">Connetti Google Drive</button>
+                <button class="btn btn-sm" onclick="app.syncAllWithDrive()">Sincronizza library.json &amp; user_state.json</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- BOTTOM NAVIGATION (MOBILE < 768px) -->
+    <nav class="bottom-nav">
+      <button class="bnav-btn active" data-nav="flownotes" onclick="app.switchEnv('flownotes')">
+        <svg class="icon"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></svg>
+        <span>FlowNotes</span>
+      </button>
+      <button class="bnav-btn" data-nav="flowtype" onclick="app.switchEnv('flowtype')">
+        <svg class="icon"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+        <span>FlowType</span>
+      </button>
+      <button class="bnav-btn" data-nav="flowtime" onclick="app.switchEnv('flowtime')">
+        <svg class="icon"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>FlowTime</span>
+      </button>
+      <button class="bnav-btn" data-nav="whis" onclick="app.switchEnv('whis')">
+        <svg class="icon"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></svg>
+        <span>Whis</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- RSVP SPEED-READING MODAL -->
+  <div class="modal-backdrop" id="rsvpModal">
+    <div class="modal-box">
+      <div class="card-header">
+        <div class="card-title">RSVP Speed-Reading</div>
+        <button class="btn btn-sm" onclick="app.closeRsvp()">Chiudi</button>
+      </div>
+      <div class="rsvp-stage" id="rsvpStage">Pronto</div>
+      <div class="row">
+        <span class="muted">Velocita: <strong id="rsvpWpmLbl">300</strong> WPM</span>
+        <input type="range" id="rsvpWpmSlider" min="150" max="700" step="25" value="300" class="grow" oninput="app.setRsvpWpm(this.value)">
+      </div>
+      <div class="row" style="justify-content:center;">
+        <button class="btn btn-primary" id="rsvpPlayBtn" onclick="app.toggleRsvpPlay()">Avvia</button>
+        <button class="btn" onclick="app.restartRsvp()">Ricomincia</button>
+      </div>
     </div>
   </div>
 
-  <!-- BOTTOM NAVIGATION BAR -->
-  <nav class="bottom-nav">
-    <div class="nav-item active" onclick="app.showTab('upload')">
-      <svg viewBox="0 0 24 24">
-        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
-        <path
-          d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
-      </svg>
-      <span>Invia Audio</span>
-    </div>
-    <div class="nav-item" onclick="app.showTab('library')">
-      <svg viewBox="0 0 24 24">
-        <path
-          d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z" />
-      </svg>
-      <span>Libreria</span>
-    </div>
-    <div class="nav-item" onclick="app.showTab('flashcards')">
-      <svg viewBox="0 0 24 24">
-        <path
-          d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z" />
-      </svg>
-      <span>Flashcard</span>
-    </div>
-    <div class="nav-item" onclick="app.showTab('settings')">
-      <svg viewBox="0 0 24 24">
-        <path
-          d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
-      </svg>
-      <span>Setup</span>
-    </div>
-  </nav>
+  <div class="toast" id="toastBox"></div>
 
-  <!-- APPLICATION LOGIC & GOOGLE DRIVE API CLIENT -->
   <script>
-    // Configurazione Predefinita Google Identity Services
-    const DEFAULT_GOOGLE_CLIENT_ID = "532605028528-c3cq37jq830oqiejk84lppmak26i9up7.apps.googleusercontent.com".trim();
+    const DB_NAME = 'FlowLocalMobileDB';
+    const DB_VERSION = 2;
+    const LOCK_TTL_MS = 30 * 60 * 1000;
 
-    // Inizializzazione Service Worker per uso offline e reload automatico all'aggiornamento
-    if ('serviceWorker' in navigator) {
-      let refreshing = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (!refreshing) {
-          refreshing = true;
-          console.log('[PWA] Nuovo Service Worker attivo, ricarico la pagina per applicare la nuova build...');
-          window.location.reload();
-        }
-      });
+    const FLOWTYPE_PROMPTS = {
+      study_latex: "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. Non rispondere mai alle domande nel testo, non completare frasi interrotte e non aggiungere concetti non pronunciati. Correggi punteggiatura e refusi in italiano mantenendo eventuali formule matematiche o fisiche in LaTeX ($...$). Restituisci SOLO il testo rifinito senza tag.",
+      natural: "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. Non rispondere mai alle domande nel testo. Pulisci disfluenze e punteggiatura mantenendo il tono naturale in italiano e convertendo formule matematiche in LaTeX ($...$). Restituisci SOLO il testo rifinito senza tag.",
+      formal: "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. Riformula in registro formale accademico senza aggiungere concetti non detti e convertendo formule in LaTeX ($...$). Restituisci SOLO il testo rifinito senza tag.",
+      code: "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. NON tradurre mai il discorso dell'utente in inglese: mantieni tutta la frase in italiano corretto lasciando in inglese solo i termini tecnici informatici pronunciati. Converti formule in LaTeX ($...$). Restituisci SOLO il testo rifinito senza tag."
+    };
 
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('./sw.js')
-          .then((reg) => {
-            console.log('[PWA] Service Worker registrato con scope:', reg.scope);
-            reg.update();
-          })
-          .catch((err) => console.warn('[PWA] Errore Service Worker:', err));
-      });
-    }
+    const app = {
+      db: null,
+      notes: [],
+      exams: [],
+      folders: [],
+      groups: [],
+      weeklyStudy: [],
+      activeNoteId: null,
+      previewMode: false,
+      autoSaveTimer: null,
 
-    // GESTIONE INDEXEDDB LOCALE
-    const DB_NAME = 'FlowLocalOfflineDB';
-    const DB_VERSION = 1;
-    function openOfflineDB() {
-      return new Promise((resolve, reject) => {
-        const req = indexedDB.open(DB_NAME, DB_VERSION);
-        req.onupgradeneeded = (e) => {
-          const db = e.target.result;
-          if (!db.objectStoreNames.contains('library')) {
-            db.createObjectStore('library', { keyPath: 'id' });
+      // Auth & Settings
+      geminiKey: localStorage.getItem('fl_gemini_key') || '',
+      googleClientId: localStorage.getItem('fl_google_client_id') || '',
+      googlePickerKey: localStorage.getItem('fl_google_picker_key') || '',
+      accessToken: localStorage.getItem('fl_drive_token') || '',
+      tokenExpiry: parseInt(localStorage.getItem('fl_drive_expiry') || '0', 10),
+      tokenClient: null,
+
+      // Recording / Wake Lock
+      mediaRecorder: null,
+      audioChunks: [],
+      isRecordingAula: false,
+      aulaStartTs: 0,
+      aulaTimerInt: null,
+      wakeLock: null,
+
+      // Dictation
+      isDictating: false,
+      dictRecorder: null,
+      dictChunks: [],
+      speechRec: null,
+
+      // Pomodoro
+      pomoFocusMins: 25,
+      pomoBreakMins: 5,
+      pomoMode: 'focus',
+      pomoRemaining: 25 * 60,
+      pomoRunning: false,
+      pomoInt: null,
+
+      // RSVP
+      rsvpWords: [],
+      rsvpIdx: 0,
+      rsvpWpm: 300,
+      rsvpTimer: null,
+
+      async init() {
+        this.applyTheme(localStorage.getItem('fl_theme') || 'obsidian');
+        document.getElementById('geminiKeyInput').value = this.geminiKey;
+        document.getElementById('googleClientIdInput').value = this.googleClientId;
+        document.getElementById('googlePickerKeyInput').value = this.googlePickerKey;
+        this.groups = JSON.parse(localStorage.getItem('fl_groups') || '[]');
+
+        await this.openIDB();
+        await this.loadFromIDB();
+        this.renderNotesList();
+        this.renderGroupSelect();
+        this.renderExams();
+        this.renderSubjects();
+        this.updateDrivePill();
+
+        document.addEventListener('visibilitychange', async () => {
+          if (document.visibilityState === 'visible' && this.isRecordingAula && document.getElementById('wakeLockToggle').checked) {
+            await this.requestWakeLock();
           }
-        };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-    }
+        });
 
-    async function saveLibraryToIndexedDB(data) {
-      try {
-        const db = await openOfflineDB();
-        const tx = db.transaction('library', 'readwrite');
-        const store = tx.objectStore('library');
-        store.put({ id: 'current_library', data: data, updatedAt: new Date().toISOString() });
-        return new Promise((resolve) => tx.oncomplete = resolve);
-      } catch (err) {
-        console.warn('Errore salvataggio IndexedDB:', err);
-        localStorage.setItem('flowlocal_cached_library', JSON.stringify(data));
-      }
-    }
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.register('./sw.js').catch(() => {});
+        }
+      },
 
-    async function loadLibraryFromIndexedDB() {
-      try {
-        const db = await openOfflineDB();
-        const tx = db.transaction('library', 'readonly');
-        const store = tx.objectStore('library');
-        const req = store.get('current_library');
+      showToast(msg) {
+        const el = document.getElementById('toastBox');
+        el.textContent = msg;
+        el.classList.add('show');
+        clearTimeout(this._toastTimer);
+        this._toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
+      },
+
+      applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('fl_theme', theme);
+        const sel = document.getElementById('themeSelect');
+        if (sel) sel.value = theme;
+      },
+
+      setTheme(theme) { this.applyTheme(theme); },
+
+      saveSettings() {
+        this.geminiKey = document.getElementById('geminiKeyInput').value.trim();
+        this.googleClientId = document.getElementById('googleClientIdInput').value.trim();
+        this.googlePickerKey = document.getElementById('googlePickerKeyInput').value.trim();
+        localStorage.setItem('fl_gemini_key', this.geminiKey);
+        localStorage.setItem('fl_google_client_id', this.googleClientId);
+        localStorage.setItem('fl_google_picker_key', this.googlePickerKey);
+        this.showToast('Impostazioni salvate');
+      },
+
+      switchEnv(env) {
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        document.getElementById(`view-${env}`).classList.add('active');
+        document.querySelectorAll('[data-nav]').forEach(b => b.classList.toggle('active', b.dataset.nav === env));
+        const titles = { flownotes: 'FlowNotes', flowtype: 'FlowType', flowtime: 'FlowTime', whis: 'Whis', settings: 'Impostazioni' };
+        document.getElementById('topbarTitle').textContent = titles[env] || 'FlowLocal';
+      },
+
+      switchNotesTab(tab) {
+        document.querySelectorAll('[data-fntab]').forEach(b => b.classList.toggle('active', b.dataset.fntab === tab));
+        ['notes', 'aula', 'groups'].forEach(t => {
+          document.getElementById(`fntab-${t}`).style.display = (t === tab) ? (t === 'notes' ? 'grid' : 'flex') : 'none';
+        });
+      },
+
+      // ---------------- INDEXEDDB ----------------
+      openIDB() {
+        return new Promise((resolve, reject) => {
+          const req = indexedDB.open(DB_NAME, DB_VERSION);
+          req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv', { keyPath: 'key' });
+          };
+          req.onsuccess = (e) => { this.db = e.target.result; resolve(); };
+          req.onerror = () => reject(req.error);
+        });
+      },
+
+      async idbSet(key, val) {
+        if (!this.db) return;
         return new Promise((resolve) => {
-          req.onsuccess = () => resolve(req.result ? req.result.data : null);
+          const tx = this.db.transaction('kv', 'readwrite');
+          tx.objectStore('kv').put({ key, val });
+          tx.oncomplete = () => resolve();
+        });
+      },
+
+      async idbGet(key) {
+        if (!this.db) return null;
+        return new Promise((resolve) => {
+          const tx = this.db.transaction('kv', 'readonly');
+          const req = tx.objectStore('kv').get(key);
+          req.onsuccess = () => resolve(req.result ? req.result.val : null);
           req.onerror = () => resolve(null);
         });
-      } catch (err) {
-        const raw = localStorage.getItem('flowlocal_cached_library');
-        return raw ? JSON.parse(raw) : null;
-      }
-    }
-
-    // STATO APPLICAZIONE GLOBALE
-    const app = {
-      profile: 'Alessandro',
-      libraryData: null,
-      activeTab: 'upload',
-      libFilterProfile: 'ALL',
-      libFilterSubject: 'ALL',
-      fcFilterProfile: 'ALL',
-      currentFcIndex: 0,
-      activeFlashcards: [],
-
-      // Audio Recording State
-      mediaRecorder: null,
-      recordedChunks: [],
-      recordedBlob: null,
-      recTimerInterval: null,
-      recSeconds: 0,
-      selectedFileBlob: null,
-      selectedFileName: null,
-
-      // Google Drive API State
-      tokenClient: null,
-      initializedClientId: null,
-      accessToken: localStorage.getItem('flowlocal_drive_token') || null,
-      tokenExpiry: parseInt(localStorage.getItem('flowlocal_drive_token_expires') || '0', 10),
-
-      init: async function () {
-        this.updateOnlineStatus();
-        window.addEventListener('online', () => this.updateOnlineStatus());
-        window.addEventListener('offline', () => this.updateOnlineStatus());
-        this.renderSubjectChips();
-
-        let savedClientId = (localStorage.getItem('flowlocal_google_client_id') || '').trim();
-        // Se localStorage non contiene un client_id valido che termina con .apps.googleusercontent.com, usa e salva automaticamente DEFAULT_GOOGLE_CLIENT_ID
-        if (!savedClientId || !savedClientId.endsWith('.apps.googleusercontent.com')) {
-          if (DEFAULT_GOOGLE_CLIENT_ID) {
-            savedClientId = DEFAULT_GOOGLE_CLIENT_ID;
-            localStorage.setItem('flowlocal_google_client_id', savedClientId);
-          }
-        }
-
-        if (savedClientId) {
-          const el = document.getElementById('googleClientIdInput');
-          if (el) el.value = savedClientId;
-        }
-
-        // Carica dati offline da IndexedDB all'avvio
-        const cached = await loadLibraryFromIndexedDB();
-        if (cached) {
-          this.libraryData = cached;
-          this.renderLibrary();
-          this.renderFlashcards();
-        }
-
-        // Se abbiamo il token e siamo online, sincronizziamo in background
-        if (navigator.onLine && this.isTokenValid()) {
-          this.syncFromDrive(true);
-        }
       },
 
-      showToast: function (msg) {
-        const t = document.getElementById('toast');
-        if (!t) return;
-        t.textContent = msg;
-        t.classList.add('show');
-        setTimeout(() => t.classList.remove('show'), 2800);
+      async loadFromIDB() {
+        this.notes = (await this.idbGet('notes')) || [];
+        this.exams = (await this.idbGet('exams')) || [];
+        this.folders = (await this.idbGet('folders')) || [{ id: 1, name: 'Generale' }];
+        this.weeklyStudy = (await this.idbGet('weeklyStudy')) || [];
       },
 
-      updateOnlineStatus: function () {
-        const badge = document.getElementById('syncStatusBadge');
-        const text = document.getElementById('syncStatusText');
-        if (!badge || !text) return;
-        if (navigator.onLine) {
-          badge.className = 'status-pill online';
-          text.textContent = this.isTokenValid() ? 'Drive Connesso' : 'Online';
+      // ---------------- FLOWNOTES CRUD & PREVIEW ----------------
+      newNote() {
+        this.activeNoteId = null;
+        document.getElementById('noteTitleInput').value = '';
+        document.getElementById('noteSubjectInput').value = 'Generale';
+        document.getElementById('noteBodyInput').value = '';
+        document.getElementById('audioSyncWrap').style.display = 'none';
+        if (this.previewMode) this.renderMarkdownPreview();
+      },
+
+      selectNote(id) {
+        const n = this.notes.find(x => String(x.id) === String(id));
+        if (!n) return;
+        this.activeNoteId = n.id;
+        document.getElementById('noteTitleInput').value = n.title || '';
+        document.getElementById('noteSubjectInput').value = n.subject || 'Generale';
+        document.getElementById('noteBodyInput').value = n.content_markdown || '';
+        const aw = document.getElementById('audioSyncWrap');
+        const ap = document.getElementById('noteAudioPlayer');
+        if (n.audio_url) {
+          ap.src = n.audio_url;
+          aw.style.display = 'block';
         } else {
-          badge.className = 'status-pill offline';
-          text.textContent = 'Modalità Aula (Offline)';
+          aw.style.display = 'none';
         }
+        this.renderNotesList();
+        if (this.previewMode) this.renderMarkdownPreview();
       },
 
-      showTab: function (tabId) {
-        document.querySelectorAll('.tab-view').forEach(el => el.classList.remove('active'));
-        document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-
-        const target = document.getElementById('tab-' + tabId);
-        if (target) target.classList.add('active');
-
-        const navIndex = ['upload', 'library', 'flashcards', 'settings'].indexOf(tabId);
-        const navItems = document.querySelectorAll('.nav-item');
-        if (navItems[navIndex]) navItems[navIndex].classList.add('active');
-
-        this.activeTab = tabId;
-        if (tabId === 'library') this.renderLibrary();
-        if (tabId === 'flashcards') this.renderFlashcards();
+      scheduleAutoSave() {
+        clearTimeout(this.autoSaveTimer);
+        this.autoSaveTimer = setTimeout(() => this.saveCurrentNote(false), 900);
       },
 
-      setProfile: function (name, btn) {
-        this.profile = name;
-        document.querySelectorAll('.seg-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-      },
-
-      getRecentSubjects: function () {
-        const defaultList = [
-          'Meccanica dei Robot',
-          'Azionamenti Elettrici',
-          'Reti Wireless',
-          'Fisica 1',
-          'Sistemi Dinamici'
-        ];
-        try {
-          const raw = localStorage.getItem('flowlocal_recent_subjects');
-          if (!raw) return defaultList;
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const cleaned = parsed
-              .filter(s => typeof s === 'string' && s.trim() && s.trim().toLowerCase() !== 'diritto sanitario')
-              .map(s => s.trim());
-            return cleaned.length > 0 ? cleaned : defaultList;
+      async saveCurrentNote(notify) {
+        const title = document.getElementById('noteTitleInput').value.trim() || 'Appunto senza titolo';
+        const subject = document.getElementById('noteSubjectInput').value.trim() || 'Generale';
+        const body = document.getElementById('noteBodyInput').value;
+        if (!this.activeNoteId && !body.trim() && title === 'Appunto senza titolo') return;
+        if (this.activeNoteId) {
+          const idx = this.notes.findIndex(x => String(x.id) === String(this.activeNoteId));
+          if (idx >= 0) {
+            this.notes[idx] = { ...this.notes[idx], title, subject, content_markdown: body, updated_at: new Date().toISOString() };
           }
-        } catch (e) {
-          console.error('Errore lettura recent_subjects:', e);
+        } else {
+          const id = 'pwa_' + Date.now();
+          this.activeNoteId = id;
+          this.notes.unshift({ id, title, subject, content_markdown: body, created_at: new Date().toISOString(), is_studied: 0 });
         }
-        return defaultList;
+        await this.idbSet('notes', this.notes);
+        this.renderNotesList();
+        if (notify) this.showToast('Nota salvata in locale');
       },
 
-      saveRecentSubject: function (subject) {
-        if (!subject) return;
-        const trimmed = subject.trim();
-        if (!trimmed || trimmed.toLowerCase() === 'generale' || trimmed.toLowerCase() === 'diritto sanitario') return;
-
-        let list = this.getRecentSubjects();
-        list = list.filter(s => s.toLowerCase() !== trimmed.toLowerCase());
-        list.unshift(trimmed);
-        if (list.length > 8) {
-          list = list.slice(0, 8);
-        }
-        try {
-          localStorage.setItem('flowlocal_recent_subjects', JSON.stringify(list));
-        } catch (e) {
-          console.error('Errore salvataggio recent_subjects:', e);
-        }
-        this.renderSubjectChips();
+      async deleteCurrentNote() {
+        if (!this.activeNoteId) return;
+        this.notes = this.notes.filter(x => String(x.id) !== String(this.activeNoteId));
+        await this.idbSet('notes', this.notes);
+        this.newNote();
+        this.renderNotesList();
+        this.showToast('Nota eliminata');
       },
 
-      renderSubjectChips: function () {
-        const container = document.getElementById('subjectChipsContainer');
-        if (!container) return;
-        const currentVal = (document.getElementById('subjectInput')?.value || '').trim().toLowerCase();
-        const list = this.getRecentSubjects();
-
-        container.innerHTML = '';
-        list.forEach(subj => {
-          const chip = document.createElement('span');
-          chip.className = 'chip' + (currentVal && subj.toLowerCase() === currentVal ? ' active' : '');
-          chip.textContent = subj;
-          chip.onclick = () => this.selectSubjectChip(subj, chip);
-          container.appendChild(chip);
+      renderNotesList() {
+        const q = (document.getElementById('notesSearchInput').value || '').toLowerCase();
+        const filtered = this.notes.filter(n =>
+          (n.title || '').toLowerCase().includes(q) ||
+          (n.subject || '').toLowerCase().includes(q) ||
+          (n.content_markdown || '').toLowerCase().includes(q)
+        );
+        document.getElementById('notesCountLbl').textContent = `${filtered.length} note`;
+        const box = document.getElementById('notesListBox');
+        box.innerHTML = '';
+        filtered.forEach(n => {
+          const div = document.createElement('div');
+          div.className = 'note-item' + (String(n.id) === String(this.activeNoteId) ? ' active' : '');
+          div.onclick = () => this.selectNote(n.id);
+          div.innerHTML = `<div class="note-item-title">${this.esc(n.title || 'Senza titolo')}</div>
+            <div class="note-item-meta"><span>${this.esc(n.subject || 'Generale')}</span><span>${(n.created_at || '').slice(0, 10)}</span></div>`;
+          box.appendChild(div);
         });
       },
 
-      onSubjectInput: function (val) {
-        const trimmed = (val || '').trim().toLowerCase();
-        document.querySelectorAll('#subjectChipsContainer .chip').forEach(c => {
-          if (trimmed && c.textContent.trim().toLowerCase() === trimmed) {
-            c.classList.add('active');
+      toggleNotePreview() {
+        this.previewMode = !this.previewMode;
+        document.getElementById('noteBodyInput').style.display = this.previewMode ? 'none' : 'block';
+        document.getElementById('notePreviewBox').style.display = this.previewMode ? 'block' : 'none';
+        if (this.previewMode) this.renderMarkdownPreview();
+      },
+
+      renderMarkdownPreview() {
+        const raw = document.getElementById('noteBodyInput').value || '';
+        let html = this.esc(raw)
+          .replace(/^### (.*)$/gm, '<h3>$1</h3>')
+          .replace(/^## (.*)$/gm, '<h2>$1</h2>')
+          .replace(/^# (.*)$/gm, '<h1>$1</h1>')
+          .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+          .replace(/`([^`]+)`/g, '<code>$1</code>')
+          .replace(/\[(\d{2}:\d{2}:\d{2})\]/g, '<button class="ts-chip" onclick="app.seekAudio(\'$1\')">$1</button>');
+
+        if (window.katex) {
+          html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => {
+            try { return katex.renderToString(this.unesc(tex), { displayMode: true, throwOnError: false }); }
+            catch { return tex; }
+          }).replace(/\$([^$\n]+?)\$/g, (_, tex) => {
+            try { return katex.renderToString(this.unesc(tex), { displayMode: false, throwOnError: false }); }
+            catch { return tex; }
+          });
+        }
+        document.getElementById('notePreviewBox').innerHTML = html.replace(/\n/g, '<br>');
+      },
+
+      seekAudio(hhmmss) {
+        const parts = hhmmss.split(':').map(Number);
+        const secs = (parts[0] * 3600) + (parts[1] * 60) + parts[2];
+        const ap = document.getElementById('noteAudioPlayer');
+        if (ap && ap.src) {
+          ap.currentTime = secs;
+          ap.play().catch(() => {});
+        } else {
+          this.showToast(`Marcatore ${hhmmss} (nessun audio collegato)`);
+        }
+      },
+
+      // ---------------- RSVP SPEED READING ----------------
+      openRsvp() {
+        const text = (document.getElementById('noteBodyInput').value || '').replace(/[#*`$]/g, ' ').trim();
+        this.rsvpWords = text ? text.split(/\s+/) : ['Nessun', 'testo', 'nella', 'nota'];
+        this.rsvpIdx = 0;
+        this.renderRsvpWord();
+        document.getElementById('rsvpModal').classList.add('open');
+      },
+      closeRsvp() {
+        clearInterval(this.rsvpTimer);
+        this.rsvpTimer = null;
+        document.getElementById('rsvpPlayBtn').textContent = 'Avvia';
+        document.getElementById('rsvpModal').classList.remove('open');
+      },
+      setRsvpWpm(val) {
+        this.rsvpWpm = parseInt(val, 10) || 300;
+        document.getElementById('rsvpWpmLbl').textContent = this.rsvpWpm;
+        if (this.rsvpTimer) { this.toggleRsvpPlay(); this.toggleRsvpPlay(); }
+      },
+      renderRsvpWord() {
+        const w = this.rsvpWords[this.rsvpIdx] || 'Fine';
+        const orp = Math.min(w.length - 1, Math.floor(w.length / 3));
+        const left = this.esc(w.slice(0, orp));
+        const mid = this.esc(w.charAt(orp));
+        const right = this.esc(w.slice(orp + 1));
+        document.getElementById('rsvpStage').innerHTML = `${left}<span class="rsvp-orp">${mid}</span>${right}`;
+      },
+      toggleRsvpPlay() {
+        if (this.rsvpTimer) {
+          clearInterval(this.rsvpTimer);
+          this.rsvpTimer = null;
+          document.getElementById('rsvpPlayBtn').textContent = 'Avvia';
+          return;
+        }
+        document.getElementById('rsvpPlayBtn').textContent = 'Pausa';
+        const ms = Math.round(60000 / this.rsvpWpm);
+        this.rsvpTimer = setInterval(() => {
+          if (this.rsvpIdx < this.rsvpWords.length - 1) {
+            this.rsvpIdx++;
+            this.renderRsvpWord();
           } else {
-            c.classList.remove('active');
+            this.toggleRsvpPlay();
           }
+        }, ms);
+      },
+      restartRsvp() { this.rsvpIdx = 0; this.renderRsvpWord(); },
+
+      // ---------------- GEMINI API (IN-LOCO AUDIO / VISION / TEXT) ----------------
+      async callGemini(parts, systemInstruction = '') {
+        if (!this.geminiKey) throw new Error('Inserisci prima la tua Gemini API Key in Impostazioni.');
+        const body = { contents: [{ role: 'user', parts }] };
+        if (systemInstruction) body.systemInstruction = { parts: [{ text: systemInstruction }] };
+        const res = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${encodeURIComponent(this.geminiKey)}`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error?.message || `HTTP ${res.status}`);
+        return (data?.candidates?.[0]?.content?.parts || []).map(p => p.text || '').join('').trim();
+      },
+
+      blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(r.result.split(',')[1]);
+          r.onerror = reject;
+          r.readAsDataURL(blob);
         });
       },
 
-      selectSubjectChip: function (subject, chip) {
-        const input = document.getElementById('subjectInput');
-        if (!input) return;
-        if (input.value.trim().toLowerCase() === subject.trim().toLowerCase() && chip && chip.classList.contains('active')) {
-          input.value = '';
-          chip.classList.remove('active');
-        } else {
-          input.value = subject;
-          document.querySelectorAll('#subjectChipsContainer .chip').forEach(c => c.classList.remove('active'));
-          if (chip) chip.classList.add('active');
+      // ---------------- OCR FOTO / SCREENSHOT ----------------
+      async runOcrFromFile(ev) {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        try {
+          this.showToast('Estrazione OCR con Gemini Vision...');
+          const b64 = await this.blobToBase64(file);
+          const out = await this.callGemini([
+            { text: 'Estrai il testo, le formule matematiche (in LaTeX $$...$$ o $...$) o tabelle (in Markdown) da questa immagine. Restituisci SOLO il contenuto strutturato senza commenti.' },
+            { inlineData: { mimeType: file.type || 'image/jpeg', data: b64 } }
+          ]);
+          const tb = document.getElementById('noteBodyInput');
+          tb.value = (tb.value ? tb.value + '\n\n' : '') + out;
+          await this.saveCurrentNote(false);
+          this.showToast('OCR completato e inserito nella nota');
+        } catch (err) {
+          this.showToast('Errore OCR: ' + err.message);
+        } finally {
+          ev.target.value = '';
         }
       },
 
-      // -----------------------------------------------------------------------
-      // AUDIO RECORDING (MediaRecorder)
-      // -----------------------------------------------------------------------
-      toggleRecording: async function () {
-        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-          this.stopRecording();
-        } else {
-          await this.startRecording();
+      // ---------------- MODALITA AULA (WAKE LOCK + GEMINI IN-LOCO) ----------------
+      async requestWakeLock() {
+        if (!('wakeLock' in navigator)) {
+          document.getElementById('wakeLockStatusLbl').textContent = 'Wake Lock non supportato';
+          return;
+        }
+        try {
+          this.wakeLock = await navigator.wakeLock.request('screen');
+          document.getElementById('wakeLockStatusLbl').textContent = 'Wake Lock: Attivo';
+        } catch {
+          document.getElementById('wakeLockStatusLbl').textContent = 'Wake Lock: Negato';
         }
       },
 
-      startRecording: async function () {
+      releaseWakeLock() {
+        if (this.wakeLock) {
+          this.wakeLock.release().catch(() => {});
+          this.wakeLock = null;
+        }
+        document.getElementById('wakeLockStatusLbl').textContent = 'Wake Lock: Pronto';
+      },
+
+      async startAulaRecording() {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          this.recordedChunks = [];
-
-          let mime = 'audio/webm';
-          if (MediaRecorder.isTypeSupported('audio/mp4')) mime = 'audio/mp4';
-          else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) mime = 'audio/webm;codecs=opus';
-          else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) mime = 'audio/ogg;codecs=opus';
-
-          this.mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
-          this.mediaRecorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
-          };
-
-          this.mediaRecorder.onstop = () => {
+          this.audioChunks = [];
+          this.mediaRecorder = new MediaRecorder(stream);
+          this.mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.audioChunks.push(e.data); };
+          this.mediaRecorder.onstop = async () => {
             stream.getTracks().forEach(t => t.stop());
-            this.recordedBlob = new Blob(this.recordedChunks, { type: mime });
-            const preview = document.getElementById('audioPreview');
-            preview.src = URL.createObjectURL(this.recordedBlob);
-            preview.style.display = 'block';
-
-            this.selectedFileBlob = this.recordedBlob;
-            const ext = mime.includes('mp4') ? 'm4a' : 'webm';
-            const timestamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
-            this.selectedFileName = `registrazione_${this.profile.toLowerCase()}_${timestamp}.${ext}`;
-
-            document.getElementById('recHint').textContent = `Audio registrato (${(this.recordedBlob.size / 1024 / 1024).toFixed(2)} MB)`;
-            document.getElementById('recActionsRow').style.display = 'flex';
+            await this.processAulaAudio();
           };
-
           this.mediaRecorder.start(1000);
-          this.recSeconds = 0;
-          this.updateRecTimer();
-          clearInterval(this.recTimerInterval);
-          this.recTimerInterval = setInterval(() => {
-            this.recSeconds++;
-            this.updateRecTimer();
-          }, 1000);
+          this.isRecordingAula = true;
+          this.aulaStartTs = Date.now();
+          document.getElementById('aulaPanel').classList.add('recording');
+          document.getElementById('aulaStartBtn').disabled = true;
+          document.getElementById('aulaStopBtn').disabled = false;
+          document.getElementById('aulaStatusMsg').textContent = 'Registrazione in corso (non chiudere Safari/browser)...';
+          if (document.getElementById('wakeLockToggle').checked) await this.requestWakeLock();
 
-          document.getElementById('recBtn').classList.add('active');
-          document.getElementById('recTimer').classList.add('recording');
-          document.getElementById('recHint').textContent = 'Registrazione in corso... Tocca di nuovo per fermare';
-          document.getElementById('audioPreview').style.display = 'none';
-          document.getElementById('recActionsRow').style.display = 'none';
+          this.aulaTimerInt = setInterval(() => {
+            const s = Math.floor((Date.now() - this.aulaStartTs) / 1000);
+            const h = String(Math.floor(s / 3600)).padStart(2, '0');
+            const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+            const sec = String(s % 60).padStart(2, '0');
+            document.getElementById('aulaTimerLbl').textContent = `${h}:${m}:${sec}`;
+          }, 500);
         } catch (err) {
-          alert('Impossibile accedere al microfono: ' + err.message);
+          this.showToast('Microfono non disponibile: ' + err.message);
         }
       },
 
-      stopRecording: function () {
+      stopAulaRecording() {
+        this.isRecordingAula = false;
+        clearInterval(this.aulaTimerInt);
+        this.releaseWakeLock();
+        document.getElementById('aulaPanel').classList.remove('recording');
+        document.getElementById('aulaStartBtn').disabled = false;
+        document.getElementById('aulaStopBtn').disabled = true;
         if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
           this.mediaRecorder.stop();
         }
-        clearInterval(this.recTimerInterval);
-        document.getElementById('recBtn').classList.remove('active');
-        document.getElementById('recTimer').classList.remove('recording');
       },
 
-      cancelRecording: function () {
-        this.stopRecording();
-        this.recordedChunks = [];
-        this.recordedBlob = null;
-        this.selectedFileBlob = null;
-        this.selectedFileName = null;
-        document.getElementById('audioPreview').style.display = 'none';
-        document.getElementById('recActionsRow').style.display = 'none';
-        document.getElementById('recTimer').textContent = '00:00:00';
-        document.getElementById('recHint').textContent = 'Tocca per registrare direttamente dal microfono';
-      },
+      async processAulaAudio() {
+        const blob = new Blob(this.audioChunks, { type: this.mediaRecorder?.mimeType || 'audio/webm' });
+        const title = document.getElementById('aulaTitleInput').value.trim() || `Sbobina ${new Date().toLocaleDateString('it-IT')}`;
+        const subject = document.getElementById('aulaSubjectInput').value.trim() || 'Generale';
+        document.getElementById('aulaStatusMsg').textContent = 'Elaborazione sbobina in-loco con Gemini...';
+        try {
+          const b64 = await this.blobToBase64(blob);
+          const prompt = `Trascrivi e struttura in modo chiaro e fedele questa lezione universitaria in Markdown italiano. Converti formule matematiche/fisiche in LaTeX ($...$ o $$...$$) e inserisci marcatori temporali [HH:MM:SS] ai cambi di argomento. Non inventare concetti non detti.`;
+          const md = await this.callGemini([
+            { text: prompt },
+            { inlineData: { mimeType: blob.type || 'audio/webm', data: b64 } }
+          ], FLOWTYPE_PROMPTS.study_latex);
 
-      updateRecTimer: function () {
-        const h = Math.floor(this.recSeconds / 3600);
-        const m = Math.floor((this.recSeconds % 3600) / 60);
-        const s = this.recSeconds % 60;
-        const fmt = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-        document.getElementById('recTimer').textContent = fmt;
-      },
-
-      onAudioFileSelected: function (e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        this.selectedFileBlob = file;
-        this.selectedFileName = file.name;
-        document.getElementById('fileUploadLabel').textContent = `Selezionato: ${file.name}`;
-        document.getElementById('fileUploadSub').textContent = `Dimensione: ${(file.size / 1024 / 1024).toFixed(2)} MB`;
-        this.showToast('File audio selezionato!');
-      },
-
-      // -----------------------------------------------------------------------
-      // GOOGLE DRIVE API V3 & GIS
-      // -----------------------------------------------------------------------
-      isTokenValid: function () {
-        return !!(this.accessToken && Date.now() < this.tokenExpiry);
-      },
-
-      saveGoogleClientId: function () {
-        const inputEl = document.getElementById('googleClientIdInput');
-        const val = inputEl ? inputEl.value.trim() : '';
-        if (inputEl) inputEl.value = val;
-        if (val) {
-          localStorage.setItem('flowlocal_google_client_id', val);
-          this.showToast('Client ID salvato!');
-        } else {
-          localStorage.removeItem('flowlocal_google_client_id');
+          const audioUrl = URL.createObjectURL(blob);
+          const id = 'pwa_' + Date.now();
+          this.notes.unshift({
+            id,
+            title,
+            subject,
+            content_markdown: md,
+            audio_url: audioUrl,
+            created_at: new Date().toISOString(),
+            is_studied: 0
+          });
+          await this.idbSet('notes', this.notes);
+          this.renderNotesList();
+          this.selectNote(id);
+          this.switchNotesTab('notes');
+          document.getElementById('aulaStatusMsg').textContent = 'Sbobina completata e salvata!';
+          this.showToast('Sbobina creata in-loco');
+        } catch (err) {
+          document.getElementById('aulaStatusMsg').textContent = 'Errore elaborazione: ' + err.message;
         }
       },
 
-      connectGoogleDrive: function () {
-        const inputEl = document.getElementById('googleClientIdInput');
-          let activeClientId = inputEl ? inputEl.value.trim() : '';
-          if (!activeClientId) {
-            activeClientId = (localStorage.getItem('flowlocal_google_client_id') || '').trim();
-          }
-          if (!activeClientId && DEFAULT_GOOGLE_CLIENT_ID) {
-            activeClientId = DEFAULT_GOOGLE_CLIENT_ID.trim();
-          }
-
-            if (inputEl && activeClientId) {
-              inputEl.value = activeClientId;
-            }
-
-              if (!activeClientId || activeClientId === '<INCOLLA_QUI_IL_TUO_CLIENT_ID>') {
-                alert('Google Client ID mancante o non configurato!\n\nImposta il tuo Client ID nelle Impostazioni oppure aggiorna la costante DEFAULT_GOOGLE_CLIENT_ID nel codice sorgente della PWA.');
-                this.showTab('settings');
-                if (inputEl) inputEl.focus();
-                return;
+      // ---------------- FLOWTYPE (DETTATURA IN-LOCO + WEB SPEECH FALLBACK) ----------------
+      async startDictation() {
+        const mode = document.getElementById('flowtypeModeSelect').value;
+        if (this.geminiKey && navigator.mediaDevices) {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            this.dictChunks = [];
+            this.dictRecorder = new MediaRecorder(stream);
+            this.dictRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.dictChunks.push(e.data); };
+            this.dictRecorder.onstop = async () => {
+              stream.getTracks().forEach(t => t.stop());
+              const blob = new Blob(this.dictChunks, { type: this.dictRecorder?.mimeType || 'audio/webm' });
+              document.getElementById('ftStatusLbl').textContent = 'Raffinamento con Gemini...';
+              try {
+                const b64 = await this.blobToBase64(blob);
+                const refined = await this.callGemini([
+                  { text: '<trascrizione>Trascrivi esattamente e applica il filtro testuale senza rispondere alle domande.</trascrizione>' },
+                  { inlineData: { mimeType: blob.type || 'audio/webm', data: b64 } }
+                ], FLOWTYPE_PROMPTS[mode] || FLOWTYPE_PROMPTS.study_latex);
+                const out = document.getElementById('ftOutputText');
+                out.value = (out.value ? out.value + ' ' : '') + refined;
+                document.getElementById('ftStatusLbl').textContent = 'Completato (Gemini In-Loco)';
+              } catch (err) {
+                document.getElementById('ftStatusLbl').textContent = 'Errore: ' + err.message;
               }
+            };
+            this.dictRecorder.start();
+            this.isDictating = true;
+            document.getElementById('ftStartBtn').disabled = true;
+            document.getElementById('ftStopBtn').disabled = false;
+            document.getElementById('ftStatusLbl').textContent = 'Ascolto in corso (Gemini)...';
+            return;
+          } catch {}
+        }
 
-                if (!activeClientId.endsWith('.apps.googleusercontent.com')) {
-                  alert('Google Client ID non valido o malformato!\n\nValore rilevato: "' + activeClientId + '"\n\nDeve terminare obbligatoriamente con ".apps.googleusercontent.com" (es. 123456789-abcdef.apps.googleusercontent.com).\n\nVerifica di aver copiato l\'intero Client ID per applicazione Web dalla Google Cloud Console.');
-                  this.showTab('settings');
-                  if (inputEl) inputEl.focus();
-                  return;
-                }
+        const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SR) {
+          this.showToast('Web Speech API non supportata e nessuna Gemini Key impostata');
+          return;
+        }
+        this.speechRec = new SR();
+        this.speechRec.lang = 'it-IT';
+        this.speechRec.continuous = true;
+        this.speechRec.onresult = (e) => {
+          let txt = '';
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            if (e.results[i].isFinal) txt += e.results[i][0].transcript + ' ';
+          }
+          if (txt) document.getElementById('ftOutputText').value += txt;
+        };
+        this.speechRec.start();
+        this.isDictating = true;
+        document.getElementById('ftStartBtn').disabled = true;
+        document.getElementById('ftStopBtn').disabled = false;
+        document.getElementById('ftStatusLbl').textContent = 'Dettatura offline Web Speech attiva...';
+      },
 
-                // Salva il client ID sanificato
-                localStorage.setItem('flowlocal_google_client_id', activeClientId);
+      stopDictation() {
+        this.isDictating = false;
+        document.getElementById('ftStartBtn').disabled = false;
+        document.getElementById('ftStopBtn').disabled = true;
+        if (this.dictRecorder && this.dictRecorder.state !== 'inactive') this.dictRecorder.stop();
+        if (this.speechRec) { try { this.speechRec.stop(); } catch {} this.speechRec = null; }
+      },
 
-                if (typeof google === 'undefined' || !google.accounts || !google.accounts.oauth2) {
-                  alert('Libreria Google Identity Services non ancora caricata o bloccata.\nVerifica la connessione a Internet o disattiva eventuali estensioni ad-block.');
-                  return;
-                }
+      copyFlowType() {
+        navigator.clipboard.writeText(document.getElementById('ftOutputText').value || '');
+        this.showToast('Testo copiato');
+      },
 
-                // Re-inizializza il client OAuth se non ancora inizializzato o se il client_id è cambiato
-                  if (!this.tokenClient || this.initializedClientId !== activeClientId) {
-                    try {
-                      this.tokenClient = google.accounts.oauth2.initTokenClient({
-                        client_id: activeClientId.trim(),
-                        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive',
-                        ux_mode: 'popup',
-                        callback: (resp) => {
-                          if (resp.access_token) {
-                            this.accessToken = resp.access_token;
-                            this.tokenExpiry = Date.now() + ((parseInt(resp.expires_in, 10) || 3600) * 1000);
-                            localStorage.setItem('flowlocal_drive_token', this.accessToken);
-                            localStorage.setItem('flowlocal_drive_token_expires', this.tokenExpiry.toString());
-                            this.updateOnlineStatus();
-                            this.showToast('Google Drive collegato con successo!');
-                            this.syncFromDrive();
-                          } else if (resp.error) {
-                            const desc = resp.error_description ? `\n${resp.error_description}` : '';
-                            alert('Errore autorizzazione Google: ' + resp.error + desc);
-                          }
-                        }
-                      });
-                      this.initializedClientId = activeClientId;
-                    } catch (initErr) {
-                      alert('Errore diagnostico inizializzazione Google Identity Services:\n' + initErr.message + '\n\nClient ID usato: ' + activeClientId);
-                      return;
-                    }
-                  }
+      async sendFlowTypeToNotes() {
+        const txt = document.getElementById('ftOutputText').value.trim();
+        if (!txt) return;
+        const id = 'pwa_' + Date.now();
+        this.notes.unshift({ id, title: `Appunto ${new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}`, subject: 'Generale', content_markdown: txt, created_at: new Date().toISOString() });
+        await this.idbSet('notes', this.notes);
+        this.renderNotesList();
+        this.selectNote(id);
+        this.switchEnv('flownotes');
+        this.showToast('Salvato in FlowNotes');
+      },
 
-                  this.tokenClient.requestAccessToken({ prompt: 'consent' });
-                },
+      // ---------------- FLOWTIME (POMODORO + EXAMS) ----------------
+      renderSubjects() {
+        const sel = document.getElementById('pomoSubjectSelect');
+        sel.innerHTML = '<option value="Generale">Studio Generale</option>';
+        (this.folders || []).forEach(f => {
+          const opt = document.createElement('option');
+          opt.value = f.name;
+          opt.textContent = f.name;
+          sel.appendChild(opt);
+        });
+        const totalM = (this.weeklyStudy || []).reduce((acc, r) => acc + (r.total_minutes || 0), 0);
+        document.getElementById('pomoWeeklyLbl').textContent = `${totalM} min studiati questa settimana`;
+      },
 
-                // Helper per trovare o creare cartella su Google Drive
-                findOrCreateFolder: async function (name, parentId = null) {
-                  let q = `mimeType = 'application/vnd.google-apps.folder' and name = '${name}' and trashed = false`;
-                  if (parentId) {
-                    q += ` and '${parentId}' in parents`;
-                  }
-                  const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`, {
-                    headers: { 'Authorization': `Bearer ${this.accessToken}` }
-                  });
-                  const data = await searchRes.json();
-                  if (data.files && data.files.length > 0) {
-                    return data.files[0].id;
-                  }
+      setPomoPreset(f, b) {
+        clearInterval(this.pomoInt);
+        this.pomoRunning = false;
+        this.pomoFocusMins = f;
+        this.pomoBreakMins = b;
+        this.pomoMode = 'focus';
+        this.pomoRemaining = f * 60;
+        this.updatePomoUI();
+      },
 
-                  // Creazione cartella se non trovata
-                  const meta = { name: name, mimeType: 'application/vnd.google-apps.folder' };
-                  if (parentId) meta.parents = [parentId];
-                  const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
-                    method: 'POST',
-                    headers: {
-                      'Authorization': `Bearer ${this.accessToken}`,
-                      'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(meta)
-                  });
-                  const created = await createRes.json();
-                  return created.id;
-                },
+      togglePomodoro() {
+        if (this.pomoRunning) {
+          clearInterval(this.pomoInt);
+          this.pomoRunning = false;
+          this.updatePomoUI();
+          return;
+        }
+        this.pomoRunning = true;
+        this.pomoInt = setInterval(async () => {
+          if (this.pomoRemaining > 1) {
+            this.pomoRemaining--;
+            this.updatePomoUI();
+            return;
+          }
+          clearInterval(this.pomoInt);
+          this.pomoRunning = false;
+          this.playSoftChime();
+          if (this.pomoMode === 'focus') {
+            const subj = document.getElementById('pomoSubjectSelect').value || 'Generale';
+            this.weeklyStudy.push({ subject_name: subj, total_minutes: this.pomoFocusMins, sessions_count: 1 });
+            await this.idbSet('weeklyStudy', this.weeklyStudy);
+            this.renderSubjects();
+            this.pomoMode = 'break';
+            this.pomoRemaining = this.pomoBreakMins * 60;
+          } else {
+            this.pomoMode = 'focus';
+            this.pomoRemaining = this.pomoFocusMins * 60;
+          }
+          this.updatePomoUI();
+        }, 1000);
+        this.updatePomoUI();
+      },
 
-                // Carica file su Google Drive via Multipart Upload
-                uploadFileToDrive: async function (fileBlob, filename, parentFolderId, mimeType = null) {
-                  const metadata = {
-                    name: filename,
-                    parents: [parentFolderId]
-                  };
+      resetPomodoro() {
+        clearInterval(this.pomoInt);
+        this.pomoRunning = false;
+        this.pomoRemaining = (this.pomoMode === 'focus' ? this.pomoFocusMins : this.pomoBreakMins) * 60;
+        this.updatePomoUI();
+      },
 
-                  const boundary = '-------FlowLocalMultipartBoundary';
-                  const delimiter = `\r\n--${boundary}\r\n`;
-                  const closeDelim = `\r\n--${boundary}--`;
+      updatePomoUI() {
+        const m = String(Math.floor(this.pomoRemaining / 60)).padStart(2, '0');
+        const s = String(this.pomoRemaining % 60).padStart(2, '0');
+        document.getElementById('pomoTimerLbl').textContent = `${m}:${s}`;
+        document.getElementById('pomoToggleBtn').textContent = this.pomoRunning ? 'Pausa' : 'Avvia';
+      },
 
-                  const effectiveMime = mimeType || fileBlob.type || 'application/octet-stream';
+      playSoftChime() {
+        try {
+          const ctx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = 587.33;
+          gain.gain.setValueAtTime(0.08, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start();
+          osc.stop(ctx.currentTime + 0.8);
+        } catch {}
+      },
 
-                  // Convertiamo il file blob in ArrayBuffer per costruire il body binario
-                  const fileBuffer = await fileBlob.arrayBuffer();
-                  const metaPart = `${delimiter}Content-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}${delimiter}Content-Type: ${effectiveMime}\r\n\r\n`;
+      async addExamPrompt() {
+        const title = prompt('Nome esame (es. Analisi II):');
+        if (!title) return;
+        const date = prompt('Data appello (YYYY-MM-DD):', new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10));
+        if (!date) return;
+        const subject = prompt('Materia collegata:', 'Generale') || 'Generale';
+        this.exams.push({ id: 'ex_' + Date.now(), exam_title: title, exam_date: date, subject_name: subject, cfu: 9, total_notes: 0, studied_notes: 0 });
+        await this.idbSet('exams', this.exams);
+        this.renderExams();
+      },
 
-                  const encoder = new TextEncoder();
-                  const metaBytes = encoder.encode(metaPart);
-                  const closeBytes = encoder.encode(closeDelim);
+      async deleteExam(id) {
+        this.exams = this.exams.filter(e => String(e.id) !== String(id));
+        await this.idbSet('exams', this.exams);
+        this.renderExams();
+      },
 
-                  const totalLength = metaBytes.length + fileBuffer.byteLength + closeBytes.length;
-                  const combined = new Uint8Array(totalLength);
-                  combined.set(metaBytes, 0);
-                  combined.set(new Uint8Array(fileBuffer), metaBytes.length);
-                  combined.set(closeBytes, metaBytes.length + fileBuffer.byteLength);
-
-                  const uploadRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
-                    method: 'POST',
-                    headers: {
-                      'Authorization': `Bearer ${this.accessToken}`,
-                      'Content-Type': `multipart/related; boundary=${boundary}`
-                    },
-                    body: combined
-                  });
-
-                  if (!uploadRes.ok) {
-                    const errText = await uploadRes.text();
-                    throw new Error(`Upload fallito (${uploadRes.status}): ${errText}`);
-                  }
-                  return await uploadRes.json();
-                },
-
-                // -----------------------------------------------------------------------
-                // UPLOAD AUDIO JOB (Audio + .meta.json in FlowLocal_Sync/inbox_audio/)
-                // -----------------------------------------------------------------------
-                uploadAudioJob: async function () {
-                  if (!this.selectedFileBlob) {
-                    alert('Nessun audio registrato o selezionato. Registra una lezione o scegli un file.');
-                    return;
-                  }
-
-                  if (!navigator.onLine) {
-                    alert('Sei in modalità offline. Connettiti a Internet per caricare la registrazione su Google Drive.');
-                    return;
-                  }
-
-                  if (!this.isTokenValid()) {
-                    this.connectGoogleDrive();
-                    return;
-                  }
-
-                  const subject = document.getElementById('subjectInput').value.trim() || 'Generale';
-                  if (subject && subject !== 'Generale') {
-                    this.saveRecentSubject(subject);
-                  }
-                  const customTitle = document.getElementById('titleInput').value.trim() || this.selectedFileName;
-                  const filename = this.selectedFileName || `audio_${Date.now()}.m4a`;
-
-                  const btn = document.getElementById('uploadSubmitBtn');
-                  const pBox = document.getElementById('uploadProgressBox');
-                  const pBar = document.getElementById('uploadProgressBar');
-
-                  btn.disabled = true;
-                  btn.textContent = '⏳ Caricamento su Google Drive...';
-                  pBox.style.display = 'block';
-                  pBar.style.width = '20%';
-
-                  try {
-                    // 1. Assicura le cartelle su Google Drive: FlowLocal_Sync -> inbox_audio
-                    const syncFolderId = await this.findOrCreateFolder('FlowLocal_Sync');
-                    const inboxFolderId = await this.findOrCreateFolder('inbox_audio', syncFolderId);
-                    pBar.style.width = '45%';
-
-                    // 2. Carica il file audio
-                    await this.uploadFileToDrive(this.selectedFileBlob, filename, inboxFolderId);
-                    pBar.style.width = '80%';
-
-                    // 3. Carica il file companion .meta.json
-                    const metaPayload = {
-                      profile: this.profile,
-                      subject: subject,
-                      title: customTitle,
-                      created_at: new Date().toISOString()
-                    };
-                    const metaBlob = new Blob([JSON.stringify(metaPayload, null, 2)], { type: 'application/json' });
-                    await this.uploadFileToDrive(metaBlob, `${filename}.meta.json`, inboxFolderId, 'application/json');
-
-                    pBar.style.width = '100%';
-                    this.showToast('✅ Audio inviato alla Coda Cloud!');
-
-                    alert(`Registrazione caricata con successo su Google Drive!\n\nFile: ${filename}\nProfilo: ${this.profile}\nMateria: ${subject}\n\nIl PC elaborerà l'audio non appena cliccherai '▶️ Elabora Coda' nell'Hub.`);
-
-                    // Reset del form
-                    this.cancelRecording();
-                    document.getElementById('titleInput').value = '';
-                    document.getElementById('fileUploadLabel').textContent = 'Oppure tocca qui per scegliere un file audio dal telefono';
-                    document.getElementById('fileUploadSub').textContent = 'Supporta .m4a, .mp3, .mp4, .wav, .aac';
-                  } catch (err) {
-                    alert('Errore durante il caricamento su Google Drive:\n' + err.message);
-                  } finally {
-                    btn.disabled = false;
-                    btn.textContent = '🚀 Invia alla Coda Cloud del PC';
-                    setTimeout(() => pBox.style.display = 'none', 1000);
-                  }
-                },
-
-                // -----------------------------------------------------------------------
-                // SINCRONIZZAZIONE LIBRERIA (outbox_study/library.json)
-                // -----------------------------------------------------------------------
-                syncFromDrive: async function (silent = false) {
-                  if (!navigator.onLine) {
-                    if (!silent) this.showToast('Sei offline: mostro i dati salvati.');
-                    return;
-                  }
-
-                  if (!this.isTokenValid()) {
-                    if (!silent) {
-                      alert('Google Drive non collegato o sessione scaduta. Clicca su "🔑 Collega Google Drive" nelle impostazioni.');
-                      this.showTab('settings');
-                    }
-                    return;
-                  }
-
-                  try {
-                    if (!silent) this.showToast('Sincronizzazione con Google Drive...');
-
-                    // Trova outbox_study
-                    const syncFolderId = await this.findOrCreateFolder('FlowLocal_Sync');
-                    const outboxFolderId = await this.findOrCreateFolder('outbox_study', syncFolderId);
-
-                    // Cerca library.json
-                    const q = `name = 'library.json' and '${outboxFolderId}' in parents and trashed = false`;
-                    const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,modifiedTime)`, {
-                      headers: { 'Authorization': `Bearer ${this.accessToken}` }
-                    });
-                    const list = await res.json();
-                    if (!list.files || list.files.length === 0) {
-                      if (!silent) alert('Nessun file library.json trovato in FlowLocal_Sync/outbox_study. Clicca su "🔄 Aggiorna Cloud" nel PC per generarlo.');
-                      return;
-                    }
-
-                    const fileId = list.files[0].id;
-                    const downloadRes = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
-                      headers: { 'Authorization': `Bearer ${this.accessToken}` }
-                    });
-                    const json = await downloadRes.json();
-
-                    this.libraryData = json;
-                    await saveLibraryToIndexedDB(json);
-
-                    this.renderLibrary();
-                    this.renderFlashcards();
-                    this.showToast('✅ Libreria sincronizzata!');
-                  } catch (err) {
-                    console.warn('Errore sincronizzazione:', err);
-                    if (!silent) alert('Errore sincronizzazione Google Drive:\n' + err.message);
-                  }
-                },
-
-                importManualJson: function (e) {
-                  const file = e.target.files[0];
-                  if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = async (ev) => {
-                    try {
-                      const data = JSON.parse(ev.target.result);
-                      this.libraryData = data;
-                      await saveLibraryToIndexedDB(data);
-                      this.renderLibrary();
-                      this.renderFlashcards();
-                      this.showToast('Libreria importata con successo!');
-                      this.showTab('library');
-                    } catch (err) {
-                      alert('File JSON non valido: ' + err.message);
-                    }
-                  };
-                  reader.readAsText(file);
-                },
-
-                clearOfflineCache: async function () {
-                  if (confirm('Vuoi svuotare tutti i dati salvati offline sul telefono?')) {
-                    localStorage.removeItem('flowlocal_cached_library');
-                    const db = await openOfflineDB();
-                    const tx = db.transaction('library', 'readwrite');
-                    tx.objectStore('library').clear();
-                    this.libraryData = null;
-                    this.renderLibrary();
-                    this.renderFlashcards();
-                    this.showToast('Cache svuotata.');
-                  }
-                },
-
-                // -----------------------------------------------------------------------
-                // RENDERING LIBRERIA & SBOBINE
-                // -----------------------------------------------------------------------
-                setLibraryProfileFilter: function (prof, btn) {
-                  this.libFilterProfile = prof;
-                  document.querySelectorAll('#profileFilterPills .fpill').forEach(b => b.classList.remove('active'));
-                  btn.classList.add('active');
-                  this.renderLibrary();
-                },
-
-                setLibrarySubjectFilter: function (subj, btn) {
-                  this.libFilterSubject = subj;
-                  document.querySelectorAll('#subjectFilterPills .fpill').forEach(b => b.classList.remove('active'));
-                  btn.classList.add('active');
-                  this.renderLibrary();
-                },
-
-                renderLibrary: function () {
-                  const container = document.getElementById('libraryListContainer');
-                  if (!container) return;
-
-                  if (!this.libraryData || !this.libraryData.notes || this.libraryData.notes.length === 0) {
-                    container.innerHTML = `
-            <div class="empty-state">
-              <div class="empty-state-icon">📖</div>
-              <div style="font-size: 15px; font-weight: 700; color: #FFFFFF; margin-bottom: 4px;">Nessuna Sbobina Trovata</div>
-              <div style="font-size: 12.5px;">Sincronizza con Google Drive o carica una registrazione per iniziare.</div>
+      renderExams() {
+        const box = document.getElementById('examsListBox');
+        box.innerHTML = '';
+        if (!this.exams.length) {
+          box.innerHTML = '<div class="muted">Nessun esame in programma.</div>';
+          return;
+        }
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        this.exams.forEach(ex => {
+          const d = new Date(ex.exam_date);
+          const diff = Math.round((d - today) / 86400000);
+          const badge = diff > 0 ? `-${diff} gg` : (diff === 0 ? 'Oggi' : 'Passato');
+          const pct = ex.total_notes > 0 ? Math.round((ex.studied_notes / ex.total_notes) * 100) : 0;
+          const div = document.createElement('div');
+          div.className = 'note-item';
+          div.innerHTML = `
+            <div class="row" style="justify-content:space-between;">
+              <strong>${this.esc(ex.exam_title)}</strong>
+              <span class="muted">${badge}</span>
             </div>
-          `;
-                    return;
-                  }
+            <div class="muted">${this.esc(ex.subject_name || 'Generale')} - ${this.esc(ex.exam_date)}</div>
+            <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+            <div class="row" style="justify-content:space-between;">
+              <span class="muted">${ex.studied_notes || 0}/${ex.total_notes || 0} note (${pct}%)</span>
+              <button class="btn btn-sm btn-danger" onclick="app.deleteExam('${ex.id}')">Rimuovi</button>
+            </div>`;
+          box.appendChild(div);
+        });
+      },
 
-                  // Popola i chip delle materie se non presenti
-                  const subjPills = document.getElementById('subjectFilterPills');
-                  if (subjPills && this.libraryData.subjects) {
-                    let html = `<button class="fpill ${this.libFilterSubject === 'ALL' ? 'active' : ''}" onclick="app.setLibrarySubjectFilter('ALL', this)">Tutte le Materie</button>`;
-                    this.libraryData.subjects.forEach(s => {
-                      html += `<button class="fpill ${this.libFilterSubject === s ? 'active' : ''}" onclick="app.setLibrarySubjectFilter('${s}', this)">${s}</button>`;
-                    });
-                    subjPills.innerHTML = html;
-                  }
+      // ---------------- WHIS IN-LOCO ----------------
+      async askWhis() {
+        const inp = document.getElementById('whisPromptInput');
+        const q = inp.value.trim();
+        if (!q) return;
+        inp.value = '';
+        const box = document.getElementById('whisChatBox');
+        box.innerHTML += `<div class="note-item"><strong>Tu</strong><div>${this.esc(q)}</div></div>`;
+        const ctxNotes = this.notes.slice(0, 5).map(n => `[${n.subject}] ${n.title}:\n${(n.content_markdown || '').slice(0, 1200)}`).join('\n---\n');
+        try {
+          const ans = await this.callGemini([
+            { text: `Appunti disponibili:\n${ctxNotes}\n\nDomanda studente: ${q}` }
+          ], 'Sei Whis, tutor universitario di FlowLocal. Rispondi in italiano chiaro, usa formule LaTeX ($...$) dove utile.');
+          box.innerHTML += `<div class="note-item" style="border-color:var(--accent);"><strong>Whis</strong><div>${this.esc(ans)}</div></div>`;
+        } catch (err) {
+          box.innerHTML += `<div class="note-item"><strong>Errore</strong><div>${this.esc(err.message)}</div></div>`;
+        }
+        box.scrollTop = box.scrollHeight;
+      },
 
-                  const query = (document.getElementById('librarySearchInput') ? document.getElementById('librarySearchInput').value.toLowerCase().trim() : '');
+      // ---------------- GOOGLE DRIVE (drive.file + PICKER + ANTI-DUPLICATI) ----------------
+      updateDrivePill() {
+        const ok = this.accessToken && Date.now() < this.tokenExpiry;
+        document.getElementById('driveDot').className = 'pill-dot ' + (ok ? 'ok' : 'warn');
+        document.getElementById('driveStatusText').textContent = ok ? 'Drive Connesso' : 'Drive Offline';
+      },
 
-                  const filtered = this.libraryData.notes.filter(n => {
-                    const normProf = (n.profile === 'Lei') ? 'Giada' : (n.profile || 'Alessandro');
-                    if (this.libFilterProfile !== 'ALL' && normProf !== this.libFilterProfile) return false;
-                    if (this.libFilterSubject !== 'ALL' && n.subject !== this.libFilterSubject) return false;
-                    if (query) {
-                      const t = (n.title || '').toLowerCase();
-                      const c = (n.content_markdown || '').toLowerCase();
-                      const s = (n.subject || '').toLowerCase();
-                      if (!t.includes(query) && !c.includes(query) && !s.includes(query)) return false;
-                    }
-                    return true;
-                  });
+      connectGoogleDrive() {
+        if (!this.googleClientId) {
+          this.showToast('Inserisci il Google OAuth Client ID');
+          return;
+        }
+        this.tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: this.googleClientId,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: (resp) => {
+            if (resp.access_token) {
+              this.accessToken = resp.access_token;
+              this.tokenExpiry = Date.now() + ((parseInt(resp.expires_in, 10) || 3600) * 1000);
+              localStorage.setItem('fl_drive_token', this.accessToken);
+              localStorage.setItem('fl_drive_expiry', String(this.tokenExpiry));
+              this.updateDrivePill();
+              this.showToast('Google Drive connesso (drive.file)');
+              this.syncAllWithDrive();
+            }
+          }
+        });
+        this.tokenClient.requestAccessToken({ prompt: 'consent' });
+      },
 
-                  if (filtered.length === 0) {
-                    container.innerHTML = `
-            <div class="empty-state">
-              <div class="empty-state-icon">🔍</div>
-              <div style="font-size: 14px; color: #FFFFFF;">Nessuna nota corrisponde ai filtri selezionati.</div>
-            </div>
-          `;
-                    return;
-                  }
+      async driveFetch(url, opts = {}) {
+        if (!this.accessToken || Date.now() >= this.tokenExpiry) throw new Error('Connetti prima Google Drive');
+        const headers = { ...(opts.headers || {}), Authorization: `Bearer ${this.accessToken}` };
+        const res = await fetch(url, { ...opts, headers });
+        if (!res.ok) throw new Error(`Drive HTTP ${res.status}`);
+        return res;
+      },
 
-                  let cardsHtml = '';
-                  filtered.forEach(note => {
-                    const displayProf = (note.profile === 'Lei') ? 'Giada' : (note.profile || 'Alessandro');
-                    const profClass = displayProf === 'Giada' ? 'badge-profile-giada' : 'badge-profile-alessandro';
-                    const summaryPreview = note.summary ? note.summary : (note.content_markdown || '').slice(0, 140) + '...';
-                    const dateStr = note.created_at ? note.created_at.slice(0, 10) : '';
+      async findDriveItem(name, parentId, mimeType = null) {
+        let q = `name = '${name.replace(/'/g, "\\'")}' and trashed = false`;
+        if (parentId) q += ` and '${parentId}' in parents`;
+        if (mimeType) q += ` and mimeType = '${mimeType}'`;
+        const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name,mimeType)&supportsAllDrives=true&includeItemsFromAllDrives=true`);
+        const data = await res.json();
+        return (data.files && data.files[0]) || null;
+      },
 
-                    cardsHtml += `
-            <div class="note-card" onclick="app.openDetail(${note.id})">
-              <div class="note-meta">
-                <div style="display: flex; gap: 5px;">
-                  <span class="badge ${profClass}">${displayProf}</span>
-                  <span class="badge badge-subject">${note.subject}</span>
-                </div>
-                <span class="note-date">${dateStr}</span>
-              </div>
-              <div class="note-card-title">${note.title}</div>
-              <div class="note-preview">${summaryPreview}</div>
-            </div>
-          `;
-                  });
+      async upsertDriveFile(name, parentId, contentText, mimeType = 'text/markdown') {
+        const existing = await this.findDriveItem(name, parentId);
+        if (existing) {
+          await this.driveFetch(`https://www.googleapis.com/upload/drive/v3/files/${existing.id}?uploadType=media&supportsAllDrives=true`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': mimeType },
+            body: contentText
+          });
+          return existing.id;
+        }
+        const meta = { name, parents: parentId ? [parentId] : [] };
+        const boundary = 'fl_boundary_' + Date.now();
+        const multipart = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: ${mimeType}; charset=UTF-8\r\n\r\n${contentText}\r\n--${boundary}--`;
+        const res = await this.driveFetch(`https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true`, {
+          method: 'POST',
+          headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+          body: multipart
+        });
+        const created = await res.json();
+        return created.id;
+      },
 
-                  container.innerHTML = cardsHtml;
-                },
+      async ensureDriveFolder(name, parentId = null) {
+        const mime = 'application/vnd.google-apps.folder';
+        const existing = await this.findDriveItem(name, parentId, mime);
+        if (existing) return existing.id;
+        const res = await this.driveFetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, mimeType: mime, ...(parentId ? { parents: [parentId] } : {}) })
+        });
+        const data = await res.json();
+        return data.id;
+      },
 
-                openDetail: function (noteId) {
-                  if (!this.libraryData || !this.libraryData.notes) return;
-                  const note = this.libraryData.notes.find(n => n.id === noteId);
-                  if (!note) return;
+      async syncAllWithDrive() {
+        try {
+          const rootId = await this.ensureDriveFolder('FlowLocal_Sync');
+          const outboxId = await this.ensureDriveFolder('outbox_study', rootId);
+          const libFile = await this.findDriveItem('library.json', outboxId);
+          if (libFile) {
+            const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${libFile.id}?alt=media`);
+            const lib = await res.json();
+            if (Array.isArray(lib.notes)) {
+              const localIds = new Set(this.notes.map(n => String(n.id)));
+              lib.notes.forEach(n => { if (!localIds.has(String(n.id))) this.notes.push(n); });
+              await this.idbSet('notes', this.notes);
+              this.renderNotesList();
+            }
+          }
+          const stateFile = await this.findDriveItem('user_state.json', rootId);
+          if (stateFile) {
+            const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${stateFile.id}?alt=media`);
+            const st = await res.json();
+            if (Array.isArray(st.folders)) { this.folders = st.folders; await this.idbSet('folders', this.folders); }
+            if (Array.isArray(st.exams)) { this.exams = st.exams; await this.idbSet('exams', this.exams); }
+            if (Array.isArray(st.weekly_study)) { this.weeklyStudy = st.weekly_study; await this.idbSet('weeklyStudy', this.weeklyStudy); }
+            this.renderSubjects();
+            this.renderExams();
+          }
+          await this.upsertDriveFile('user_state.json', rootId, JSON.stringify({
+            schema_version: 1,
+            updated_at_utc: new Date().toISOString(),
+            folders: this.folders,
+            exams: this.exams,
+            weekly_study: this.weeklyStudy
+          }, null, 2), 'application/json');
+          this.showToast('Sincronizzazione Drive completata');
+        } catch (err) {
+          this.showToast(err.message);
+        }
+      },
 
-                  document.getElementById('detailTitle').textContent = note.title;
+      // ---------------- GOOGLE PICKER & FLOWGROUPS ----------------
+      openGooglePickerForGroup() {
+        if (!this.accessToken || Date.now() >= this.tokenExpiry) {
+          this.showToast('Connetti prima Google Drive in Impostazioni');
+          return;
+        }
+        if (!window.gapi) {
+          this.showToast('Google Picker non ancora caricato');
+          return;
+        }
+        gapi.load('picker', () => {
+          const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+            .setSelectFolderEnabled(true)
+            .setIncludeFolders(true);
+          const builder = new google.picker.PickerBuilder()
+            .addView(view)
+            .setOAuthToken(this.accessToken)
+            .setCallback((data) => {
+              if (data.action === google.picker.Action.PICKED && data.docs && data.docs[0]) {
+                const doc = data.docs[0];
+                this.addGroupRecord(doc.id, doc.name.replace('FlowGroup - ', ''));
+              }
+            });
+          if (this.googlePickerKey) builder.setDeveloperKey(this.googlePickerKey);
+          builder.build().setVisible(true);
+        });
+      },
 
-                  const displayProf = (note.profile === 'Lei') ? 'Giada' : (note.profile || 'Alessandro');
-                  const profClass = displayProf === 'Giada' ? 'badge-profile-giada' : 'badge-profile-alessandro';
-                  document.getElementById('detailBadges').innerHTML = `
-          <span class="badge ${profClass}">${displayProf}</span>
-          <span class="badge badge-subject">${note.subject}</span>
-          <span class="badge" style="background: #1E293B; color: #94A3B8;">${note.created_at || ''}</span>
-        `;
+      joinGroupByPrompt() {
+        const raw = prompt('Incolla link o ID cartella FlowGroup:');
+        if (!raw) return;
+        const m = raw.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+        const fid = m ? m[1] : raw.trim();
+        const name = prompt('Nome gruppo:', `Gruppo ${fid.slice(0, 6)}`) || 'FlowGroup';
+        this.addGroupRecord(fid, name);
+      },
 
-                  const sumBox = document.getElementById('detailSummary');
-                  if (note.summary) {
-                    sumBox.innerHTML = `<strong>💡 Sommario Esecutivo:</strong><br>${note.summary}`;
-                    sumBox.style.display = 'block';
-                  } else {
-                    sumBox.style.display = 'none';
-                  }
+      addGroupRecord(folderId, name) {
+        if (!this.groups.some(g => g.folderId === folderId)) {
+          this.groups.push({ folderId, name });
+          localStorage.setItem('fl_groups', JSON.stringify(this.groups));
+        }
+        this.renderGroupSelect();
+        this.loadSelectedGroupNotes();
+        this.showToast(`Gruppo "${name}" aggiunto`);
+      },
 
-                  // Render Markdown con evidenziazione badge audio non chiaro
-                  let htmlBody = this.renderMarkdown(note.content_markdown || '');
-                  document.getElementById('detailBody').innerHTML = htmlBody;
+      renderGroupSelect() {
+        const sel = document.getElementById('pwaGroupSelect');
+        sel.innerHTML = '';
+        if (!this.groups.length) {
+          sel.innerHTML = '<option value="">Nessun gruppo collegato</option>';
+          return;
+        }
+        this.groups.forEach(g => {
+          const o = document.createElement('option');
+          o.value = g.folderId;
+          o.textContent = g.name;
+          sel.appendChild(o);
+        });
+      },
 
-                  document.getElementById('detailOverlay').classList.add('active');
-                },
+      async loadSelectedGroupNotes() {
+        const fid = document.getElementById('pwaGroupSelect').value;
+        const listBox = document.getElementById('pwaGroupNotesList');
+        listBox.innerHTML = '';
+        if (!fid) return;
+        try {
+          const q = `'${fid}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`;
+          const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`);
+          const folders = (await res.json()).files || [];
+          for (const f of folders) {
+            if (f.name.startsWith('.')) continue;
+            const fq = `'${f.id}' in parents and trashed = false`;
+            const fres = await this.driveFetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(fq)}&fields=files(id,name)&supportsAllDrives=true&includeItemsFromAllDrives=true`);
+            const files = (await fres.json()).files || [];
+            const lockSet = new Set(files.filter(x => x.name.endsWith('.md.lock')).map(x => x.name.replace('.lock', '')));
+            files.filter(x => x.name.endsWith('.md')).forEach(item => {
+              const locked = lockSet.has(item.name);
+              const div = document.createElement('div');
+              div.className = 'note-item';
+              div.innerHTML = `<div class="row" style="justify-content:space-between;">
+                <strong>[${this.esc(f.name)}] ${this.esc(item.name.replace('.md', ''))}</strong>
+                <button class="btn btn-sm" onclick="app.importGroupNote('${item.id}', '${this.esc(item.name)}', '${this.esc(f.name)}')">${locked ? 'Bloccato - ' : ''}Importa</button>
+              </div>`;
+              listBox.appendChild(div);
+            });
+          }
+        } catch (err) {
+          listBox.innerHTML = `<div class="muted">Errore caricamento gruppo: ${this.esc(err.message)}</div>`;
+        }
+      },
 
-                closeDetail: function () {
-                  document.getElementById('detailOverlay').classList.remove('active');
-                },
+      async importGroupNote(fileId, fileName, subject) {
+        try {
+          const res = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`);
+          const md = await res.text();
+          const id = 'pwa_' + Date.now();
+          this.notes.unshift({ id, title: fileName.replace('.md', '').replace(/_/g, ' '), subject, content_markdown: md, created_at: new Date().toISOString() });
+          await this.idbSet('notes', this.notes);
+          this.renderNotesList();
+          this.selectNote(id);
+          this.switchNotesTab('notes');
+          this.showToast('Nota importata dal gruppo');
+        } catch (err) {
+          this.showToast(err.message);
+        }
+      },
 
-                // Lightweight Markdown + LaTeX & Unclear Audio Highlighter
-                renderMarkdown: function (md) {
-                  if (!md) return '';
-                  let escaped = md
-                    .replace(/&/g, "&amp;")
-                    .replace(/</g, "&lt;")
-                    .replace(/>/g, "&gt;");
+      async publishActiveNoteToGroup() {
+        const fid = document.getElementById('pwaGroupSelect').value;
+        if (!fid) return this.showToast('Seleziona un gruppo');
+        const title = (document.getElementById('noteTitleInput').value.trim() || 'Appunto').replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
+        const subject = (document.getElementById('noteSubjectInput').value.trim() || 'Generale').replace(/[^\w\- ]+/g, '').replace(/\s+/g, '_');
+        const md = document.getElementById('noteBodyInput').value;
+        if (!md.trim()) return this.showToast('Scrivi prima la nota');
+        try {
+          const subjId = await this.ensureDriveFolder(subject, fid);
+          const lockName = `${title}.md.lock`;
+          const existingLock = await this.findDriveItem(lockName, subjId);
+          if (existingLock) {
+            const lres = await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${existingLock.id}?alt=media`);
+            const ld = await lres.json().catch(() => null);
+            if (ld && ld.locked_at_utc && (Date.now() - Date.parse(ld.locked_at_utc)) < LOCK_TTL_MS) {
+              return this.showToast(`File bloccato da ${ld.author || 'un collega'}`);
+            }
+          }
+          const lockId = await this.upsertDriveFile(lockName, subjId, JSON.stringify({ author: 'PWA Mobile', locked_at_utc: new Date().toISOString() }), 'application/json');
+          await this.upsertDriveFile(`${title}.md`, subjId, md, 'text/markdown');
+          await this.driveFetch(`https://www.googleapis.com/drive/v3/files/${lockId}?supportsAllDrives=true`, { method: 'DELETE' }).catch(() => {});
+          this.loadSelectedGroupNotes();
+          this.showToast('Nota pubblicata nel gruppo');
+        } catch (err) {
+          this.showToast('Errore pubblicazione: ' + err.message);
+        }
+      },
 
-                  // Evidenziazione badge d'aula: [Audio non chiaro da MM:SS a MM:SS]
-                  escaped = escaped.replace(/\[(?:AUDIO_NON_CHIARO|Audio non chiaro)[^\]]*\]/gi, (match) => {
-                    return `<span class="unclear-audio-tag">⚠️ ${match.replace(/\[|\]/g, '')}</span>`;
-                  });
+      esc(s) {
+        return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      },
+      unesc(s) {
+        return String(s || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"');
+      }
+    };
 
-                  // Headers
-                  escaped = escaped.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-                  escaped = escaped.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-                  escaped = escaped.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-
-                  // Bold & Italic
-                  escaped = escaped.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
-                  escaped = escaped.replace(/\*(.*?)\*/gim, '<em>$1</em>');
-
-                  // Inline Math LaTeX
-                  escaped = escaped.replace(/\$([^\$]+)\$/g, '<code style="background: rgba(56, 189, 248, 0.15); color: #38BDF8; padding: 2px 5px; border-radius: 4px;">$1</code>');
-
-                  // Paragrafi
-                  escaped = escaped.split('\n\n').map(p => {
-                    if (p.startsWith('<h') || p.startsWith('<span class="unclear')) return p;
-                    return `<p>${p.replace(/\n/g, '<br>')}</p>`;
-                  }).join('');
-
-                  return escaped;
-                },
-
-                // -----------------------------------------------------------------------
-                // RENDERING FLASHCARD INTERATTIVE
-                // -----------------------------------------------------------------------
-                setFcProfileFilter: function (prof, btn) {
-                  this.fcFilterProfile = prof;
-                  document.querySelectorAll('#fcProfileFilterPills .fpill').forEach(b => b.classList.remove('active'));
-                  btn.classList.add('active');
-                  this.currentFcIndex = 0;
-                  this.renderFlashcards();
-                },
-
-                renderFlashcards: function () {
-                  const container = document.getElementById('flashcardBoxContainer');
-                  if (!container) return;
-
-                  if (!this.libraryData || !this.libraryData.flashcards || this.libraryData.flashcards.length === 0) {
-                    container.innerHTML = `
-            <div class="empty-state">
-              <div class="empty-state-icon">🧠</div>
-              <div style="font-size: 15px; font-weight: 700; color: #FFFFFF; margin-bottom: 4px;">Nessuna Flashcard Disponibile</div>
-              <div style="font-size: 12.5px;">Estrai le flashcard dalle lezioni sul PC e aggiorna la libreria.</div>
-            </div>
-          `;
-                    return;
-                  }
-
-                  this.activeFlashcards = this.libraryData.flashcards.filter(fc => {
-                    const normProf = (fc.profile === 'Lei') ? 'Giada' : (fc.profile || 'Alessandro');
-                    if (this.fcFilterProfile !== 'ALL' && normProf !== this.fcFilterProfile) return false;
-                    return true;
-                  });
-
-                  if (this.activeFlashcards.length === 0) {
-                    container.innerHTML = `
-            <div class="empty-state">
-              <div style="font-size: 14px; color: #FFFFFF;">Nessuna flashcard per questo profilo.</div>
-            </div>
-          `;
-                    return;
-                  }
-
-                  if (this.currentFcIndex >= this.activeFlashcards.length) this.currentFcIndex = 0;
-                  const current = this.activeFlashcards[this.currentFcIndex];
-                  const total = this.activeFlashcards.length;
-
-                  container.innerHTML = `
-          <div id="activeFcBox" class="fc-box" onclick="this.classList.toggle('flipped')">
-            <div class="fc-indicator">${current.subject} • Card ${this.currentFcIndex + 1} di ${total}</div>
-            <div class="fc-question">${current.question}</div>
-            <div class="fc-answer">${current.answer}</div>
-            <div class="fc-prompt">👆 Tocca la card per mostrare la risposta</div>
-          </div>
-
-          <div class="fc-controls">
-            <button class="btn btn-outline" style="width: auto; padding: 9px 18px;" onclick="app.prevFlashcard()">⬅ Precedente</button>
-            <button class="btn btn-outline" style="width: auto; padding: 9px 14px;" onclick="app.shuffleFlashcards()" title="Mischia">🔀</button>
-            <button class="btn btn-primary" style="width: auto; padding: 9px 18px;" onclick="app.nextFlashcard()">Prossima ➔</button>
-          </div>
-        `;
-                },
-
-                nextFlashcard: function () {
-                  if (this.activeFlashcards.length === 0) return;
-                  this.currentFcIndex = (this.currentFcIndex + 1) % this.activeFlashcards.length;
-                  this.renderFlashcards();
-                },
-
-                prevFlashcard: function () {
-                  if (this.activeFlashcards.length === 0) return;
-                  this.currentFcIndex = (this.currentFcIndex - 1 + this.activeFlashcards.length) % this.activeFlashcards.length;
-                  this.renderFlashcards();
-                },
-
-                shuffleFlashcards: function () {
-                  if (this.activeFlashcards.length <= 1) return;
-                  for (let i = this.activeFlashcards.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [this.activeFlashcards[i], this.activeFlashcards[j]] = [this.activeFlashcards[j], this.activeFlashcards[i]];
-                  }
-                  this.currentFcIndex = 0;
-                  this.renderFlashcards();
-                  this.showToast('🔀 Flashcard rimescolate!');
-                }
-              };
-
-              window.addEventListener('DOMContentLoaded', () => app.init());
+    window.addEventListener('DOMContentLoaded', () => app.init());
   </script>
 </body>
-
 </html>

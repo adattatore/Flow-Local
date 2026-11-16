@@ -1361,7 +1361,7 @@ class WhisAgent(QObject):
         gemini_succeeded = False
 
         if use_gemini:
-            gem_model = routing_cfg.get("gemini_model") or "gemini-2.5-flash"
+            gem_model = routing_cfg.get("gemini_model") or "gemini-3.5-flash"
             actual_model = gem_model
             self.set_status(f"Elaborazione con {gem_model}...", user_prompt)
             try:

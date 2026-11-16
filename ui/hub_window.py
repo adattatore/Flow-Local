@@ -127,6 +127,7 @@ from core.gemini_client import (
     get_active_runtime_engine,
     is_ollama_available,
 )
+from core.flow_groups import flow_groups
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from ui.flowtime_widgets import (
@@ -156,6 +157,238 @@ from ui.study_widgets import (
     TimeMachineDialog,
 )
 
+
+
+class FlowGroupsDialog(QDialog):
+    """Dialogo compatto FlowGroups: crea/unisciti a gruppi Drive o locali, pubblica e importa note."""
+
+    def __init__(
+        self,
+        current_title: str = "",
+        current_subject: str = "Generale",
+        current_markdown: str = "",
+        author_name: str = "Studente",
+        parent: Optional[QWidget] = None,
+    ):
+        super().__init__(parent)
+        self.current_title = current_title
+        self.current_subject = current_subject or "Generale"
+        self.current_markdown = current_markdown
+        self.author_name = author_name or "Studente"
+        self.imported_note_id: Optional[int] = None
+        self._notes_cache: List[Dict[str, Any]] = []
+
+        self.setWindowTitle("FlowGroups — Collaborazione Drive & Locale")
+        self.resize(780, 520)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 16, 16, 16)
+        lay.setSpacing(10)
+
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        top.addWidget(_make_label("Gruppi collegati", "CardTitle"))
+        top.addStretch(1)
+        btn_new = _make_button("+ Crea Gruppo", "primary")
+        btn_new.clicked.connect(self._on_create_group)
+        top.addWidget(btn_new)
+
+        btn_join_drive = _make_button("Unisciti (Link/ID Drive)")
+        btn_join_drive.clicked.connect(self._on_join_drive_group)
+        top.addWidget(btn_join_drive)
+
+        btn_join_local = _make_button("Cartella Locale")
+        btn_join_local.clicked.connect(self._on_join_local_group)
+        top.addWidget(btn_join_local)
+        lay.addLayout(top)
+
+        grp_row = QHBoxLayout()
+        grp_row.setSpacing(8)
+        self.group_combo = QComboBox()
+        self.group_combo.setMinimumHeight(36)
+        self.group_combo.currentIndexChanged.connect(self._refresh_group_notes)
+        grp_row.addWidget(self.group_combo, 1)
+
+        btn_refresh = _make_button("Aggiorna")
+        btn_refresh.clicked.connect(self._refresh_group_notes)
+        grp_row.addWidget(btn_refresh)
+
+        btn_del = _make_button("Rimuovi", "danger")
+        btn_del.clicked.connect(self._on_delete_group)
+        grp_row.addWidget(btn_del)
+        lay.addLayout(grp_row)
+
+        self.status_lbl = _make_label("", "Muted", wrap=True)
+        lay.addWidget(self.status_lbl)
+
+        self.notes_list = QListWidget()
+        self.notes_list.setMinimumHeight(240)
+        lay.addWidget(self.notes_list, 1)
+
+        foot = QHBoxLayout()
+        foot.setSpacing(8)
+        self.publish_btn = _make_button("Pubblica Nota Corrente nel Gruppo", "primary")
+        self.publish_btn.clicked.connect(self._on_publish_current)
+        self.publish_btn.setEnabled(bool((current_markdown or "").strip()))
+        foot.addWidget(self.publish_btn)
+
+        self.import_btn = _make_button("Importa Nota Selezionata")
+        self.import_btn.clicked.connect(self._on_import_selected)
+        foot.addWidget(self.import_btn)
+        foot.addStretch(1)
+        close_btn = _make_button("Chiudi")
+        close_btn.clicked.connect(self.reject)
+        foot.addWidget(close_btn)
+        lay.addLayout(foot)
+
+        self._reload_groups()
+
+    def _active_group(self) -> Optional[Dict[str, Any]]:
+        data = self.group_combo.currentData()
+        return data if isinstance(data, dict) else None
+
+    def _reload_groups(self):
+        self.group_combo.blockSignals(True)
+        self.group_combo.clear()
+        for g in db.get_flow_groups():
+            mode = "Locale" if g.get("local_fallback_path") else "Drive"
+            self.group_combo.addItem(f"[{mode}] {g.get('group_name')}", g)
+        self.group_combo.blockSignals(False)
+        self._refresh_group_notes()
+
+    def _refresh_group_notes(self):
+        self.notes_list.clear()
+        self._notes_cache = []
+        g = self._active_group()
+        if not g:
+            self.status_lbl.setText("Nessun gruppo collegato. Crea un gruppo o unisciti tramite link Drive / cartella locale.")
+            return
+        src = g.get("local_fallback_path") or f"Drive ID: {g.get('drive_folder_id')}"
+        self.status_lbl.setText(f"Sorgente: {src}")
+        try:
+            items = flow_groups.list_group_notes(g, current_author=self.author_name)
+        except Exception as exc:
+            self.status_lbl.setText(f"Errore lettura gruppo: {exc}")
+            return
+        self._notes_cache = items
+        if not items:
+            self.notes_list.addItem("Nessuna nota condivisa presente in questo gruppo.")
+            return
+        for it in items:
+            lock = it.get("lock_info")
+            lock_txt = f"  [BLOCCATO da {lock.get('author')}]" if lock else ""
+            self.notes_list.addItem(f"[{it.get('subject')}] {it.get('title')}{lock_txt}")
+
+    def _on_create_group(self):
+        name, ok = QInputDialog.getText(self, "Crea FlowGroup", "Nome del gruppo (es. Ingegneria Meccanica 2026):")
+        if not ok or not name.strip():
+            return
+        use_local = QMessageBox.question(
+            self,
+            "Destinazione Gruppo",
+            "Vuoi creare il gruppo su Google Drive API (Sì) oppure in una Cartella Locale / Drive Desktop (No)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        local_dir = ""
+        if use_local == QMessageBox.StandardButton.No:
+            local_dir = QFileDialog.getExistingDirectory(self, "Seleziona cartella per il nuovo FlowGroup")
+            if not local_dir:
+                return
+        try:
+            res = flow_groups.create_group(
+                group_name=name.strip(),
+                subjects=[self.current_subject or "Generale"],
+                author=self.author_name,
+                local_fallback_path=local_dir,
+                share_link=True,
+            )
+            if res.get("share_link"):
+                QApplication.clipboard().setText(res["share_link"])
+                QMessageBox.information(
+                    self,
+                    "Gruppo Creato",
+                    f"Gruppo creato su Google Drive.\nLink condivisibile copiato negli appunti:\n{res['share_link']}",
+                )
+            self._reload_groups()
+        except Exception as exc:
+            QMessageBox.warning(self, "Errore Creazione Gruppo", str(exc))
+
+    def _on_join_drive_group(self):
+        url_or_id, ok = QInputDialog.getText(
+            self,
+            "Unisciti a FlowGroup Drive",
+            "Incolla il link della cartella Google Drive o l'ID cartella:",
+        )
+        if not ok or not url_or_id.strip():
+            return
+        try:
+            flow_groups.join_group(folder_id_or_url=url_or_id.strip())
+            self._reload_groups()
+        except Exception as exc:
+            QMessageBox.warning(self, "Errore Unione Gruppo", str(exc))
+
+    def _on_join_local_group(self):
+        chosen = QFileDialog.getExistingDirectory(self, "Seleziona cartella locale condivisa (Drive Desktop)")
+        if not chosen:
+            return
+        try:
+            flow_groups.join_group(local_fallback_path=chosen)
+            self._reload_groups()
+        except Exception as exc:
+            QMessageBox.warning(self, "Errore Cartella Locale", str(exc))
+
+    def _on_delete_group(self):
+        g = self._active_group()
+        if not g:
+            return
+        db.delete_flow_group(int(g["id"]))
+        self._reload_groups()
+
+    def _on_publish_current(self):
+        g = self._active_group()
+        if not g:
+            QMessageBox.information(self, "FlowGroups", "Seleziona o crea prima un gruppo.")
+            return
+        title = (self.current_title or "").strip() or "Appunto"
+        try:
+            res = flow_groups.publish_note(
+                g,
+                subject=self.current_subject or "Generale",
+                title=title,
+                markdown_content=self.current_markdown,
+                author=self.author_name,
+            )
+            self._refresh_group_notes()
+            QMessageBox.information(
+                self,
+                "Pubblicato",
+                f"Nota '{res['filename']}' pubblicata in [{res['subject']}] (storico .history/ aggiornato).",
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Pubblicazione Bloccata / Errore", str(exc))
+
+    def _on_import_selected(self):
+        g = self._active_group()
+        row = self.notes_list.currentRow()
+        if not g or row < 0 or row >= len(self._notes_cache):
+            return
+        item = self._notes_cache[row]
+        try:
+            title, md = flow_groups.download_note(g, item)
+            nid = db.add_study_note(
+                title=title,
+                content_markdown=md,
+                subject=item.get("subject") or "Generale",
+                topic="FlowGroup",
+                note_type="appunto",
+                profile=self.author_name or "Alessandro",
+            )
+            self.imported_note_id = nid
+            self.accept()
+        except Exception as exc:
+            QMessageBox.warning(self, "Errore Importazione", str(exc))
 
 
 class FlowLocalHub(QMainWindow):
@@ -1873,6 +2106,14 @@ class FlowLocalHub(QMainWindow):
         self.nk_history_btn.clicked.connect(self._on_nk_history_clicked)
         grp1_lay.addWidget(self.nk_history_btn)
 
+        self.nk_groups_btn = _make_button("", "ghost")
+        self.nk_groups_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_groups_btn.setFixedSize(32, 32)
+        self.nk_groups_btn.setIcon(get_icon("cloud", theme_key=self._current_theme, role="subtitle", size=15))
+        self.nk_groups_btn.setToolTip("FlowGroups: Pubblica / Importa & Marcatore [HH:MM:SS]")
+        self.nk_groups_btn.clicked.connect(self._show_nk_groups_menu)
+        grp1_lay.addWidget(self.nk_groups_btn)
+
         self.nk_focus_mode_btn = _make_button("", "ghost")
         self.nk_focus_mode_btn.setObjectName("NKToolbarIconBtn")
         self.nk_focus_mode_btn.setFixedSize(32, 32)
@@ -2927,6 +3168,49 @@ class FlowLocalHub(QMainWindow):
                     self._nk_loading_note = False
                 self._perform_nk_autosave()
                 self._set_nk_autosave_badge(saved=True, custom_text="🕒 Versione ripristinata")
+
+    def _show_nk_groups_menu(self):
+        menu = QMenu(self)
+        act_groups = menu.addAction("Apri FlowGroups (Pubblica / Importa)...")
+        act_groups.triggered.connect(self._on_nk_groups_clicked)
+        act_marker = menu.addAction("Inserisci marcatore audio [HH:MM:SS]")
+        act_marker.triggered.connect(self._on_nk_insert_timestamp_marker)
+        menu.exec(self.nk_groups_btn.mapToGlobal(QPoint(0, self.nk_groups_btn.height())))
+
+    def _on_nk_groups_clicked(self):
+        title = (self.nk_editor_title.text().strip() if hasattr(self, "nk_editor_title") else "") or "Appunto"
+        subj = (self.nk_editor_subject.text().strip() if hasattr(self, "nk_editor_subject") else "") or "Generale"
+        prof = (self.nk_editor_profile.currentText().strip() if hasattr(self, "nk_editor_profile") else "") or "Studente"
+        md = self.nk_editor_body.get_markdown_text() if hasattr(self, "nk_editor_body") else ""
+        dlg = FlowGroupsDialog(
+            current_title=title,
+            current_subject=subj,
+            current_markdown=md,
+            author_name=prof,
+            parent=self,
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.imported_note_id:
+            self._refresh_notekeeper()
+            self._load_note_into_nk_editor(dlg.imported_note_id)
+
+    def _on_nk_insert_timestamp_marker(self):
+        if not hasattr(self, "nk_editor_body"):
+            return
+        pos_ms = 0
+        if hasattr(self, "nk_audio_bar") and hasattr(self.nk_audio_bar, "player"):
+            try:
+                pos_ms = int(self.nk_audio_bar.player.position())
+            except Exception:
+                pos_ms = 0
+        total_secs = max(0, pos_ms // 1000)
+        hh = total_secs // 3600
+        mm = (total_secs % 3600) // 60
+        ss = total_secs % 60
+        marker = f"[{hh:02d}:{mm:02d}:{ss:02d}] "
+        editor = getattr(self.nk_editor_body, "editor", None)
+        if editor is not None and hasattr(editor, "insertPlainText"):
+            editor.insertPlainText(marker)
+            editor.setFocus()
 
     def _on_nk_delete_clicked(self):
         if not getattr(self, "_nk_selected_note_id", None):

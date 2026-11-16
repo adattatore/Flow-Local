@@ -373,7 +373,40 @@ class CloudSyncManager:
         except Exception as e:
             print(f"[CloudSync] Errore scrittura library.json: {e}")
 
+        self.export_user_state()
         return library_payload
+
+    def export_user_state(self, output_path: Optional[str] = None) -> Dict[str, Any]:
+        """Esporta materie, esami e ore di studio in FlowLocal_Sync/user_state.json per la PWA."""
+        from datetime import timezone
+        try:
+            folders = db.get_folders_tree()
+        except Exception:
+            folders = []
+        try:
+            exams = db.get_exam_countdowns()
+        except Exception:
+            exams = []
+        try:
+            weekly_study = db.get_weekly_study_summary()
+        except Exception:
+            weekly_study = []
+
+        payload = {
+            "schema_version": 1,
+            "updated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "folders": folders,
+            "exams": exams,
+            "weekly_study": weekly_study,
+        }
+        target = output_path or os.path.join(self._sync_base_dir, "user_state.json")
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[CloudSync] Errore scrittura user_state.json: {e}")
+        return payload
 
     # -------------------------------------------------------------------------
     # ELABORAZIONE SEQUENZIALE CODA (Triggerata solo manualmente)

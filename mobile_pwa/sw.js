@@ -1,5 +1,5 @@
-// Service Worker per FlowLocal Mobile PWA (Modalità Offline in Aula)
-const CACHE_NAME = 'flowlocal-pwa-v6';
+// Service Worker per FlowLocal Mobile/Web PWA (Autonoma & Offline-First)
+const CACHE_NAME = 'flowlocal-pwa-v7';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -12,7 +12,6 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('[SW] Pre-caching asset PWA');
       return cache.addAll(ASSETS_TO_CACHE);
     })
   );
@@ -24,7 +23,6 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         keys.map((key) => {
           if (key !== CACHE_NAME) {
-            console.log('[SW] Rimozione vecchia cache:', key);
             return caches.delete(key);
           }
         })
@@ -36,24 +34,29 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Ignora o non bloccare le richieste a Google API / GIS
-  if (url.origin.includes('googleapis.com') || url.origin.includes('google.com') || url.origin.includes('gstatic.com')) {
+  // Non intercettare chiamate API esterne (Google Drive, GIS, Picker, Gemini API)
+  if (
+    url.origin.includes('googleapis.com') ||
+    url.origin.includes('google.com') ||
+    url.origin.includes('gstatic.com') ||
+    url.origin.includes('generativelanguage.googleapis.com')
+  ) {
     event.respondWith(
       fetch(event.request).catch(() => {
-        return new Response(JSON.stringify({ error: 'offline', message: 'Sei offline. Impossibile contattare Google Drive.' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json' }
-        });
+        return new Response(
+          JSON.stringify({ error: 'offline', message: 'Connessione assente: impossibile contattare i servizi Google.' }),
+          { status: 503, headers: { 'Content-Type': 'application/json' } }
+        );
       })
     );
     return;
   }
 
-  // Network-First con fallback su Cache per la shell dell'app
+  // Network-First con fallback su Cache per la shell app e asset statici
   event.respondWith(
     fetch(event.request)
       .then((networkResponse) => {
-        if (networkResponse && networkResponse.status === 200) {
+        if (networkResponse && networkResponse.status === 200 && event.request.method === 'GET') {
           const responseToCache = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(event.request, responseToCache);
@@ -74,4 +77,3 @@ self.addEventListener('fetch', (event) => {
       })
   );
 });
-
