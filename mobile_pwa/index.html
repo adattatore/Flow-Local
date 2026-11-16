@@ -3179,7 +3179,7 @@
         if (q) {
           list = list.filter(n =>
             (n.title || '').toLowerCase().includes(q) ||
-            (n.subject || '').toLow erCase().includes(q) ||
+            (n.subject || '').toLowerCase().includes(q) ||
             (n.content_markdown || '').toLowerCase().includes(q)
           );
         }
@@ -3686,7 +3686,7 @@
           const r = new FileReader();
           r.onload = () => resolve(r.result.split(',')[1]);
           r.onerror = reject;
-          r.readAsData URL(blob);
+          r.readAsDataURL(blob);
         });
       },
 
