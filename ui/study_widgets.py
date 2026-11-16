@@ -1161,9 +1161,10 @@ class SpotifyMiniBar(QFrame):
         layout.setContentsMargins(6, 2, 6, 2)
         layout.setSpacing(2)
 
-        self.track_btn = QPushButton("🎵 Spotify")
+        self.track_btn = QPushButton("Spotify")
         self.track_btn.setObjectName("SpotifyTrackBtn")
         self.track_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.track_btn.setIconSize(QSize(13, 13))
         self.track_btn.setFixedWidth(152)
         self.track_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.track_btn.setToolTip("Clicca per aprire o portare in primo piano Spotify")
@@ -1272,6 +1273,11 @@ class SpotifyMiniBar(QFrame):
                     play_col = fg
             except Exception:
                 pass
+        try:
+            from ui.icons import get_icon
+            self.track_btn.setIcon(get_icon("ph.music-notes-light", color=fg, size=13))
+        except Exception:
+            pass
         self.prev_btn.setIcon(self._make_media_icon("prev", fg))
         self.next_btn.setIcon(self._make_media_icon("next", fg))
         if self._is_playing:
@@ -1343,16 +1349,16 @@ class SpotifyMiniBar(QFrame):
 
         is_playing_now = False
         if not running:
-            raw_display = "🎵 Apri Spotify"
+            raw_display = "Apri Spotify"
             tooltip = "Spotify non è aperto — clicca per avviarlo"
         elif raw_title.lower() in ("spotify", "spotify free", "spotify premium", ""):
-            raw_display = "🎵 Spotify · Pausa"
+            raw_display = "Spotify · Pausa"
             tooltip = "Spotify in pausa — premi Play per riprendere"
         else:
             is_playing_now = True
             clean = raw_title.replace(" - ", " — ")
             tooltip = f"In riproduzione su Spotify:\n{clean}"
-            raw_display = f"🎵 {clean}"
+            raw_display = clean
 
         display = self.track_btn.fontMetrics().elidedText(
             raw_display, Qt.TextElideMode.ElideRight, 134

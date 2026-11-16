@@ -54,6 +54,7 @@ ROLE_COUNT = Qt.ItemDataRole.UserRole + 1
 ROLE_FOLDER_COLOR = Qt.ItemDataRole.UserRole + 2
 ROLE_IS_FOLDER = Qt.ItemDataRole.UserRole + 3
 ROLE_LOCKED_FOLDER = Qt.ItemDataRole.UserRole + 4
+ROLE_STATUS_ICON = Qt.ItemDataRole.UserRole + 5
 
 
 def make_vector_folder_icon(color_hex: str, size: int = 18) -> QIcon:
@@ -101,6 +102,7 @@ class SamsungNotesItemDelegate(QStyledItemDelegate):
         count_val = index.data(ROLE_COUNT)
         is_hovered = bool(opt.state & QStyle.StateFlag.State_MouseOver)
         is_locked = bool(index.data(ROLE_LOCKED_FOLDER))
+        status_icon = index.data(ROLE_STATUS_ICON)
 
         # Riserva spazio fisso a destra: evita che il titolo venga coperto o si sposti su hover
         right_reserve = 0
@@ -108,6 +110,8 @@ class SamsungNotesItemDelegate(QStyledItemDelegate):
             right_reserve = 56
         elif count_val is not None:
             right_reserve = 32
+        elif isinstance(status_icon, QIcon) and not status_icon.isNull():
+            right_reserve = 26
 
         # Disegna background/selezione/icona/testo standard con spazio riservato
         saved_rect = opt.rect
@@ -150,6 +154,18 @@ class SamsungNotesItemDelegate(QStyledItemDelegate):
             painter.drawText(count_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, txt)
             cur_right -= int(w) + 6
 
+        # Icona vettoriale di stato a destra (es. lock attivo su nota di gruppo)
+        if isinstance(status_icon, QIcon) and not status_icon.isNull():
+            icon_sz = 14
+            icon_rect = QRect(
+                int(cur_right - icon_sz),
+                int(row_rect.top() + (row_rect.height() - icon_sz) / 2.0),
+                icon_sz,
+                icon_sz,
+            )
+            status_icon.paint(painter, icon_rect)
+            cur_right -= icon_sz + 4
+
         # Pulsante rapido ⋯ su hover per cartelle modificabili, nello slot fisso a sinistra del numero
         if is_folder and not is_locked and is_hovered:
             btn_rect = QRectF(cur_right - 20, row_rect.top() + (row_rect.height() - 18) / 2.0, 20.0, 18.0)
@@ -175,6 +191,10 @@ class SamsungNotesTreeWidget(QTreeWidget):
     changeFolderColorRequested = pyqtSignal(int, str)  # folder_id, color_hex
     deleteFolderRequested = pyqtSignal(int)        # folder_id
     toggleNoteStudiedRequested = pyqtSignal(int)   # note_id
+    openInNewTabRequested = pyqtSignal(object)     # node_data tuple
+    openInSplitRequested = pyqtSignal(object)      # node_data tuple
+    nodeMiddleClicked = pyqtSignal(object)         # node_data tuple
+    nodeDoubleClicked = pyqtSignal(object)         # node_data tuple
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -253,6 +273,14 @@ class SamsungNotesTreeWidget(QTreeWidget):
         painter.restore()
 
     def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.MiddleButton:
+            item = self.itemAt(event.pos())
+            if item is not None:
+                data = item.data(0, ROLE_NODE_DATA)
+                if data and data[0] in ("note", "group_note", "group_board"):
+                    self.nodeMiddleClicked.emit(data)
+                    event.accept()
+                    return
         if event.button() == Qt.MouseButton.LeftButton:
             if self._hovered_action_rect is not None:
                 btn_rect, idx = self._hovered_action_rect
@@ -272,6 +300,17 @@ class SamsungNotesTreeWidget(QTreeWidget):
                     item.setExpanded(not item.isExpanded())
                 return
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            item = self.itemAt(event.pos())
+            if item is not None:
+                data = item.data(0, ROLE_NODE_DATA)
+                if data and data[0] in ("note", "group_note", "group_board"):
+                    self.nodeDoubleClicked.emit(data)
+                    event.accept()
+                    return
+        super().mouseDoubleClickEvent(event)
 
     def leaveEvent(self, event):
         self._hovered_action_rect = None
@@ -329,8 +368,19 @@ class SamsungNotesTreeWidget(QTreeWidget):
             menu.exec(global_pos)
         elif data[0] == "note":
             note_id = int(data[1])
+            act_tab = menu.addAction(get_icon("plus", size=14), "Apri in nuova scheda")
+            act_tab.triggered.connect(lambda: self.openInNewTabRequested.emit(data))
+            act_split = menu.addAction(get_icon("split_h", size=14), "Affianca a destra (Split View)")
+            act_split.triggered.connect(lambda: self.openInSplitRequested.emit(data))
+            menu.addSeparator()
             act_st = menu.addAction(get_icon("check", role="success", size=14), "Segna / Rimuovi Studiata")
             act_st.triggered.connect(lambda: self.toggleNoteStudiedRequested.emit(note_id))
+            menu.exec(global_pos)
+        elif data[0] in ("group_note", "group_board"):
+            act_tab = menu.addAction(get_icon("plus", size=14), "Apri in nuova scheda")
+            act_tab.triggered.connect(lambda: self.openInNewTabRequested.emit(data))
+            act_split = menu.addAction(get_icon("split_h", size=14), "Affianca a destra (Split View)")
+            act_split.triggered.connect(lambda: self.openInSplitRequested.emit(data))
             menu.exec(global_pos)
 
     def dropEvent(self, event):

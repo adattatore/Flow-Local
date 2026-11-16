@@ -251,7 +251,18 @@
 
     .grid-2 { display: grid; grid-template-columns: 1fr; gap: 14px; }
     @media (min-width: 860px) {
-      .grid-2 { grid-template-columns: 1fr 1fr; }
+      .grid-2 { grid-template-columns: 320px 1fr; }
+    }
+    .ws-switcher { width: 100%; padding: 8px 10px; border-radius: 8px; background: var(--bg-input); border: 1px solid var(--border); color: var(--text-main); font-weight: 600; font-size: 13px; }
+    .tab-strip { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding-bottom: 4px; border-bottom: 1px solid var(--border); }
+    .tab-pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px 8px 0 0; background: var(--bg-input); border: 1px solid transparent; color: var(--text-muted); font-size: 12px; cursor: pointer; white-space: nowrap; }
+    .tab-pill.active { background: var(--bg-surface); color: var(--text-main); border-color: var(--border); font-weight: 600; }
+    .tab-close { background: transparent; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 0 2px; }
+    .editor-panes-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    .split-only-btn { display: none; }
+    @media (min-width: 900px) {
+      .split-only-btn { display: inline-flex; }
+      .editor-panes-grid.split-active { grid-template-columns: 1fr 1fr; }
     }
 
     .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -585,8 +596,11 @@
           <!-- Subtab: Quaderno & Editor -->
           <div id="fntab-notes" class="grid-2">
             <div class="card">
+              <select id="pwaWorkspaceSwitcher" class="ws-switcher" onchange="app.switchWorkspace(this.value)">
+                <option value="local">Il mio Quaderno (Locale)</option>
+              </select>
               <div class="card-header">
-                <div class="card-title">Archivio Note</div>
+                <div class="card-title" id="sidebarArchiveTitle">Archivio Note</div>
                 <span class="muted" id="notesCountLbl">0 note</span>
               </div>
               <input type="text" id="notesSearchInput" placeholder="Cerca per titolo, materia o contenuto..." oninput="app.renderNotesList()">
@@ -594,39 +608,57 @@
             </div>
 
             <div class="card">
-              <div class="card-header">
-                <input type="text" id="noteTitleInput" placeholder="Titolo della nota..." class="grow" style="font-weight:700;">
-                <input type="text" id="noteSubjectInput" placeholder="Materia" style="width: 140px;">
+              <div class="row" style="justify-content: space-between; align-items: center;">
+                <div id="pwaTabStrip" class="tab-strip grow"></div>
+                <div class="row" style="gap: 4px;">
+                  <button class="btn btn-sm" onclick="app.openPwaNewTab()" title="Nuova scheda">+</button>
+                  <button class="btn btn-sm split-only-btn" id="pwaSplitBtn" onclick="app.togglePwaSplitView()" title="Split View affiancata">Split View</button>
+                </div>
               </div>
-              <div class="row">
-                <button class="btn btn-sm" id="togglePreviewBtn" onclick="app.toggleNotePreview()">
-                  <svg class="icon icon-sm"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                  Anteprima
-                </button>
-                <button class="btn btn-sm" onclick="app.openRsvp()">
-                  <svg class="icon icon-sm"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  RSVP
-                </button>
-                <label class="btn btn-sm" title="OCR da Fotocamera o Screenshot">
-                  <svg class="icon icon-sm"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-                  OCR Foto
-                  <input type="file" id="ocrImageInput" accept="image/*" capture="environment" style="display:none" onchange="app.runOcrFromFile(event)">
-                </label>
-                <button class="btn btn-sm btn-primary" onclick="app.saveCurrentNote(true)">
-                  <svg class="icon icon-sm"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
-                  Salva
-                </button>
-                <button class="btn btn-sm btn-danger" onclick="app.deleteCurrentNote()" title="Elimina nota">
-                  <svg class="icon icon-sm"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                </button>
-              </div>
+              <div id="pwaEditorPanesGrid" class="editor-panes-grid">
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                  <div class="card-header">
+                    <input type="text" id="noteTitleInput" placeholder="Titolo della nota..." class="grow" style="font-weight:700;">
+                    <input type="text" id="noteSubjectInput" placeholder="Materia" style="width: 140px;">
+                  </div>
+                  <div class="row">
+                    <button class="btn btn-sm" id="togglePreviewBtn" onclick="app.toggleNotePreview()">
+                      <svg class="icon icon-sm"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                      Anteprima
+                    </button>
+                    <button class="btn btn-sm" onclick="app.openRsvp()">
+                      <svg class="icon icon-sm"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                      RSVP
+                    </button>
+                    <label class="btn btn-sm" title="OCR da Fotocamera o Screenshot">
+                      <svg class="icon icon-sm"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                      OCR Foto
+                      <input type="file" id="ocrImageInput" accept="image/*" capture="environment" style="display:none" onchange="app.runOcrFromFile(event)">
+                    </label>
+                    <button class="btn btn-sm btn-primary" onclick="app.saveCurrentNote(true)">
+                      <svg class="icon icon-sm"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>
+                      Salva
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="app.deleteCurrentNote()" title="Elimina nota">
+                      <svg class="icon icon-sm"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                    </button>
+                  </div>
 
-              <div id="audioSyncWrap" style="display:none;">
-                <audio id="noteAudioPlayer" controls style="width:100%; height:36px;"></audio>
-              </div>
+                  <div id="audioSyncWrap" style="display:none;">
+                    <audio id="noteAudioPlayer" controls style="width:100%; height:36px;"></audio>
+                  </div>
 
-              <textarea id="noteBodyInput" placeholder="Scrivi in Markdown o LaTeX ($E = mc^2$)..." oninput="app.scheduleAutoSave()"></textarea>
-              <div id="notePreviewBox" class="md-preview" style="display:none;"></div>
+                  <textarea id="noteBodyInput" placeholder="Scrivi in Markdown o LaTeX ($E = mc^2$)..." oninput="app.scheduleAutoSave()"></textarea>
+                  <div id="notePreviewBox" class="md-preview" style="display:none;"></div>
+                </div>
+                <div id="pwaSplitPane" style="display:none; flex-direction:column; gap:8px; border-left:1px solid var(--border); padding-left:12px;">
+                  <div class="card-header">
+                    <strong id="pwaSplitTitle" style="font-size:13px;">Pannello Affiancato</strong>
+                    <button class="btn btn-sm" onclick="app.togglePwaSplitView()">Chiudi</button>
+                  </div>
+                  <textarea id="pwaSplitBody" placeholder="Appunti affiancati o nota di confronto..." style="min-height: 280px;"></textarea>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1050,6 +1082,7 @@
         }
         this.renderNotesList();
         if (this.previewMode) this.renderMarkdownPreview();
+        this.ensurePwaTabForNote(n);
       },
 
       scheduleAutoSave() {
@@ -1748,14 +1781,112 @@
         sel.innerHTML = '';
         if (!this.groups.length) {
           sel.innerHTML = '<option value="">Nessun gruppo collegato</option>';
+        } else {
+          this.groups.forEach(g => {
+            const o = document.createElement('option');
+            o.value = g.folderId;
+            o.textContent = g.name;
+            sel.appendChild(o);
+          });
+        }
+        this.renderWorkspaceSwitcher();
+      },
+
+      renderWorkspaceSwitcher() {
+        const ws = document.getElementById('pwaWorkspaceSwitcher');
+        if (!ws) return;
+        const prev = ws.value || 'local';
+        ws.innerHTML = '<option value="local">Il mio Quaderno (Locale)</option>';
+        (this.groups || []).forEach(g => {
+          const o = document.createElement('option');
+          o.value = 'group:' + g.folderId;
+          o.textContent = `[Drive] ${g.name}`;
+          ws.appendChild(o);
+        });
+        const optJoin = document.createElement('option');
+        optJoin.value = '__join__';
+        optJoin.textContent = '+ Crea o Unisciti a un Gruppo...';
+        ws.appendChild(optJoin);
+        if ([...ws.options].some(o => o.value === prev)) ws.value = prev;
+      },
+
+      switchWorkspace(val) {
+        if (val === '__join__') {
+          document.getElementById('pwaWorkspaceSwitcher').value = 'local';
+          this.joinGroupByPrompt();
           return;
         }
-        this.groups.forEach(g => {
-          const o = document.createElement('option');
-          o.value = g.folderId;
-          o.textContent = g.name;
-          sel.appendChild(o);
+        const titleEl = document.getElementById('sidebarArchiveTitle');
+        if (val === 'local') {
+          if (titleEl) titleEl.textContent = 'Archivio Note';
+          this.renderNotesList();
+          return;
+        }
+        const fid = val.replace('group:', '');
+        if (titleEl) titleEl.textContent = 'Bacheca & Note Gruppo';
+        document.getElementById('pwaGroupSelect').value = fid;
+        this.switchNotesTab('groups');
+        this.loadSelectedGroupNotes();
+      },
+
+      ensurePwaTabForNote(note) {
+        if (!this.pwaTabs) this.pwaTabs = [];
+        const existing = this.pwaTabs.find(t => String(t.id) === String(note.id));
+        if (!existing) {
+          this.pwaTabs.push({ id: note.id, title: note.title || 'Senza titolo' });
+        } else {
+          existing.title = note.title || existing.title;
+        }
+        this.renderPwaTabs();
+      },
+
+      renderPwaTabs() {
+        const strip = document.getElementById('pwaTabStrip');
+        if (!strip) return;
+        strip.innerHTML = '';
+        (this.pwaTabs || []).forEach(t => {
+          const pill = document.createElement('div');
+          pill.className = 'tab-pill' + (String(t.id) === String(this.activeNoteId) ? ' active' : '');
+          pill.onclick = () => this.selectNote(t.id);
+          const lbl = document.createElement('span');
+          lbl.textContent = (t.title || 'Nota').slice(0, 22);
+          const cls = document.createElement('button');
+          cls.className = 'tab-close';
+          cls.textContent = '×';
+          cls.onclick = (e) => { e.stopPropagation(); this.closePwaTab(t.id); };
+          pill.appendChild(lbl);
+          pill.appendChild(cls);
+          strip.appendChild(pill);
         });
+      },
+
+      openPwaNewTab() {
+        this.newNote();
+      },
+
+      closePwaTab(id) {
+        if (!this.pwaTabs) return;
+        this.pwaTabs = this.pwaTabs.filter(t => String(t.id) !== String(id));
+        if (String(this.activeNoteId) === String(id) && this.pwaTabs.length) {
+          this.selectNote(this.pwaTabs[this.pwaTabs.length - 1].id);
+        } else {
+          this.renderPwaTabs();
+        }
+      },
+
+      togglePwaSplitView() {
+        const grid = document.getElementById('pwaEditorPanesGrid');
+        const splitPane = document.getElementById('pwaSplitPane');
+        const btn = document.getElementById('pwaSplitBtn');
+        if (!grid || !splitPane) return;
+        const active = !grid.classList.contains('split-active');
+        grid.classList.toggle('split-active', active);
+        splitPane.style.display = active ? 'flex' : 'none';
+        if (btn) btn.classList.toggle('btn-primary', active);
+        if (active && !document.getElementById('pwaSplitBody').value) {
+          document.getElementById('pwaSplitTitle').textContent = (document.getElementById('noteTitleInput').value || 'Nota') + ' (Affiancata)';
+          document.getElementById('pwaSplitBody').value = document.getElementById('noteBodyInput').value || '';
+        }
       },
 
       async loadSelectedGroupNotes() {

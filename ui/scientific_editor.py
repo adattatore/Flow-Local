@@ -2573,6 +2573,7 @@ class ScientificNoteEditor(QTextEdit):
     seekRequested = pyqtSignal(int)
     togglePlayRequested = pyqtSignal()
     rsvpRequested = pyqtSignal(int, bool)  # (start_block_idx, selection_only)
+    sendSelectionToSplitRequested = pyqtSignal(str)
 
     def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True, reading_mode: bool = False):
         super().__init__(parent)
@@ -4118,6 +4119,12 @@ class ScientificNoteEditor(QTextEdit):
 
     def contextMenuEvent(self, event):
         menu = self.createStandardContextMenu()
+        cur_sel = self.textCursor()
+        if cur_sel.hasSelection() and cur_sel.selectedText().strip():
+            sel_md = self._selection_to_markdown(cur_sel) if hasattr(self, "_selection_to_markdown") else cur_sel.selectedText().replace("\u2029", "\n")
+            from ui.icons import get_icon
+            send_act = menu.addAction(get_icon("arrow_right", size=14), "Invia selezione al pannello affiancato")
+            send_act.triggered.connect(lambda _chk=False, txt=sel_md: self.sendSelectionToSplitRequested.emit(txt))
         if self._audio_sync_active and not self._is_studio_view:
             cur = self.cursorForPosition(event.pos())
             target_ms = self._find_ms_for_cursor(cur)

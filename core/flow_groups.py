@@ -385,17 +385,23 @@ class FlowGroupsManager:
     # LOCK DISTRIBUITO UTC (TTL 30 MIN)
     # ------------------------------------------------------------------
     @staticmethod
-    def _is_lock_active(lock_data: Dict[str, Any], current_author: str) -> bool:
+    def _is_lock_valid(lock_data: Dict[str, Any]) -> bool:
         if not lock_data:
-            return False
-        lock_author = (lock_data.get("author") or "").strip()
-        if lock_author and lock_author == (current_author or "").strip():
             return False
         dt = _parse_utc_iso(lock_data.get("locked_at_utc", ""))
         if not dt:
             return False
         age = (_utc_now() - dt).total_seconds()
         return 0 <= age < LOCK_TTL_SECONDS
+
+    @classmethod
+    def _is_lock_active(cls, lock_data: Dict[str, Any], current_author: str) -> bool:
+        if not cls._is_lock_valid(lock_data):
+            return False
+        lock_author = (lock_data.get("author") or "").strip()
+        if lock_author and lock_author == (current_author or "").strip():
+            return False
+        return True
 
     def acquire_lock(
         self,
@@ -525,6 +531,7 @@ class FlowGroupsManager:
         title: str,
         markdown_content: str,
         author: str = "Studente",
+        release_lock: bool = True,
     ) -> Dict[str, Any]:
         subj_dir = sanitize_filename(subject or "Generale")
         stem = sanitize_filename(title or "Appunto")
@@ -605,14 +612,85 @@ class FlowGroupsManager:
                     mime_type="application/json",
                 )
         finally:
-            self.release_lock(group_rec, subj_dir, md_name)
+            if release_lock:
+                self.release_lock(group_rec, subj_dir, md_name)
 
         if group_rec.get("id"):
             db.update_flow_group_sync(int(group_rec["id"]))
         return {"subject": subj_dir, "filename": md_name, "updated_at_utc": _utc_iso()}
 
+    def read_group_manifest(self, group_rec: Dict[str, Any]) -> Dict[str, Any]:
+        """Legge group_manifest.json dal gruppo (Locale o Drive)."""
+        default_manifest: Dict[str, Any] = {
+            "schema_version": 1,
+            "group_name": group_rec.get("group_name") or "Gruppo",
+            "subjects": ["Generale"],
+            "members": [],
+            "updated_at_utc": "",
+        }
+        lpath = (group_rec.get("local_fallback_path") or "").strip()
+        if lpath:
+            manifest_path = os.path.join(lpath, "group_manifest.json")
+            if os.path.exists(manifest_path):
+                try:
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    if isinstance(data, dict):
+                        default_manifest.update(data)
+                except Exception:
+                    pass
+            return default_manifest
+
+        fid = (group_rec.get("drive_folder_id") or "").strip()
+        service = self.get_drive_service(interactive=False)
+        if service and fid:
+            try:
+                m_item = self._find_drive_item(service, "group_manifest.json", parent_id=fid)
+                if m_item:
+                    data = json.loads(self._download_drive_text(service, m_item["id"]))
+                    if isinstance(data, dict):
+                        default_manifest.update(data)
+            except Exception:
+                pass
+        return default_manifest
+
+    def create_group_subject(self, group_rec: Dict[str, Any], subject_name: str) -> str:
+        """Crea una nuova cartella materia/canale nel gruppo e aggiorna group_manifest.json."""
+        subj_dir = sanitize_filename((subject_name or "").strip() or "Generale")
+        lpath = (group_rec.get("local_fallback_path") or "").strip()
+        if lpath:
+            os.makedirs(os.path.join(lpath, subj_dir), exist_ok=True)
+            manifest = self.read_group_manifest(group_rec)
+            subjs = set(manifest.get("subjects") or [])
+            subjs.add(subj_dir)
+            manifest["subjects"] = sorted(subjs)
+            manifest["updated_at_utc"] = _utc_iso()
+            with open(os.path.join(lpath, "group_manifest.json"), "w", encoding="utf-8") as mf:
+                json.dump(manifest, mf, ensure_ascii=False, indent=2)
+            return subj_dir
+
+        fid = (group_rec.get("drive_folder_id") or "").strip()
+        service = self.get_drive_service(interactive=True)
+        if not service or not fid:
+            raise RuntimeError("Google Drive non connesso.")
+        self._ensure_drive_folder(service, subj_dir, parent_id=fid)
+        manifest = self.read_group_manifest(group_rec)
+        subjs = set(manifest.get("subjects") or [])
+        subjs.add(subj_dir)
+        manifest["subjects"] = sorted(subjs)
+        manifest["updated_at_utc"] = _utc_iso()
+        self._upsert_drive_text(
+            service,
+            "group_manifest.json",
+            fid,
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            mime_type="application/json",
+        )
+        return subj_dir
+
     def list_group_notes(self, group_rec: Dict[str, Any], current_author: str = "") -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
+        author_norm = (current_author or "").strip()
         lpath = (group_rec.get("local_fallback_path") or "").strip()
         if lpath:
             if not os.path.isdir(lpath):
@@ -624,25 +702,37 @@ class FlowGroupsManager:
                 if not os.path.isdir(full_subj):
                     continue
                 files = os.listdir(full_subj)
-                locks = {}
+                locks: Dict[str, Dict[str, Any]] = {}
                 for fn in files:
                     if fn.endswith(".md.lock"):
                         try:
                             with open(os.path.join(full_subj, fn), "r", encoding="utf-8") as lf:
                                 ld = json.load(lf)
-                            if self._is_lock_active(ld, current_author):
+                            if self._is_lock_valid(ld):
                                 locks[fn[:-5]] = ld
                         except Exception:
                             pass
                 for fn in sorted(files):
                     if fn.endswith(".md"):
+                        full_md = os.path.join(full_subj, fn)
+                        try:
+                            mtime = datetime.fromtimestamp(os.path.getmtime(full_md), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                        except Exception:
+                            mtime = ""
+                        lock_d = locks.get(fn)
+                        lock_auth = (lock_d.get("author") or "").strip() if lock_d else ""
                         results.append({
                             "subject": entry,
                             "filename": fn,
+                            "rel_path": f"{entry}/{fn}",
                             "title": os.path.splitext(fn)[0].replace("_", " "),
-                            "local_path": os.path.join(full_subj, fn),
+                            "local_path": full_md,
                             "file_id": "",
-                            "lock_info": locks.get(fn),
+                            "modified_at": mtime,
+                            "lock_info": lock_d,
+                            "lock_author": lock_auth,
+                            "locked_by_other": bool(lock_d and lock_auth != author_norm),
+                            "locked_by_me": bool(lock_d and lock_auth == author_norm),
                         })
             return results
 
@@ -682,21 +772,53 @@ class FlowGroupsManager:
                 if item["name"].endswith(".md.lock"):
                     try:
                         ld = json.loads(self._download_drive_text(service, item["id"]))
-                        if self._is_lock_active(ld, current_author):
+                        if self._is_lock_valid(ld):
                             locks[item["name"][:-5]] = ld
                     except Exception:
                         pass
             for item in f_list:
                 if item["name"].endswith(".md"):
+                    lock_d = locks.get(item["name"])
+                    lock_auth = (lock_d.get("author") or "").strip() if lock_d else ""
                     results.append({
                         "subject": fname,
                         "filename": item["name"],
+                        "rel_path": f"{fname}/{item['name']}",
                         "title": os.path.splitext(item["name"])[0].replace("_", " "),
                         "local_path": "",
                         "file_id": item["id"],
-                        "lock_info": locks.get(item["name"]),
+                        "modified_at": item.get("modifiedTime") or "",
+                        "lock_info": lock_d,
+                        "lock_author": lock_auth,
+                        "locked_by_other": bool(lock_d and lock_auth != author_norm),
+                        "locked_by_me": bool(lock_d and lock_auth == author_norm),
                     })
         return results
+
+    def get_group_board_data(self, group_rec: Dict[str, Any], current_author: str = "") -> Dict[str, Any]:
+        """Restituisce riepilogo completo per la Bacheca & Stato Sbobine del gruppo."""
+        manifest = self.read_group_manifest(group_rec)
+        notes = self.list_group_notes(group_rec, current_author=current_author)
+        subj_set = set(manifest.get("subjects") or [])
+        for n in notes:
+            if n.get("subject"):
+                subj_set.add(n["subject"])
+        lpath = (group_rec.get("local_fallback_path") or "").strip()
+        if lpath and os.path.isdir(lpath):
+            for entry in os.listdir(lpath):
+                if not entry.startswith(".") and os.path.isdir(os.path.join(lpath, entry)):
+                    subj_set.add(entry)
+        active_locks = [n for n in notes if n.get("lock_info")]
+        return {
+            "group_name": group_rec.get("group_name") or manifest.get("group_name") or "Gruppo",
+            "mode": "local" if lpath else "drive",
+            "source": lpath or (group_rec.get("drive_folder_id") or ""),
+            "members": manifest.get("members") or [],
+            "subjects": sorted(subj_set) or ["Generale"],
+            "notes": notes,
+            "active_locks": active_locks,
+            "updated_at_utc": manifest.get("updated_at_utc") or "",
+        }
 
     def download_note(self, group_rec: Dict[str, Any], note_item: Dict[str, Any]) -> Tuple[str, str]:
         title = note_item.get("title") or "Nota Gruppo"

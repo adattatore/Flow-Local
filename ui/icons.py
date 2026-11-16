@@ -87,6 +87,12 @@ ICON_MAP: Dict[str, str] = {
     "info": "ph.info-light",
     "dot": "ph.circle-fill",
     "circle": "ph.circle",
+    "lock": "ph.lock-simple-light",
+    "lock_open": "ph.lock-simple-open-light",
+    "split_h": "ph.columns-light",
+    "board": "ph.kanban-light",
+    "users": "ph.users-three-light",
+    "share": "ph.export-light",
 }
 
 _qta_ready: Optional[bool] = None

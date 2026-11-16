@@ -130,6 +130,12 @@ from core.gemini_client import (
 from core.flow_groups import flow_groups
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
+from ui.flownotes_workspace import (
+    EditorPane,
+    JoinOrCreateGroupDialog,
+    TabContext,
+    WorkspaceSwitcherButton,
+)
 from ui.flowtime_widgets import (
     FLOWTIME_COLOR_PALETTE,
     LinkEventNoteDialog,
@@ -156,239 +162,6 @@ from ui.study_widgets import (
     SpotifyMiniBar,
     TimeMachineDialog,
 )
-
-
-
-class FlowGroupsDialog(QDialog):
-    """Dialogo compatto FlowGroups: crea/unisciti a gruppi Drive o locali, pubblica e importa note."""
-
-    def __init__(
-        self,
-        current_title: str = "",
-        current_subject: str = "Generale",
-        current_markdown: str = "",
-        author_name: str = "Studente",
-        parent: Optional[QWidget] = None,
-    ):
-        super().__init__(parent)
-        self.current_title = current_title
-        self.current_subject = current_subject or "Generale"
-        self.current_markdown = current_markdown
-        self.author_name = author_name or "Studente"
-        self.imported_note_id: Optional[int] = None
-        self._notes_cache: List[Dict[str, Any]] = []
-
-        self.setWindowTitle("FlowGroups — Collaborazione Drive & Locale")
-        self.resize(780, 520)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(16, 16, 16, 16)
-        lay.setSpacing(10)
-
-        top = QHBoxLayout()
-        top.setSpacing(8)
-        top.addWidget(_make_label("Gruppi collegati", "CardTitle"))
-        top.addStretch(1)
-        btn_new = _make_button("+ Crea Gruppo", "primary")
-        btn_new.clicked.connect(self._on_create_group)
-        top.addWidget(btn_new)
-
-        btn_join_drive = _make_button("Unisciti (Link/ID Drive)")
-        btn_join_drive.clicked.connect(self._on_join_drive_group)
-        top.addWidget(btn_join_drive)
-
-        btn_join_local = _make_button("Cartella Locale")
-        btn_join_local.clicked.connect(self._on_join_local_group)
-        top.addWidget(btn_join_local)
-        lay.addLayout(top)
-
-        grp_row = QHBoxLayout()
-        grp_row.setSpacing(8)
-        self.group_combo = QComboBox()
-        self.group_combo.setMinimumHeight(36)
-        self.group_combo.currentIndexChanged.connect(self._refresh_group_notes)
-        grp_row.addWidget(self.group_combo, 1)
-
-        btn_refresh = _make_button("Aggiorna")
-        btn_refresh.clicked.connect(self._refresh_group_notes)
-        grp_row.addWidget(btn_refresh)
-
-        btn_del = _make_button("Rimuovi", "danger")
-        btn_del.clicked.connect(self._on_delete_group)
-        grp_row.addWidget(btn_del)
-        lay.addLayout(grp_row)
-
-        self.status_lbl = _make_label("", "Muted", wrap=True)
-        lay.addWidget(self.status_lbl)
-
-        self.notes_list = QListWidget()
-        self.notes_list.setMinimumHeight(240)
-        lay.addWidget(self.notes_list, 1)
-
-        foot = QHBoxLayout()
-        foot.setSpacing(8)
-        self.publish_btn = _make_button("Pubblica Nota Corrente nel Gruppo", "primary")
-        self.publish_btn.clicked.connect(self._on_publish_current)
-        self.publish_btn.setEnabled(bool((current_markdown or "").strip()))
-        foot.addWidget(self.publish_btn)
-
-        self.import_btn = _make_button("Importa Nota Selezionata")
-        self.import_btn.clicked.connect(self._on_import_selected)
-        foot.addWidget(self.import_btn)
-        foot.addStretch(1)
-        close_btn = _make_button("Chiudi")
-        close_btn.clicked.connect(self.reject)
-        foot.addWidget(close_btn)
-        lay.addLayout(foot)
-
-        self._reload_groups()
-
-    def _active_group(self) -> Optional[Dict[str, Any]]:
-        data = self.group_combo.currentData()
-        return data if isinstance(data, dict) else None
-
-    def _reload_groups(self):
-        self.group_combo.blockSignals(True)
-        self.group_combo.clear()
-        for g in db.get_flow_groups():
-            mode = "Locale" if g.get("local_fallback_path") else "Drive"
-            self.group_combo.addItem(f"[{mode}] {g.get('group_name')}", g)
-        self.group_combo.blockSignals(False)
-        self._refresh_group_notes()
-
-    def _refresh_group_notes(self):
-        self.notes_list.clear()
-        self._notes_cache = []
-        g = self._active_group()
-        if not g:
-            self.status_lbl.setText("Nessun gruppo collegato. Crea un gruppo o unisciti tramite link Drive / cartella locale.")
-            return
-        src = g.get("local_fallback_path") or f"Drive ID: {g.get('drive_folder_id')}"
-        self.status_lbl.setText(f"Sorgente: {src}")
-        try:
-            items = flow_groups.list_group_notes(g, current_author=self.author_name)
-        except Exception as exc:
-            self.status_lbl.setText(f"Errore lettura gruppo: {exc}")
-            return
-        self._notes_cache = items
-        if not items:
-            self.notes_list.addItem("Nessuna nota condivisa presente in questo gruppo.")
-            return
-        for it in items:
-            lock = it.get("lock_info")
-            lock_txt = f"  [BLOCCATO da {lock.get('author')}]" if lock else ""
-            self.notes_list.addItem(f"[{it.get('subject')}] {it.get('title')}{lock_txt}")
-
-    def _on_create_group(self):
-        name, ok = QInputDialog.getText(self, "Crea FlowGroup", "Nome del gruppo (es. Ingegneria Meccanica 2026):")
-        if not ok or not name.strip():
-            return
-        use_local = QMessageBox.question(
-            self,
-            "Destinazione Gruppo",
-            "Vuoi creare il gruppo su Google Drive API (Sì) oppure in una Cartella Locale / Drive Desktop (No)?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        local_dir = ""
-        if use_local == QMessageBox.StandardButton.No:
-            local_dir = QFileDialog.getExistingDirectory(self, "Seleziona cartella per il nuovo FlowGroup")
-            if not local_dir:
-                return
-        try:
-            res = flow_groups.create_group(
-                group_name=name.strip(),
-                subjects=[self.current_subject or "Generale"],
-                author=self.author_name,
-                local_fallback_path=local_dir,
-                share_link=True,
-            )
-            if res.get("share_link"):
-                QApplication.clipboard().setText(res["share_link"])
-                QMessageBox.information(
-                    self,
-                    "Gruppo Creato",
-                    f"Gruppo creato su Google Drive.\nLink condivisibile copiato negli appunti:\n{res['share_link']}",
-                )
-            self._reload_groups()
-        except Exception as exc:
-            QMessageBox.warning(self, "Errore Creazione Gruppo", str(exc))
-
-    def _on_join_drive_group(self):
-        url_or_id, ok = QInputDialog.getText(
-            self,
-            "Unisciti a FlowGroup Drive",
-            "Incolla il link della cartella Google Drive o l'ID cartella:",
-        )
-        if not ok or not url_or_id.strip():
-            return
-        try:
-            flow_groups.join_group(folder_id_or_url=url_or_id.strip())
-            self._reload_groups()
-        except Exception as exc:
-            QMessageBox.warning(self, "Errore Unione Gruppo", str(exc))
-
-    def _on_join_local_group(self):
-        chosen = QFileDialog.getExistingDirectory(self, "Seleziona cartella locale condivisa (Drive Desktop)")
-        if not chosen:
-            return
-        try:
-            flow_groups.join_group(local_fallback_path=chosen)
-            self._reload_groups()
-        except Exception as exc:
-            QMessageBox.warning(self, "Errore Cartella Locale", str(exc))
-
-    def _on_delete_group(self):
-        g = self._active_group()
-        if not g:
-            return
-        db.delete_flow_group(int(g["id"]))
-        self._reload_groups()
-
-    def _on_publish_current(self):
-        g = self._active_group()
-        if not g:
-            QMessageBox.information(self, "FlowGroups", "Seleziona o crea prima un gruppo.")
-            return
-        title = (self.current_title or "").strip() or "Appunto"
-        try:
-            res = flow_groups.publish_note(
-                g,
-                subject=self.current_subject or "Generale",
-                title=title,
-                markdown_content=self.current_markdown,
-                author=self.author_name,
-            )
-            self._refresh_group_notes()
-            QMessageBox.information(
-                self,
-                "Pubblicato",
-                f"Nota '{res['filename']}' pubblicata in [{res['subject']}] (storico .history/ aggiornato).",
-            )
-        except Exception as exc:
-            QMessageBox.warning(self, "Pubblicazione Bloccata / Errore", str(exc))
-
-    def _on_import_selected(self):
-        g = self._active_group()
-        row = self.notes_list.currentRow()
-        if not g or row < 0 or row >= len(self._notes_cache):
-            return
-        item = self._notes_cache[row]
-        try:
-            title, md = flow_groups.download_note(g, item)
-            nid = db.add_study_note(
-                title=title,
-                content_markdown=md,
-                subject=item.get("subject") or "Generale",
-                topic="FlowGroup",
-                note_type="appunto",
-                profile=self.author_name or "Alessandro",
-            )
-            self.imported_note_id = nid
-            self.accept()
-        except Exception as exc:
-            QMessageBox.warning(self, "Errore Importazione", str(exc))
 
 
 class FlowLocalHub(QMainWindow):
@@ -846,13 +619,15 @@ class FlowLocalHub(QMainWindow):
         self._apply_typography_change()
 
     def _sync_editor_typography(self):
-        if hasattr(self, "nk_editor_body") and hasattr(self.nk_editor_body, "set_typography"):
-            resolved_font = _resolve_font_family(
-                self._current_theme,
-                self._font_preset,
-                self._custom_font_family,
-            )
-            self.nk_editor_body.set_typography(resolved_font, self._font_scale)
+        resolved_font = _resolve_font_family(
+            self._current_theme,
+            self._font_preset,
+            self._custom_font_family,
+        )
+        for pane_attr in ("nk_pane_left", "nk_pane_right"):
+            pane = getattr(self, pane_attr, None)
+            if pane is not None and hasattr(pane.editor_body, "set_typography"):
+                pane.editor_body.set_typography(resolved_font, self._font_scale)
 
     def _apply_typography_change(self):
         self.setUpdatesEnabled(False)
@@ -879,19 +654,20 @@ class FlowLocalHub(QMainWindow):
         is_dark = self._active_is_dark()
         if hasattr(self, "nk_col3_layout"):
             if self._reading_mode:
-                self.nk_col3_layout.setContentsMargins(84, 22, 84, 20)
+                self.nk_col3_layout.setContentsMargins(64, 18, 64, 16)
             else:
-                self.nk_col3_layout.setContentsMargins(48, 18, 48, 16)
-        if hasattr(self, "nk_editor_body"):
-            if hasattr(self.nk_editor_body, "set_theme_modes"):
-                self.nk_editor_body.set_theme_modes(is_dark, self._reading_mode)
-            elif hasattr(self.nk_editor_body, "set_dark_mode"):
-                self.nk_editor_body.set_dark_mode(is_dark)
-            if hasattr(self.nk_editor_body, "set_sync_accent_color"):
-                p_sync = self._active_palette()
-                self.nk_editor_body.set_sync_accent_color(
-                    p_sync.get("accent") or p_sync.get("nav_checked_border") or "#6366F1"
-                )
+                self.nk_col3_layout.setContentsMargins(28, 12, 28, 12)
+        p_sync = self._active_palette()
+        for pane_attr in ("nk_pane_left", "nk_pane_right"):
+            pane = getattr(self, pane_attr, None)
+            if pane is not None:
+                pane.set_theme(self._current_theme, is_dark, self._reading_mode, p_sync)
+        if hasattr(self, "nk_workspace_switcher"):
+            self.nk_workspace_switcher.set_theme(self._current_theme, p_sync)
+        if hasattr(self, "nk_split_btn"):
+            self.nk_split_btn.setIcon(get_icon("split_h", theme_key=self._current_theme, role="subtitle", size=15))
+        if hasattr(self, "nk_send_to_split_btn"):
+            self.nk_send_to_split_btn.setIcon(get_icon("arrow_right", theme_key=self._current_theme, role="subtitle", size=14))
 
         overlay = ThemeRevealOverlay(self, old_pixmap) if old_pixmap is not None else None
         self.setUpdatesEnabled(False)
@@ -958,7 +734,6 @@ class FlowLocalHub(QMainWindow):
             ("nk_focus_mode_btn", "expand", "subtitle", 15),
             ("nk_studio_btn", "book", "text", 14),
             ("nk_rsvp_btn", "lightning", "text", 14),
-            ("nk_fc_btn", "cards", "text", 14),
             ("nk_ask_whis_btn", "sparkles", "accent", 14),
             ("ft_today_btn", "calendar", "text", 14),
             ("ft_save_btn", "save", "on_accent", 14),
@@ -1940,6 +1715,15 @@ class FlowLocalHub(QMainWindow):
         col1_top_row.addWidget(self.nk_hide_col1_btn)
         col1_layout.addLayout(col1_top_row)
 
+        # Workspace Switcher stile Notion (Quaderno Locale vs FlowGroups)
+        self._nk_active_workspace_group_id: Optional[int] = None
+        self.nk_workspace_switcher = WorkspaceSwitcherButton(theme_key=self._current_theme, parent=col1)
+        self.nk_workspace_switcher.set_theme(self._current_theme, self._active_palette())
+        self.nk_workspace_switcher.workspaceSelected.connect(self._on_nk_workspace_selected)
+        self.nk_workspace_switcher.joinOrCreateRequested.connect(self._on_nk_join_or_create_group)
+        self.nk_workspace_switcher.removeGroupRequested.connect(self._on_nk_remove_group)
+        col1_layout.addWidget(self.nk_workspace_switcher)
+
         # Barra di ricerca + Profilo compatto
         self.nk_search_input = QLineEdit()
         self.nk_search_input.setPlaceholderText("Cerca note, materie...")
@@ -1985,6 +1769,10 @@ class FlowLocalHub(QMainWindow):
         self.nk_tree.changeFolderColorRequested.connect(self._on_nk_change_folder_color)
         self.nk_tree.deleteFolderRequested.connect(self._on_nk_delete_folder)
         self.nk_tree.toggleNoteStudiedRequested.connect(self._on_nk_toggle_studied)
+        self.nk_tree.nodeMiddleClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
+        self.nk_tree.nodeDoubleClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
+        self.nk_tree.openInNewTabRequested.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
+        self.nk_tree.openInSplitRequested.connect(lambda data: self._open_nk_tree_node(data, in_split=True))
         col1_layout.addWidget(self.nk_tree, 1)
 
         # Footer compatto della Sidebar
@@ -2061,232 +1849,189 @@ class FlowLocalHub(QMainWindow):
         col3_layout = QVBoxLayout(col3)
         self.nk_col3_layout = col3_layout
         if getattr(self, "_reading_mode", False):
-            col3_layout.setContentsMargins(84, 22, 84, 20)
+            col3_layout.setContentsMargins(64, 18, 64, 16)
         else:
-            col3_layout.setContentsMargins(48, 18, 48, 16)
-        col3_layout.setSpacing(8)
+            col3_layout.setContentsMargins(28, 12, 28, 12)
+        col3_layout.setSpacing(6)
 
-        # Toolbar superiore dell'editor: parte sinistra pulita, tutti i controlli allineati a destra
-        editor_top_bar = QHBoxLayout()
-        editor_top_bar.setContentsMargins(0, 0, 0, 0)
-        editor_top_bar.setSpacing(6)
+        # Pillole di ripristino sidebar (visibili solo quando la sidebar è nascosta)
+        restore_bar = QHBoxLayout()
+        restore_bar.setContentsMargins(0, 0, 0, 0)
+        restore_bar.setSpacing(6)
 
-        self.nk_show_col1_btn = _make_button("📁 Sidebar ▸")
+        self.nk_show_col1_btn = _make_button(" Sidebar ▸")
         self.nk_show_col1_btn.setObjectName("NKRestorePill")
+        self.nk_show_col1_btn.setIcon(get_icon("folder", theme_key=self._current_theme, role="subtitle", size=13))
         self.nk_show_col1_btn.setVisible(False)
         self.nk_show_col1_btn.clicked.connect(lambda: self._show_nk_col(0))
-        editor_top_bar.addWidget(self.nk_show_col1_btn)
+        restore_bar.addWidget(self.nk_show_col1_btn)
 
-        self.nk_show_col2_btn = _make_button("☷ Card ▸")
+        self.nk_show_col2_btn = _make_button(" Card ▸")
         self.nk_show_col2_btn.setObjectName("NKRestorePill")
         self.nk_show_col2_btn.setVisible(False)
         self.nk_show_col2_btn.clicked.connect(lambda: self._toggle_nk_card_view(True))
-        editor_top_bar.addWidget(self.nk_show_col2_btn)
+        restore_bar.addWidget(self.nk_show_col2_btn)
+        restore_bar.addStretch(1)
+        col3_layout.addLayout(restore_bar)
 
-        editor_top_bar.addStretch(1)
-
-        # Gruppo 1 — Utility & Gestione File (Icon-only 32x32px ghost, gap 6px)
-        grp1_lay = QHBoxLayout()
-        grp1_lay.setContentsMargins(0, 0, 0, 0)
-        grp1_lay.setSpacing(6)
-
-        self.nk_more_btn = _make_button("", "ghost")
-        self.nk_more_btn.setObjectName("NKToolbarIconBtn")
-        self.nk_more_btn.setFixedSize(32, 32)
-        self.nk_more_btn.setIcon(get_icon("more", theme_key=self._current_theme, role="subtitle", size=15))
-        self.nk_more_btn.setToolTip("Altre azioni (Esporta, Duplica, Elimina)")
-        self.nk_more_btn.clicked.connect(self._show_nk_more_menu)
-        grp1_lay.addWidget(self.nk_more_btn)
-
-        self.nk_history_btn = _make_button("", "ghost")
-        self.nk_history_btn.setObjectName("NKToolbarIconBtn")
-        self.nk_history_btn.setFixedSize(32, 32)
-        self.nk_history_btn.setIcon(get_icon("clock", theme_key=self._current_theme, role="subtitle", size=15))
-        self.nk_history_btn.setToolTip("Cronologia versioni")
-        self.nk_history_btn.clicked.connect(self._on_nk_history_clicked)
-        grp1_lay.addWidget(self.nk_history_btn)
-
-        self.nk_groups_btn = _make_button("", "ghost")
-        self.nk_groups_btn.setObjectName("NKToolbarIconBtn")
-        self.nk_groups_btn.setFixedSize(32, 32)
-        self.nk_groups_btn.setIcon(get_icon("cloud", theme_key=self._current_theme, role="subtitle", size=15))
-        self.nk_groups_btn.setToolTip("FlowGroups: Pubblica / Importa & Marcatore [HH:MM:SS]")
-        self.nk_groups_btn.clicked.connect(self._show_nk_groups_menu)
-        grp1_lay.addWidget(self.nk_groups_btn)
-
-        self.nk_focus_mode_btn = _make_button("", "ghost")
-        self.nk_focus_mode_btn.setObjectName("NKToolbarIconBtn")
-        self.nk_focus_mode_btn.setFixedSize(32, 32)
-        self.nk_focus_mode_btn.setIcon(get_icon("expand", theme_key=self._current_theme, role="subtitle", size=15))
-        self.nk_focus_mode_btn.setToolTip("Schermo intero")
-        self.nk_focus_mode_btn.clicked.connect(self._toggle_nk_focus_mode)
-        grp1_lay.addWidget(self.nk_focus_mode_btn)
-
-        editor_top_bar.addLayout(grp1_lay)
-
-        # Divisore verticale (1px x 18px) con gap 12px tra i due gruppi
-        editor_top_bar.addSpacing(6)  # +6px spacing base = 12px
-        toolbar_divider = QFrame()
-        toolbar_divider.setFixedSize(1, 18)
-        toolbar_divider.setStyleSheet("background-color: rgba(148, 163, 184, 0.28); border: none;")
-        editor_top_bar.addWidget(toolbar_divider, 0, Qt.AlignmentFlag.AlignVCenter)
-        editor_top_bar.addSpacing(6)  # +6px spacing base = 12px
-
-        # Gruppo 2 — Azioni Primarie di Studio & AI (Pillole 32px, gap 6px, all'estrema destra)
-        grp2_lay = QHBoxLayout()
-        grp2_lay.setContentsMargins(0, 0, 0, 0)
-        grp2_lay.setSpacing(6)
+        # Strip unificata di azioni rapide (dockata nella riga Breadcrumb sotto la Tab Bar)
+        self.nk_actions_strip = QWidget(col3)
+        strip_lay = QHBoxLayout(self.nk_actions_strip)
+        strip_lay.setContentsMargins(0, 0, 0, 0)
+        strip_lay.setSpacing(4)
 
         self.nk_studio_btn = _make_button(" Vista Studio")
         self.nk_studio_btn.setObjectName("NKToolbarPill")
-        self.nk_studio_btn.setFixedHeight(32)
-        self.nk_studio_btn.setIcon(get_icon("book", theme_key=self._current_theme, role="text", size=14))
+        self.nk_studio_btn.setFixedHeight(28)
+        self.nk_studio_btn.setIcon(get_icon("book", theme_key=self._current_theme, role="text", size=13))
         self.nk_studio_btn.setCheckable(True)
         self.nk_studio_btn.setToolTip("Alterna Modifica e Vista Studio (Ctrl+E)")
         self.nk_studio_btn.clicked.connect(self._on_nk_studio_btn_clicked)
-        grp2_lay.addWidget(self.nk_studio_btn)
+        strip_lay.addWidget(self.nk_studio_btn)
 
         self.nk_studio_shortcut = QShortcut(QKeySequence("Ctrl+E"), col3)
         self.nk_studio_shortcut.activated.connect(self._on_nk_studio_shortcut)
 
         self.nk_rsvp_btn = _make_button(" RSVP")
         self.nk_rsvp_btn.setObjectName("NKToolbarPill")
-        self.nk_rsvp_btn.setFixedHeight(32)
-        self.nk_rsvp_btn.setIcon(get_icon("lightning", theme_key=self._current_theme, role="text", size=14))
+        self.nk_rsvp_btn.setFixedHeight(28)
+        self.nk_rsvp_btn.setIcon(get_icon("lightning", theme_key=self._current_theme, role="text", size=13))
         self.nk_rsvp_btn.setToolTip("Lettura veloce RSVP (Alt+R)")
         self.nk_rsvp_btn.clicked.connect(self._on_nk_rsvp_btn_clicked)
-        grp2_lay.addWidget(self.nk_rsvp_btn)
+        strip_lay.addWidget(self.nk_rsvp_btn)
 
-        self.nk_fc_btn = _make_button(" Flashcard")
-        self.nk_fc_btn.setObjectName("NKToolbarPill")
-        self.nk_fc_btn.setFixedHeight(32)
-        self.nk_fc_btn.setIcon(get_icon("cards", theme_key=self._current_theme, role="text", size=14))
-        self.nk_fc_btn.setToolTip("Genera flashcard da questa nota")
-        self.nk_fc_btn.clicked.connect(self._on_nk_extract_flashcards_clicked)
-        grp2_lay.addWidget(self.nk_fc_btn)
-
-        self.nk_ask_whis_btn = _make_button(" Whis", "accent")
-        self.nk_ask_whis_btn.setObjectName("NKActionBtn")
-        self.nk_ask_whis_btn.setFixedHeight(32)
+        self.nk_ask_whis_btn = _make_button("", "ghost")
+        self.nk_ask_whis_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_ask_whis_btn.setFixedSize(28, 28)
         self.nk_ask_whis_btn.setIcon(get_icon("sparkles", theme_key=self._current_theme, role="accent", size=14))
-        self.nk_ask_whis_btn.setToolTip("Chiedi a Whis")
+        self.nk_ask_whis_btn.setToolTip("Analizza questa nota con Whis")
         self.nk_ask_whis_btn.clicked.connect(self._on_nk_ask_whis_clicked)
-        grp2_lay.addWidget(self.nk_ask_whis_btn)
+        strip_lay.addWidget(self.nk_ask_whis_btn)
 
-        editor_top_bar.addLayout(grp2_lay)
+        toolbar_divider = QFrame()
+        toolbar_divider.setFixedSize(1, 16)
+        toolbar_divider.setStyleSheet("background-color: rgba(148, 163, 184, 0.28); border: none;")
+        strip_lay.addWidget(toolbar_divider, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        col3_layout.addLayout(editor_top_bar)
+        self.nk_more_btn = _make_button("", "ghost")
+        self.nk_more_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_more_btn.setFixedSize(28, 28)
+        self.nk_more_btn.setIcon(get_icon("more", theme_key=self._current_theme, role="subtitle", size=14))
+        self.nk_more_btn.setToolTip("Altre azioni (Marcatore audio, Esporta, Duplica, Elimina)")
+        self.nk_more_btn.clicked.connect(self._show_nk_more_menu)
+        strip_lay.addWidget(self.nk_more_btn)
 
-        # Titolo edit senza scatola
-        self.nk_editor_title = DictationGhostLineEdit(dark_mode=self._active_is_dark())
-        self.nk_editor_title.setObjectName("NKEditorTitle")
-        self.nk_editor_title.setPlaceholderText("Titolo della nota...")
-        self.nk_editor_title.setMinimumHeight(36)
-        col3_layout.addWidget(self.nk_editor_title)
+        self.nk_history_btn = _make_button("", "ghost")
+        self.nk_history_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_history_btn.setFixedSize(28, 28)
+        self.nk_history_btn.setIcon(get_icon("clock", theme_key=self._current_theme, role="subtitle", size=14))
+        self.nk_history_btn.setToolTip("Cronologia versioni (Time Machine)")
+        self.nk_history_btn.clicked.connect(self._on_nk_history_clicked)
+        strip_lay.addWidget(self.nk_history_btn)
 
-        # Barra Metadati Compatta a Pillole (height: 26px)
-        meta_grid = QHBoxLayout()
-        meta_grid.setSpacing(6)
+        self.nk_split_btn = _make_button("", "ghost")
+        self.nk_split_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_split_btn.setFixedSize(28, 28)
+        self.nk_split_btn.setCheckable(True)
+        self.nk_split_btn.setIcon(get_icon("split_h", theme_key=self._current_theme, role="subtitle", size=14))
+        self.nk_split_btn.setToolTip("Affianca a destra (Split View — Ctrl+\\)")
+        self.nk_split_btn.clicked.connect(lambda: self._on_nk_toggle_split_view())
+        strip_lay.addWidget(self.nk_split_btn)
 
-        self.nk_editor_subject = QLineEdit()
-        self.nk_editor_subject.setObjectName("NKEditorPill")
-        self.nk_editor_subject.setPlaceholderText("Materia")
-        self.nk_editor_subject.setFixedHeight(26)
-        self.nk_editor_subject.setMaximumWidth(150)
-        meta_grid.addWidget(self.nk_editor_subject)
+        self.nk_send_to_split_btn = _make_button("", "ghost")
+        self.nk_send_to_split_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_send_to_split_btn.setFixedSize(28, 28)
+        self.nk_send_to_split_btn.setIcon(get_icon("arrow_right", theme_key=self._current_theme, role="subtitle", size=14))
+        self.nk_send_to_split_btn.setToolTip("Invia selezione al pannello affiancato")
+        self.nk_send_to_split_btn.clicked.connect(self._on_nk_send_selection_to_other_pane)
+        self.nk_send_to_split_btn.setVisible(False)
+        strip_lay.addWidget(self.nk_send_to_split_btn)
 
-        sep1 = QLabel("›")
-        sep1.setStyleSheet("color: #94A3B8; font-size: 13px; background: transparent;")
-        meta_grid.addWidget(sep1)
+        self.nk_focus_mode_btn = _make_button("", "ghost")
+        self.nk_focus_mode_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_focus_mode_btn.setFixedSize(28, 28)
+        self.nk_focus_mode_btn.setIcon(get_icon("expand", theme_key=self._current_theme, role="subtitle", size=14))
+        self.nk_focus_mode_btn.setToolTip("Schermo intero / Focus")
+        self.nk_focus_mode_btn.clicked.connect(self._toggle_nk_focus_mode)
+        strip_lay.addWidget(self.nk_focus_mode_btn)
 
-        self.nk_editor_topic = QLineEdit()
-        self.nk_editor_topic.setObjectName("NKEditorPill")
-        self.nk_editor_topic.setPlaceholderText("Argomento")
-        self.nk_editor_topic.setFixedHeight(26)
-        self.nk_editor_topic.setMaximumWidth(150)
-        meta_grid.addWidget(self.nk_editor_topic)
-
-        sep2 = QLabel("·")
-        sep2.setStyleSheet("color: #94A3B8; font-size: 14px; font-weight: bold; background: transparent;")
-        meta_grid.addWidget(sep2)
-
-        self.nk_editor_type = QComboBox()
-        self.nk_editor_type.setObjectName("NKEditorPillCombo")
-        self.nk_editor_type.addItems(["appunto", "sbobina", "slide"])
-        self.nk_editor_type.setFixedHeight(26)
-        meta_grid.addWidget(self.nk_editor_type)
-
-        sep3 = QLabel("·")
-        sep3.setStyleSheet("color: #94A3B8; font-size: 14px; font-weight: bold; background: transparent;")
-        meta_grid.addWidget(sep3)
-
-        self.nk_editor_profile = QComboBox()
-        self.nk_editor_profile.setObjectName("NKEditorPillCombo")
-        self.nk_editor_profile.addItems(["Alessandro", "Giada"])
-        self.nk_editor_profile.setFixedHeight(26)
-        meta_grid.addWidget(self.nk_editor_profile)
-
-        meta_grid.addStretch(1)
-        self.nk_autosave_badge = QLabel("✓ Salvato automaticamente")
-        self.nk_autosave_badge.setObjectName("NKAutoSaveBadge")
-        self.nk_autosave_badge.setStyleSheet(
-            "background: transparent; border: none; color: #787774; font-size: 11.5px; font-weight: 400;"
-        )
-        meta_grid.addWidget(self.nk_autosave_badge)
-        col3_layout.addLayout(meta_grid)
-
-        # Sottile linea divisoria orizzontale
-        editor_divider = QFrame()
-        editor_divider.setObjectName("NKEditorDivider")
-        editor_divider.setFixedHeight(1)
-        col3_layout.addWidget(editor_divider)
-
-        # Markdown + LaTeX Scientific Editor WYSIWYG stile Notion
+        # Dual-Pane Split-View (EditorPane Left & Right in QSplitter Orizzontale)
         is_dark = self._active_is_dark()
         is_reading = getattr(self, "_reading_mode", False)
-        self.nk_editor_body = ScientificNoteEditor(dark_mode=is_dark, reading_mode=is_reading)
-        self.nk_editor_body.setObjectName("NKEditorBody")
-        self.nk_editor_body.setPlaceholderText(
-            "Scrivi o detta qui in Markdown + LaTeX ($...$), incolla immagini (Ctrl+V) o digita '/' per i comandi..."
-        )
-        self.nk_editor_body.setMinimumHeight(240)
         p_init = self._active_palette()
-        self.nk_editor_body.set_sync_accent_color(
-            p_init.get("accent") or p_init.get("nav_checked_border") or "#6366F1"
+
+        self.nk_panes_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.nk_panes_splitter.setChildrenCollapsible(False)
+        self.nk_panes_splitter.setHandleWidth(6)
+
+        self.nk_pane_left = EditorPane(
+            pane_id="left",
+            theme_key=self._current_theme,
+            is_dark=is_dark,
+            reading_mode=is_reading,
+            palette=p_init,
+            autosave_thread_cls=_AutoSaveNoteThread,
+            audio_sync_loader=load_note_audio_sync,
+            parent=col3,
         )
-        col3_layout.addWidget(self.nk_editor_body, 1)
-
-        # Smart Audio Bar contestuale per le sbobine (nascosta di default)
-        self.nk_audio_bar = AudioSyncBar(self)
-        self.nk_audio_bar.hide()
-        col3_layout.addWidget(self.nk_audio_bar)
-
-        self.nk_audio_bar.positionChangedMs.connect(self.nk_editor_body.highlight_audio_position)
-        self.nk_audio_bar.playbackStateChanged.connect(
-            lambda playing: None if playing else self.nk_editor_body.clear_audio_highlight()
+        self.nk_pane_right = EditorPane(
+            pane_id="right",
+            theme_key=self._current_theme,
+            is_dark=is_dark,
+            reading_mode=is_reading,
+            palette=p_init,
+            autosave_thread_cls=_AutoSaveNoteThread,
+            audio_sync_loader=load_note_audio_sync,
+            parent=col3,
         )
-        self.nk_editor_body.seekRequested.connect(
-            lambda ms: self.nk_audio_bar.seek_ms(ms, auto_play=True)
-        )
-        self.nk_editor_body.togglePlayRequested.connect(self.nk_audio_bar.toggle_play_pause)
+        self.nk_pane_right.hide()
 
-        # Auto-save silenzioso con debounce 800ms
-        self._nk_loading_note = False
-        self._nk_autosave_timer = QTimer(self)
-        self._nk_autosave_timer.setSingleShot(True)
-        self._nk_autosave_timer.setInterval(800)
-        self._nk_autosave_timer.timeout.connect(self._perform_nk_autosave)
+        self._nk_active_pane = self.nk_pane_left
+        self.nk_pane_left.breadcrumb.toolbar_slot.addWidget(self.nk_actions_strip)
+        for pane in (self.nk_pane_left, self.nk_pane_right):
+            pane.activated.connect(self._on_nk_pane_activated)
+            pane.activeTabChanged.connect(self._on_nk_active_tab_changed)
+            pane.lastTabClosed.connect(self._on_nk_pane_last_tab_closed)
+            pane.localNoteSaved.connect(self._on_nk_pane_local_saved)
+            pane.studioViewChanged.connect(self._on_nk_studio_view_changed)
+            pane.rsvpRequested.connect(self._on_nk_rsvp_requested)
+            pane.summarizeRequested.connect(self._on_nk_summarize_clicked)
+            pane.flashcardsRequested.connect(self._on_nk_extract_flashcards_clicked)
+            pane.sendSelectionToSplitRequested.connect(self._on_nk_send_text_to_other_pane)
+            pane.acquireLockRequested.connect(self._on_nk_acquire_group_lock)
+            pane.publishGroupRequested.connect(self._on_nk_publish_group_note)
+            pane.copyToLocalRequested.connect(self._on_nk_copy_group_to_local)
+            pane.publishLocalToGroupRequested.connect(self._on_nk_publish_local_to_group)
+            pane.openGroupNoteFromBoardRequested.connect(self._on_nk_open_group_note_from_board)
+            pane.refreshBoardRequested.connect(self._on_nk_refresh_group_board)
+            pane.splitTabRequested.connect(self._on_nk_split_specific_tab)
+            pane.breadcrumb.rootClicked.connect(self._on_nk_breadcrumb_root_clicked)
+            pane.breadcrumb.subjectClicked.connect(self._on_nk_breadcrumb_subject_clicked)
 
-        self.nk_editor_title.textChanged.connect(self._on_nk_editor_modified)
-        self.nk_editor_subject.textChanged.connect(self._on_nk_editor_modified)
-        self.nk_editor_topic.textChanged.connect(self._on_nk_editor_modified)
-        self.nk_editor_type.currentIndexChanged.connect(self._on_nk_editor_modified)
-        self.nk_editor_profile.currentIndexChanged.connect(self._on_nk_editor_modified)
-        self.nk_editor_body.markdownModified.connect(self._on_nk_editor_modified)
-        self.nk_editor_body.summarizeRequested.connect(self._on_nk_summarize_clicked)
-        self.nk_editor_body.flashcardsRequested.connect(self._on_nk_extract_flashcards_clicked)
-        self.nk_editor_body.studioViewChanged.connect(self._on_nk_studio_view_changed)
-        self.nk_editor_body.rsvpRequested.connect(self._on_nk_rsvp_requested)
+        self.nk_panes_splitter.addWidget(self.nk_pane_left)
+        self.nk_panes_splitter.addWidget(self.nk_pane_right)
+        col3_layout.addWidget(self.nk_panes_splitter, 1)
+
+        # Scorciatoie da tastiera FlowNotes (attive quando la pagina è visibile)
+        self.nk_shortcut_new_tab = QShortcut(QKeySequence("Ctrl+N"), page)
+        self.nk_shortcut_new_tab.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.nk_shortcut_new_tab.activated.connect(self._on_nk_shortcut_new_tab)
+
+        self.nk_shortcut_close_tab = QShortcut(QKeySequence("Ctrl+W"), page)
+        self.nk_shortcut_close_tab.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.nk_shortcut_close_tab.activated.connect(self._on_nk_shortcut_close_tab)
+
+        self.nk_shortcut_next_tab = QShortcut(QKeySequence("Ctrl+Tab"), page)
+        self.nk_shortcut_next_tab.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.nk_shortcut_next_tab.activated.connect(lambda: self._active_nk_pane().cycle_tab(1))
+
+        self.nk_shortcut_prev_tab = QShortcut(QKeySequence("Ctrl+Shift+Tab"), page)
+        self.nk_shortcut_prev_tab.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.nk_shortcut_prev_tab.activated.connect(lambda: self._active_nk_pane().cycle_tab(-1))
+
+        self.nk_shortcut_split = QShortcut(QKeySequence("Ctrl+\\"), page)
+        self.nk_shortcut_split.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.nk_shortcut_split.activated.connect(self._on_nk_toggle_split_view)
 
         splitter.addWidget(col3)
 
@@ -2314,6 +2059,478 @@ class FlowLocalHub(QMainWindow):
     def _build_notes_page(self) -> QWidget:
         """Retrocompatibilità: rimanda a _build_flowstudy_notekeeper_page."""
         return self._build_flowstudy_notekeeper_page()
+
+    # -----------------------------------------------------------------
+    # FlowNotes Multi-Workspace, Multi-Tab & Split-View Helpers
+    # -----------------------------------------------------------------
+    def _active_nk_pane(self) -> EditorPane:
+        pane = getattr(self, "_nk_active_pane", None)
+        if pane is not None:
+            return pane
+        return self.nk_pane_left
+
+    def _other_nk_pane(self, pane: Optional[EditorPane] = None) -> EditorPane:
+        cur = pane or self._active_nk_pane()
+        return self.nk_pane_right if cur is self.nk_pane_left else self.nk_pane_left
+
+    @property
+    def nk_editor_title(self):
+        return self._active_nk_pane().editor_title
+
+    @property
+    def nk_editor_subject(self):
+        return self._active_nk_pane().editor_subject
+
+    @property
+    def nk_editor_topic(self):
+        return self._active_nk_pane().editor_topic
+
+    @property
+    def nk_editor_type(self):
+        return self._active_nk_pane().editor_type
+
+    @property
+    def nk_editor_profile(self):
+        return self._active_nk_pane().editor_profile
+
+    @property
+    def nk_editor_body(self):
+        return self._active_nk_pane().editor_body
+
+    @property
+    def nk_audio_bar(self):
+        return self._active_nk_pane().audio_bar
+
+    @property
+    def nk_autosave_badge(self):
+        return self._active_nk_pane().autosave_badge
+
+    def _nk_author_name(self) -> str:
+        if hasattr(self, "nk_profile_combo"):
+            p = self.nk_profile_combo.currentText().strip()
+            if p and p != "Tutti i profili":
+                return p
+        return "Alessandro"
+
+    def _on_nk_pane_activated(self, pane: EditorPane):
+        if getattr(self, "_nk_active_pane", None) is pane:
+            return
+        self._nk_active_pane = pane
+        self.nk_pane_left.set_active_pane(pane is self.nk_pane_left)
+        self.nk_pane_right.set_active_pane(pane is self.nk_pane_right)
+        if hasattr(self, "nk_actions_strip") and hasattr(pane, "breadcrumb"):
+            if self.nk_actions_strip.parentWidget() is not pane.breadcrumb:
+                pane.breadcrumb.toolbar_slot.addWidget(self.nk_actions_strip)
+                self.nk_actions_strip.show()
+        self._sync_toolbar_from_active_pane()
+
+    def _on_nk_breadcrumb_root_clicked(self):
+        active_gid = getattr(self, "_nk_active_workspace_group_id", None)
+        if active_gid is not None:
+            groups = {int(g["id"]): g for g in db.get_flow_groups()}
+            g = groups.get(int(active_gid))
+            if g is not None:
+                self._active_nk_pane().open_group_board(g)
+                return
+        self._nk_current_filter_folder_id = None
+        self._nk_current_filter_subject = None
+        self._nk_current_filter_topic = None
+        self._refresh_nk_notes_list()
+
+    def _on_nk_breadcrumb_subject_clicked(self, subject: str):
+        subj = (subject or "").strip()
+        if not subj:
+            return
+        if hasattr(self, "nk_search_edit"):
+            self.nk_search_edit.setText("")
+        if hasattr(self, "nk_tree"):
+            for i in range(self.nk_tree.topLevelItemCount()):
+                item = self.nk_tree.topLevelItem(i)
+                if item and subj.lower() in item.text(0).lower():
+                    item.setExpanded(True)
+                    self.nk_tree.setCurrentItem(item)
+                    self._on_nk_tree_item_clicked(item, 0)
+                    break
+
+    def _on_nk_active_tab_changed(self, tab: Optional[TabContext]):
+        if tab is not None and tab.workspace_type == "local":
+            self._nk_selected_note_id = tab.note_id
+        self._sync_toolbar_from_active_pane()
+
+    def _sync_toolbar_from_active_pane(self):
+        pane = self._active_nk_pane()
+        tab = pane.active_tab()
+        if hasattr(self, "nk_studio_btn"):
+            is_st = bool(tab and tab.is_studio_view) or bool(pane.editor_body.is_studio_view)
+            self.nk_studio_btn.blockSignals(True)
+            self.nk_studio_btn.setChecked(is_st)
+            self.nk_studio_btn.setText(" Modifica" if is_st else " Vista Studio")
+            self.nk_studio_btn.blockSignals(False)
+        if hasattr(self, "nk_split_btn") and hasattr(self, "nk_pane_right"):
+            is_split = not self.nk_pane_right.isHidden()
+            self.nk_split_btn.blockSignals(True)
+            self.nk_split_btn.setChecked(is_split)
+            self.nk_split_btn.blockSignals(False)
+            if hasattr(self, "nk_send_to_split_btn"):
+                self.nk_send_to_split_btn.setVisible(is_split)
+
+    def _on_nk_pane_last_tab_closed(self, pane: EditorPane):
+        if pane is self.nk_pane_right:
+            self.nk_pane_right.hide()
+            self._on_nk_pane_activated(self.nk_pane_left)
+            self._sync_toolbar_from_active_pane()
+        else:
+            pane.open_new_empty_tab(
+                subject=self._nk_current_filter_subject or "Generale",
+                topic=self._nk_current_filter_topic or "Generale",
+                profile=self._nk_author_name(),
+            )
+
+    def _on_nk_pane_local_saved(self, saved_id: int, _title: str, was_new: bool):
+        self._nk_selected_note_id = saved_id
+        if was_new and self._nk_active_workspace_group_id is None:
+            self._refresh_notekeeper()
+
+    def _on_nk_workspace_selected(self, group_id: Optional[int]):
+        self._nk_active_workspace_group_id = int(group_id) if group_id is not None else None
+        self._refresh_notekeeper()
+        if self._nk_active_workspace_group_id is not None:
+            self._open_group_board_in_pane(self._active_nk_pane(), self._nk_active_workspace_group_id)
+
+    def _on_nk_join_or_create_group(self):
+        dlg = JoinOrCreateGroupDialog(
+            author_name=self._nk_author_name(),
+            default_subject=self._nk_current_filter_subject or "Generale",
+            palette=self._active_palette(),
+            parent=self,
+        )
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_group:
+            gid = int(dlg.result_group["id"])
+            self._nk_active_workspace_group_id = gid
+            self._refresh_notekeeper()
+            self._open_group_board_in_pane(self._active_nk_pane(), gid)
+
+    def _on_nk_remove_group(self, group_id: int):
+        ans = QMessageBox.question(
+            self,
+            "Scollega Gruppo",
+            "Scollegare questo gruppo da FlowNotes? (I file su Drive / cartella locale non verranno eliminati.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ans != QMessageBox.StandardButton.Yes:
+            return
+        db.delete_flow_group(int(group_id))
+        if self._nk_active_workspace_group_id == int(group_id):
+            self._nk_active_workspace_group_id = None
+        self._refresh_notekeeper()
+
+    def _open_group_board_in_pane(self, pane: EditorPane, group_id: int, in_new_tab: bool = False):
+        groups = {int(g["id"]): g for g in db.get_flow_groups()}
+        g = groups.get(int(group_id))
+        if not g:
+            return
+        try:
+            board_data = flow_groups.get_group_board_data(g, current_author=self._nk_author_name())
+        except Exception as exc:
+            QMessageBox.warning(self, "FlowGroups", f"Impossibile caricare la bacheca del gruppo:\n{exc}")
+            return
+        pane.board_widget.populate(board_data)
+        ctx = TabContext(
+            workspace_type="board",
+            group_id=int(group_id),
+            group_rec=g,
+            title=f"Bacheca · {g.get('group_name')}",
+        )
+        pane.open_tab(ctx, in_new_tab=in_new_tab)
+
+    def _on_nk_refresh_group_board(self, pane: EditorPane):
+        tab = pane.active_tab()
+        if tab and tab.group_id:
+            try:
+                board_data = flow_groups.get_group_board_data(tab.group_rec or {}, current_author=self._nk_author_name())
+                pane.board_widget.populate(board_data)
+            except Exception as exc:
+                QMessageBox.warning(self, "FlowGroups", str(exc))
+            if self._nk_active_workspace_group_id == tab.group_id:
+                self._refresh_notekeeper()
+
+    def _on_nk_open_group_note_from_board(self, pane: EditorPane, item: dict):
+        tab = pane.active_tab()
+        g = (tab.group_rec if tab else None) or {}
+        if not g and self._nk_active_workspace_group_id:
+            groups = {int(x["id"]): x for x in db.get_flow_groups()}
+            g = groups.get(int(self._nk_active_workspace_group_id), {})
+        if g:
+            self._open_group_note_in_pane(pane, g, item, in_new_tab=True)
+
+    def _open_group_note_in_pane(
+        self,
+        pane: EditorPane,
+        group_rec: Dict[str, Any],
+        item: Dict[str, Any],
+        in_new_tab: bool = False,
+    ):
+        try:
+            title, md = flow_groups.download_note(group_rec, item)
+        except Exception as exc:
+            QMessageBox.warning(self, "FlowGroups", f"Impossibile aprire la nota del gruppo:\n{exc}")
+            return
+        ctx = TabContext(
+            workspace_type="group",
+            group_id=int(group_rec["id"]),
+            group_rec=group_rec,
+            subject=item.get("subject") or "Generale",
+            title=title,
+            rel_path=item.get("rel_path") or f"{item.get('subject')}/{item.get('filename')}",
+            group_note_item=item,
+            content_markdown=md,
+            is_dirty=False,
+            is_locked_by_me=bool(item.get("locked_by_me")),
+            lock_info=item.get("lock_info"),
+        )
+        pane.open_tab(ctx, in_new_tab=in_new_tab)
+
+    def _open_nk_tree_node(self, data: object, in_new_tab: bool = False, in_split: bool = False):
+        if not data:
+            return
+        target_pane = self._active_nk_pane()
+        if in_split:
+            if self.nk_pane_right.isHidden():
+                self.nk_pane_right.show()
+                w = max(self.nk_panes_splitter.width(), 840)
+                self.nk_panes_splitter.setSizes([w // 2, w // 2])
+            target_pane = self.nk_pane_right
+            in_new_tab = True
+
+        kind = data[0]
+        if kind == "note":
+            self._load_note_into_nk_editor(int(data[1]), pane=target_pane, in_new_tab=in_new_tab)
+        elif kind == "group_board":
+            self._open_group_board_in_pane(target_pane, int(data[1]), in_new_tab=in_new_tab)
+        elif kind == "group_note":
+            gid = int(data[1])
+            item = data[2]
+            groups = {int(x["id"]): x for x in db.get_flow_groups()}
+            g = groups.get(gid)
+            if g:
+                self._open_group_note_in_pane(target_pane, g, item, in_new_tab=in_new_tab)
+        if in_split:
+            self._on_nk_pane_activated(self.nk_pane_right)
+            self._sync_toolbar_from_active_pane()
+
+    def _on_nk_toggle_split_view(self):
+        if not hasattr(self, "nk_pane_right"):
+            return
+        if not self.nk_pane_right.isHidden():
+            self.nk_pane_right.hide()
+            self._on_nk_pane_activated(self.nk_pane_left)
+            self._sync_toolbar_from_active_pane()
+            return
+
+        self.nk_pane_right.show()
+        w = max(self.nk_panes_splitter.width(), 840)
+        self.nk_panes_splitter.setSizes([w // 2, w // 2])
+        if not self.nk_pane_right.tabs:
+            cur_tab = self.nk_pane_left.active_tab()
+            if cur_tab is not None and cur_tab.workspace_type == "local" and cur_tab.note_id:
+                self._load_note_into_nk_editor(cur_tab.note_id, pane=self.nk_pane_right, in_new_tab=True)
+            elif cur_tab is not None and cur_tab.workspace_type == "group" and cur_tab.group_rec and cur_tab.group_note_item:
+                self._open_group_note_in_pane(self.nk_pane_right, cur_tab.group_rec, cur_tab.group_note_item, in_new_tab=True)
+            else:
+                self.nk_pane_right.open_new_empty_tab(
+                    subject=self._nk_current_filter_subject or "Generale",
+                    topic=self._nk_current_filter_topic or "Generale",
+                    profile=self._nk_author_name(),
+                )
+        self._on_nk_pane_activated(self.nk_pane_right)
+        self._sync_toolbar_from_active_pane()
+
+    def _on_nk_split_specific_tab(self, source_pane: EditorPane, tab_idx: int):
+        if tab_idx < 0 or tab_idx >= len(source_pane.tabs):
+            return
+        tab = source_pane.tabs[tab_idx]
+        target_pane = self._other_nk_pane(source_pane)
+        if self.nk_pane_right.isHidden():
+            self.nk_pane_right.show()
+            w = max(self.nk_panes_splitter.width(), 840)
+            self.nk_panes_splitter.setSizes([w // 2, w // 2])
+        if tab.workspace_type == "local" and tab.note_id:
+            self._load_note_into_nk_editor(tab.note_id, pane=target_pane, in_new_tab=True)
+        elif tab.workspace_type == "group" and tab.group_rec and tab.group_note_item:
+            self._open_group_note_in_pane(target_pane, tab.group_rec, tab.group_note_item, in_new_tab=True)
+        elif tab.workspace_type == "board" and tab.group_id:
+            self._open_group_board_in_pane(target_pane, tab.group_id, in_new_tab=True)
+        else:
+            target_pane.open_new_empty_tab(profile=self._nk_author_name())
+        self._on_nk_pane_activated(target_pane)
+        self._sync_toolbar_from_active_pane()
+
+    def _on_nk_send_selection_to_other_pane(self):
+        pane = self._active_nk_pane()
+        cur = pane.editor_body.textCursor()
+        if cur.hasSelection() and cur.selectedText().strip():
+            sel = (
+                pane.editor_body._selection_to_markdown(cur)
+                if hasattr(pane.editor_body, "_selection_to_markdown")
+                else cur.selectedText().replace("\u2029", "\n")
+            )
+            self._on_nk_send_text_to_other_pane(sel)
+        else:
+            QMessageBox.information(self, "Split View", "Seleziona prima del testo o una formula da inviare al pannello affiancato.")
+
+    def _on_nk_send_text_to_other_pane(self, text: str):
+        clean = (text or "").strip()
+        if not clean:
+            return
+        cur_pane = self._active_nk_pane()
+        if self.nk_pane_right.isHidden():
+            self._on_nk_toggle_split_view()
+        target = self._other_nk_pane(cur_pane)
+        if target.stack.currentIndex() != 0 or not target.tabs:
+            target.open_new_empty_tab(profile=self._nk_author_name())
+        tab = target.active_tab()
+        if tab and tab.workspace_type == "group" and not tab.is_locked_by_me:
+            QMessageBox.information(self, "Sola lettura", "Il pannello affiancato è in sola lettura. Acquisisci il lock o apri una nota del tuo Quaderno.")
+            return
+        cur_md = target.editor_body.get_markdown_text().rstrip()
+        new_md = f"{cur_md}\n\n{clean}\n" if cur_md else f"{clean}\n"
+        target.editor_body.set_markdown_text(new_md)
+        target._on_editor_modified()
+        target.set_autosave_badge(True, "✓ Selezione ricevuta dal pannello affiancato")
+
+    def _on_nk_shortcut_new_tab(self):
+        pane = self._active_nk_pane()
+        pane.open_new_empty_tab(
+            subject=self._nk_current_filter_subject or "Generale",
+            topic=self._nk_current_filter_topic or "Generale",
+            profile=self._nk_author_name(),
+        )
+
+    def _on_nk_shortcut_close_tab(self):
+        pane = self._active_nk_pane()
+        if pane.current_tab_index >= 0:
+            pane.close_tab(pane.current_tab_index)
+
+    def _on_nk_acquire_group_lock(self, pane: EditorPane):
+        tab = pane.active_tab()
+        if not tab or tab.workspace_type != "group" or not tab.group_rec:
+            return
+        fn = (tab.group_note_item or {}).get("filename") or f"{tab.title}.md"
+        try:
+            ok, msg, lock_data = flow_groups.acquire_lock(
+                tab.group_rec,
+                subject=tab.subject,
+                filename=fn,
+                author=self._nk_author_name(),
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Acquisizione Lock", str(exc))
+            return
+        if not ok:
+            QMessageBox.warning(self, "Nota Bloccata", msg)
+            return
+        tab.is_locked_by_me = True
+        tab.lock_info = lock_data
+        if tab.group_note_item is not None:
+            tab.group_note_item["locked_by_me"] = True
+            tab.group_note_item["locked_by_other"] = False
+            tab.group_note_item["lock_author"] = self._nk_author_name()
+            tab.group_note_item["lock_info"] = lock_data
+        pane._render_tab(tab)
+        self._refresh_notekeeper()
+
+    def _on_nk_publish_group_note(self, pane: EditorPane):
+        tab = pane.active_tab()
+        if not tab or tab.workspace_type != "group" or not tab.group_rec:
+            return
+        pane._capture_current_tab_state()
+        try:
+            res = flow_groups.publish_note(
+                tab.group_rec,
+                subject=tab.subject,
+                title=tab.title,
+                markdown_content=tab.content_markdown,
+                author=self._nk_author_name(),
+                release_lock=True,
+            )
+            tab.is_dirty = False
+            tab.is_locked_by_me = False
+            tab.lock_info = None
+            if tab.group_note_item is not None:
+                tab.group_note_item["locked_by_me"] = False
+                tab.group_note_item["locked_by_other"] = False
+                tab.group_note_item["lock_info"] = None
+            pane.tab_bar_widget.update_tab_title(pane.current_tab_index, tab)
+            pane._render_tab(tab)
+            pane.set_autosave_badge(True, f"✓ Pubblicato in {res['subject']} (.history/ aggiornato)")
+            self._refresh_notekeeper()
+        except Exception as exc:
+            QMessageBox.warning(self, "Errore Pubblicazione", str(exc))
+
+    def _on_nk_copy_group_to_local(self, pane: EditorPane):
+        tab = pane.active_tab()
+        if not tab or tab.workspace_type != "group":
+            return
+        pane._capture_current_tab_state()
+        try:
+            nid = db.add_study_note(
+                title=tab.title or "Nota Gruppo",
+                content_markdown=tab.content_markdown or "",
+                note_type="appunto",
+                profile=self._nk_author_name(),
+                subject=tab.subject or "Generale",
+                topic="FlowGroup",
+            )
+            pane.set_autosave_badge(True, f"✓ Copiata nel Quaderno Locale (ID {nid})")
+            if self._nk_active_workspace_group_id is None:
+                self._refresh_notekeeper()
+        except Exception as exc:
+            QMessageBox.warning(self, "Copia nel Quaderno", str(exc))
+
+    def _on_nk_publish_local_to_group(self, pane: EditorPane):
+        tab = pane.active_tab()
+        if not tab or tab.workspace_type != "local":
+            return
+        pane._capture_current_tab_state()
+        groups = db.get_flow_groups()
+        if not groups:
+            ans = QMessageBox.question(
+                self,
+                "Nessun Gruppo Collegato",
+                "Non hai ancora collegato nessun FlowGroup. Vuoi crearne o collegarne uno ora?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if ans == QMessageBox.StandardButton.Yes:
+                self._on_nk_join_or_create_group()
+            return
+        menu = QMenu(self)
+        for g in groups:
+            is_loc = bool((g.get("local_fallback_path") or "").strip())
+            prefix = "[Locale]" if is_loc else "[Drive]"
+            act = menu.addAction(
+                get_icon("folder" if is_loc else "cloud", theme_key=self._current_theme, size=14),
+                f"{prefix} {g.get('group_name')}",
+            )
+            act.setData(g)
+        chosen = menu.exec(pane.breadcrumb.btn_publish_local.mapToGlobal(QPoint(0, pane.breadcrumb.btn_publish_local.height())))
+        if not chosen:
+            return
+        g = chosen.data()
+        try:
+            res = flow_groups.publish_note(
+                g,
+                subject=tab.subject or "Generale",
+                title=tab.title or "Appunto",
+                markdown_content=tab.content_markdown or "",
+                author=self._nk_author_name(),
+                release_lock=True,
+            )
+            pane.set_autosave_badge(True, f"✓ Pubblicata in {g.get('group_name')} ({res['subject']})")
+            if self._nk_active_workspace_group_id == int(g["id"]):
+                self._refresh_notekeeper()
+        except Exception as exc:
+            QMessageBox.warning(self, "Errore Pubblicazione", str(exc))
 
     def _on_nk_search_changed(self):
         self._refresh_notekeeper()
@@ -2403,12 +2620,30 @@ class FlowLocalHub(QMainWindow):
         return leaf
 
     def _refresh_notekeeper(self):
-        """Ricarica l'albero gerarchico stile Samsung Notes (Tutte, Recenti, Cartelle/Sottocartelle -> Note)."""
+        """Ricarica l'albero gerarchico (Quaderno Locale oppure FlowGroup attivo)."""
         if not hasattr(self, "nk_tree"):
             return
+        groups = db.get_flow_groups()
+        active_gid = getattr(self, "_nk_active_workspace_group_id", None)
+        if active_gid is not None and not any(int(g["id"]) == int(active_gid) for g in groups):
+            active_gid = None
+            self._nk_active_workspace_group_id = None
+        if hasattr(self, "nk_workspace_switcher"):
+            self.nk_workspace_switcher.set_state(groups, active_gid)
+
+        p = self._active_palette()
+        if hasattr(self.nk_tree, "set_theme_palette"):
+            self.nk_tree.set_theme_palette(p)
+        sq = self.nk_search_input.text().strip() if hasattr(self, "nk_search_input") else ""
+
+        if active_gid is not None:
+            g = next((x for x in groups if int(x["id"]) == int(active_gid)), None)
+            if g is not None:
+                self._refresh_group_tree(g, p, sq)
+                return
+
         prof_text = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Tutti i profili"
         prof_filter = None if prof_text == "Tutti i profili" else prof_text
-        sq = self.nk_search_input.text().strip() if hasattr(self, "nk_search_input") else ""
 
         all_notes = db.get_notes_by_hierarchy(
             profile=prof_filter,
@@ -2417,10 +2652,6 @@ class FlowLocalHub(QMainWindow):
             search_query=sq,
         )
         folders = db.get_folders_tree(profile=prof_filter)
-
-        p = self._active_palette()
-        if hasattr(self.nk_tree, "set_theme_palette"):
-            self.nk_tree.set_theme_palette(p)
 
         self.nk_tree.blockSignals(True)
         self.nk_tree.clear()
@@ -2519,6 +2750,89 @@ class FlowLocalHub(QMainWindow):
         self.nk_tree.blockSignals(False)
         self._refresh_nk_notes_list()
 
+    def _refresh_group_tree(self, group_rec: Dict[str, Any], p: Dict[str, str], sq: str = ""):
+        """Popola l'albero della sidebar con Bacheca & Stato Sbobine e le materie/note del FlowGroup."""
+        from ui.notes_tree import ROLE_STATUS_ICON
+        gid = int(group_rec["id"])
+        self.nk_tree.blockSignals(True)
+        self.nk_tree.clear()
+
+        # 1. Voce fissa in cima: Bacheca & Stato Sbobine
+        board_item = QTreeWidgetItem(["Bacheca & Stato Sbobine"])
+        board_item.setData(0, Qt.ItemDataRole.UserRole, ("group_board", gid))
+        board_item.setData(0, ROLE_NODE_DATA, ("group_board", gid))
+        board_item.setData(0, ROLE_IS_FOLDER, True)
+        board_item.setData(0, ROLE_LOCKED_FOLDER, True)
+        board_item.setIcon(0, get_icon("board", theme_key=self._current_theme, role="accent", size=16))
+        f_top = QFont("Segoe UI", 9)
+        f_top.setWeight(QFont.Weight.DemiBold)
+        board_item.setFont(0, f_top)
+        board_item.setForeground(0, QBrush(QColor(p["title"])))
+        board_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        self.nk_tree.addTopLevelItem(board_item)
+
+        try:
+            board_data = flow_groups.get_group_board_data(group_rec, current_author=self._nk_author_name())
+        except Exception as exc:
+            err_item = QTreeWidgetItem([f"Errore lettura gruppo: {exc}"])
+            err_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            self.nk_tree.addTopLevelItem(err_item)
+            self.nk_tree.blockSignals(False)
+            return
+
+        subjects = board_data.get("subjects") or ["Generale"]
+        notes = board_data.get("notes") or []
+        by_subj: Dict[str, List[Dict[str, Any]]] = {s: [] for s in subjects}
+        for n in notes:
+            s = n.get("subject") or "Generale"
+            if sq and sq.lower() not in (n.get("title") or "").lower() and sq.lower() not in s.lower():
+                continue
+            by_subj.setdefault(s, []).append(n)
+
+        for subj in sorted(by_subj.keys()):
+            s_notes = by_subj[subj]
+            if sq and not s_notes:
+                continue
+            f_item = QTreeWidgetItem([subj])
+            f_item.setData(0, Qt.ItemDataRole.UserRole, ("group_subject", gid, subj))
+            f_item.setData(0, ROLE_NODE_DATA, ("group_subject", gid, subj))
+            f_item.setData(0, ROLE_IS_FOLDER, True)
+            f_item.setData(0, ROLE_LOCKED_FOLDER, True)
+            f_item.setData(0, ROLE_COUNT, len(s_notes))
+            f_item.setIcon(0, make_vector_folder_icon(p.get("accent", "#6366F1"), 16))
+            f_item.setFont(0, f_top)
+            f_item.setForeground(0, QBrush(QColor(p["title"])))
+            f_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+
+            for item in s_notes:
+                leaf = QTreeWidgetItem([(item.get("title") or "Nota")[:32]])
+                leaf.setData(0, Qt.ItemDataRole.UserRole, ("group_note", gid, item))
+                leaf.setData(0, ROLE_NODE_DATA, ("group_note", gid, item))
+                leaf.setData(0, ROLE_IS_FOLDER, False)
+                leaf.setIcon(0, get_icon("file", theme_key=self._current_theme, role="subtitle", size=14))
+                leaf.setForeground(0, QBrush(QColor(p["text"])))
+
+                lock_d = item.get("lock_info")
+                if lock_d:
+                    auth = lock_d.get("author") or item.get("lock_author") or "Studente"
+                    utc_ts = lock_d.get("locked_at_utc") or ""
+                    if item.get("locked_by_other"):
+                        leaf.setData(0, ROLE_STATUS_ICON, get_icon("lock", theme_key=self._current_theme, role="warning", size=14))
+                        leaf.setToolTip(0, f"Bloccato da {auth} ({utc_ts})")
+                    else:
+                        leaf.setData(0, ROLE_STATUS_ICON, get_icon("edit", theme_key=self._current_theme, role="success", size=14))
+                        leaf.setToolTip(0, f"In modifica da te ({auth} · {utc_ts})")
+                else:
+                    leaf.setToolTip(0, f"{item.get('title')} ({subj})")
+
+                leaf.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                f_item.addChild(leaf)
+
+            self.nk_tree.addTopLevelItem(f_item)
+            f_item.setExpanded(True)
+
+        self.nk_tree.blockSignals(False)
+
     def _sync_whis_study_context(self):
         """Sincronizza profilo, materia e argomento correnti con l'agente Whis."""
         if hasattr(self, "whis_agent") and self.whis_agent and hasattr(self.whis_agent, "set_study_context"):
@@ -2539,9 +2853,8 @@ class FlowLocalHub(QMainWindow):
         data = current.data(0, Qt.ItemDataRole.UserRole)
         if not data:
             return
-        if data[0] == "note":
-            note_id = data[1]
-            self._load_note_into_nk_editor(note_id)
+        if data[0] in ("note", "group_board", "group_note"):
+            self._open_nk_tree_node(data, in_new_tab=False)
             return
         if data[0] in ("all", "recent"):
             self._nk_current_filter_folder_id = None
@@ -2836,13 +3149,16 @@ class FlowLocalHub(QMainWindow):
         card.mousePressEvent = lambda _e, nid=note_id: self._load_note_into_nk_editor(nid)
         return card
 
-    def _load_note_into_nk_editor(self, note_id: int):
+    def _load_note_into_nk_editor(
+        self,
+        note_id: int,
+        pane: Optional[EditorPane] = None,
+        in_new_tab: bool = False,
+    ):
         note = db.get_study_note_by_id(note_id)
         if not note:
             return
-        prev_id = getattr(self, "_nk_selected_note_id", None)
-        if prev_id is not None and prev_id != note_id:
-            self._save_nk_snapshot_if_dirty("Cambio nota")
+        target_pane = pane or self._active_nk_pane()
         self._nk_selected_note_id = note_id
         # Aggiorna stato attivo su tutte le card nella lista centrale
         if hasattr(self, "nk_notes_list"):
@@ -2854,83 +3170,34 @@ class FlowLocalHub(QMainWindow):
                         w.setProperty("selected", is_sel)
                         w.style().unpolish(w)
                         w.style().polish(w)
-        if hasattr(self, "nk_editor_title"):
-            self._nk_loading_note = True
-            try:
-                if hasattr(self, "_nk_autosave_timer"):
-                    self._nk_autosave_timer.stop()
-                title_txt = (note.get("title") or "").strip()
-                if title_txt.lower().startswith("nota: "):
-                    title_txt = title_txt[6:].strip()
-                self.nk_editor_title.setText(title_txt)
-                self.nk_editor_profile.setCurrentText(note.get("profile") or "Alessandro")
-                self.nk_editor_subject.setText(note.get("subject") or "Generale")
-                self.nk_editor_topic.setText(note.get("topic") or "Generale")
-                ntype = (note.get("note_type") or "appunto").lower()
-                idx = self.nk_editor_type.findText(ntype, Qt.MatchFlag.MatchFixedString)
-                if idx >= 0:
-                    self.nk_editor_type.setCurrentIndex(idx)
-                self.nk_editor_body.set_markdown_text(note.get("content_markdown") or "")
-                sync_data = load_note_audio_sync(note_id)
-                if sync_data and sync_data.get("audio_path"):
-                    self.nk_editor_body.set_audio_sync_data(sync_data.get("segments") or [])
-                    if hasattr(self, "nk_audio_bar"):
-                        self.nk_audio_bar.load_audio(sync_data["audio_path"])
-                else:
-                    self.nk_editor_body.set_audio_sync_data(None)
-                    if hasattr(self, "nk_audio_bar"):
-                        self.nk_audio_bar.unload()
-                self._set_nk_autosave_badge(saved=True)
-                self._nk_dirty_for_snapshot = False
-                self._nk_last_snapshot_ts = time.time()
-            finally:
-                self._nk_loading_note = False
+
+        title_txt = (note.get("title") or "").strip()
+        if title_txt.lower().startswith("nota: "):
+            title_txt = title_txt[6:].strip()
+        ctx = TabContext(
+            workspace_type="local",
+            note_id=int(note_id),
+            subject=note.get("subject") or "Generale",
+            topic=note.get("topic") or "Generale",
+            note_type=(note.get("note_type") or "appunto").lower(),
+            profile=note.get("profile") or "Alessandro",
+            title=title_txt or "Appunto senza titolo",
+            content_markdown=note.get("content_markdown") or "",
+            is_dirty=False,
+        )
+        target_pane.open_tab(ctx, in_new_tab=in_new_tab)
 
     def _set_nk_autosave_badge(self, saved: bool, custom_text: Optional[str] = None):
-        if not hasattr(self, "nk_autosave_badge"):
-            return
-        if saved:
-            self.nk_autosave_badge.setText(custom_text or "✓ Salvato automaticamente")
-            self.nk_autosave_badge.setStyleSheet(
-                "background: transparent; border: none; color: #787774; font-size: 12px; font-weight: 400;"
-            )
-        else:
-            self.nk_autosave_badge.setText(custom_text or "Modifica in corso...")
-            self.nk_autosave_badge.setStyleSheet(
-                "background: transparent; border: none; color: #787774; font-size: 12px; font-weight: 400;"
-            )
+        if hasattr(self, "nk_pane_left"):
+            self._active_nk_pane().set_autosave_badge(saved, custom_text)
 
     def _on_nk_editor_modified(self, *_args):
-        if getattr(self, "_nk_loading_note", False):
-            return
-        if hasattr(self, "nk_editor_body") and self.nk_editor_body.is_studio_view:
-            return
-        self._nk_dirty_for_snapshot = True
-        self._set_nk_autosave_badge(saved=False)
-        if hasattr(self, "_nk_autosave_timer"):
-            self._nk_autosave_timer.start(800)
+        if hasattr(self, "nk_pane_left"):
+            self._active_nk_pane()._on_editor_modified(*_args)
 
     def _perform_nk_autosave(self):
-        if getattr(self, "_nk_loading_note", False):
-            return
-        raw_title = self.nk_editor_title.text().strip()
-        content = self.nk_editor_body.get_markdown_text().strip()
-        note_id = getattr(self, "_nk_selected_note_id", None)
-
-        if note_id is None and not raw_title and not content:
-            self._set_nk_autosave_badge(saved=True)
-            return
-
-        title = raw_title or "Appunto senza titolo"
-        prof = self.nk_editor_profile.currentText().strip() or "Alessandro"
-        subj = self.nk_editor_subject.text().strip() or "Generale"
-        top = self.nk_editor_topic.text().strip() or "Generale"
-        ntype = self.nk_editor_type.currentText().strip() or "appunto"
-
-        self._autosave_thread = _AutoSaveNoteThread(note_id, title, content, prof, subj, top, ntype)
-        self._autosave_thread.saved.connect(self._on_nk_autosave_finished)
-        self._autosave_thread.error.connect(lambda err: self._set_nk_autosave_badge(saved=False, custom_text="⚠ Errore salvataggio"))
-        self._autosave_thread.start()
+        if hasattr(self, "nk_pane_left"):
+            self._active_nk_pane()._perform_autosave()
 
     def _on_nk_autosave_finished(self, saved_id: int, title: str, content: str, subj: str, top: str, ntype: str):
         was_new = (getattr(self, "_nk_selected_note_id", None) is None)
@@ -3006,6 +3273,7 @@ class FlowLocalHub(QMainWindow):
         act_docx = export_sub.addAction("📘 Documento Word (.docx)")
         act_pdf = export_sub.addAction("📕 Documento PDF (.pdf)")
 
+        act_marker = menu.addAction(get_icon("clock", theme_key=self._current_theme, role="subtitle", size=14), "Inserisci marcatore audio [HH:MM:SS]")
         act_dup = menu.addAction(get_icon("copy", theme_key=self._current_theme, role="subtitle", size=14), "Duplica nota")
         menu.addSeparator()
 
@@ -3021,6 +3289,8 @@ class FlowLocalHub(QMainWindow):
         if chosen in (act_md, act_tex, act_docx, act_pdf):
             fmt_map = {act_md: "md", act_tex: "tex", act_docx: "docx", act_pdf: "pdf"}
             self._export_notes_by_format(fmt_map[chosen])
+        elif chosen == act_marker:
+            self._on_nk_insert_timestamp_marker()
         elif chosen == act_dup:
             self._on_nk_duplicate_clicked()
         elif chosen == act_del:
@@ -3097,27 +3367,11 @@ class FlowLocalHub(QMainWindow):
         QMessageBox.warning(self, "Errore Riassunto AI", f"Impossibile generare il riassunto con Qwen 3.5:\n{err}")
 
     def _on_nk_new_note_clicked(self):
-        self._save_nk_snapshot_if_dirty("Nuova nota")
-        self._nk_loading_note = True
-        try:
-            if hasattr(self, "_nk_autosave_timer"):
-                self._nk_autosave_timer.stop()
-            self._nk_selected_note_id = None
-            self.nk_editor_title.setText("")
-            self.nk_editor_subject.setText(self._nk_current_filter_subject or "Generale")
-            self.nk_editor_topic.setText(self._nk_current_filter_topic or "Generale")
-            if hasattr(self, "nk_editor_body") and self.nk_editor_body.is_studio_view:
-                self.nk_editor_body.set_studio_view(False)
-            self.nk_editor_body.set_markdown_text("")
-            self.nk_editor_body.set_audio_sync_data(None)
-            if hasattr(self, "nk_audio_bar"):
-                self.nk_audio_bar.unload()
-            self._set_nk_autosave_badge(saved=True)
-            self._nk_dirty_for_snapshot = False
-            self._nk_last_snapshot_ts = time.time()
-            self.nk_editor_title.setFocus()
-        finally:
-            self._nk_loading_note = False
+        self._active_nk_pane().open_new_empty_tab(
+            subject=self._nk_current_filter_subject or "Generale",
+            topic=self._nk_current_filter_topic or "Generale",
+            profile=self._nk_author_name(),
+        )
 
     def _save_nk_snapshot_now(self, reason: str = "Salvataggio manuale"):
         note_id = getattr(self, "_nk_selected_note_id", None)
@@ -3137,69 +3391,58 @@ class FlowLocalHub(QMainWindow):
             self._save_nk_snapshot_now(reason)
 
     def _on_nk_history_clicked(self):
-        note_id = getattr(self, "_nk_selected_note_id", None)
+        pane = self._active_nk_pane()
+        tab = pane.active_tab()
+        note_id = tab.note_id if (tab and tab.workspace_type == "local") else None
         if not note_id:
             QMessageBox.information(
                 self,
                 "Time Machine",
-                "Seleziona o salva prima una nota per visualizzarne la cronologia."
+                "Seleziona o salva prima una nota locale per visualizzarne la cronologia."
             )
             return
-        note_title = (self.nk_editor_title.text().strip() if hasattr(self, "nk_editor_title") else "") or "Nota"
+        note_title = pane.editor_title.text().strip() or "Nota"
         dlg = TimeMachineDialog(note_id, note_title, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected_snapshot:
             restored_title = dlg.selected_snapshot.get("title")
             restored_content = dlg.selected_snapshot.get("content")
             if restored_content is not None:
                 self._save_nk_snapshot_now("Prima di ripristino")
-                self._nk_loading_note = True
+                pane._loading_note = True
                 try:
-                    if hasattr(self, "_nk_autosave_timer"):
-                        self._nk_autosave_timer.stop()
-                    if hasattr(self, "nk_editor_title") and restored_title is not None:
-                        self.nk_editor_title.setText(restored_title)
-                    if hasattr(self, "nk_editor_body"):
-                        if self.nk_editor_body.is_studio_view:
-                            self.nk_editor_body.set_studio_view(False)
-                        self.nk_editor_body.set_markdown_text(restored_content)
-                    self._nk_dirty_for_snapshot = False
-                    self._nk_last_snapshot_ts = time.time()
+                    pane._autosave_timer.stop()
+                    if restored_title is not None:
+                        pane.editor_title.setText(restored_title)
+                    if pane.editor_body.is_studio_view:
+                        pane.editor_body.set_studio_view(False)
+                    pane.editor_body.set_markdown_text(restored_content)
+                    pane._dirty_for_snapshot = False
+                    pane._last_snapshot_ts = time.time()
                 finally:
-                    self._nk_loading_note = False
-                self._perform_nk_autosave()
-                self._set_nk_autosave_badge(saved=True, custom_text="🕒 Versione ripristinata")
+                    pane._loading_note = False
+                pane._perform_autosave()
+                pane.set_autosave_badge(True, custom_text="🕒 Versione ripristinata")
 
     def _show_nk_groups_menu(self):
         menu = QMenu(self)
-        act_groups = menu.addAction("Apri FlowGroups (Pubblica / Importa)...")
-        act_groups.triggered.connect(self._on_nk_groups_clicked)
-        act_marker = menu.addAction("Inserisci marcatore audio [HH:MM:SS]")
+        act_marker = menu.addAction(get_icon("clock", theme_key=self._current_theme, size=14), "Inserisci marcatore audio [HH:MM:SS]")
         act_marker.triggered.connect(self._on_nk_insert_timestamp_marker)
-        menu.exec(self.nk_groups_btn.mapToGlobal(QPoint(0, self.nk_groups_btn.height())))
+        menu.addSeparator()
+        act_join = menu.addAction(get_icon("plus", theme_key=self._current_theme, size=14), "Crea o Unisciti a un Gruppo...")
+        act_join.triggered.connect(self._on_nk_join_or_create_group)
+        anchor_btn = getattr(self, "nk_groups_btn", None) or getattr(self, "nk_more_btn", None)
+        if anchor_btn is not None:
+            menu.exec(anchor_btn.mapToGlobal(QPoint(0, anchor_btn.height())))
 
     def _on_nk_groups_clicked(self):
-        title = (self.nk_editor_title.text().strip() if hasattr(self, "nk_editor_title") else "") or "Appunto"
-        subj = (self.nk_editor_subject.text().strip() if hasattr(self, "nk_editor_subject") else "") or "Generale"
-        prof = (self.nk_editor_profile.currentText().strip() if hasattr(self, "nk_editor_profile") else "") or "Studente"
-        md = self.nk_editor_body.get_markdown_text() if hasattr(self, "nk_editor_body") else ""
-        dlg = FlowGroupsDialog(
-            current_title=title,
-            current_subject=subj,
-            current_markdown=md,
-            author_name=prof,
-            parent=self,
-        )
-        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.imported_note_id:
-            self._refresh_notekeeper()
-            self._load_note_into_nk_editor(dlg.imported_note_id)
+        self._on_nk_join_or_create_group()
 
     def _on_nk_insert_timestamp_marker(self):
-        if not hasattr(self, "nk_editor_body"):
-            return
+        pane = self._active_nk_pane()
         pos_ms = 0
-        if hasattr(self, "nk_audio_bar") and hasattr(self.nk_audio_bar, "player"):
+        if hasattr(pane.audio_bar, "player"):
             try:
-                pos_ms = int(self.nk_audio_bar.player.position())
+                pos_ms = int(pane.audio_bar.player.position())
             except Exception:
                 pos_ms = 0
         total_secs = max(0, pos_ms // 1000)
@@ -3207,13 +3450,13 @@ class FlowLocalHub(QMainWindow):
         mm = (total_secs % 3600) // 60
         ss = total_secs % 60
         marker = f"[{hh:02d}:{mm:02d}:{ss:02d}] "
-        editor = getattr(self.nk_editor_body, "editor", None)
-        if editor is not None and hasattr(editor, "insertPlainText"):
-            editor.insertPlainText(marker)
-            editor.setFocus()
+        pane.editor_body.insertPlainText(marker)
+        pane.editor_body.setFocus()
 
     def _on_nk_delete_clicked(self):
-        if not getattr(self, "_nk_selected_note_id", None):
+        pane = self._active_nk_pane()
+        tab = pane.active_tab()
+        if not tab or tab.workspace_type != "local" or not tab.note_id:
             return
         reply = QMessageBox.question(
             self, "Elimina Nota",
@@ -3222,22 +3465,12 @@ class FlowLocalHub(QMainWindow):
             QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self._nk_loading_note = True
-            try:
-                if hasattr(self, "_nk_autosave_timer"):
-                    self._nk_autosave_timer.stop()
-                db.delete_study_note(self._nk_selected_note_id)
+            pane._autosave_timer.stop()
+            db.delete_study_note(tab.note_id)
+            if getattr(self, "_nk_selected_note_id", None) == tab.note_id:
                 self._nk_selected_note_id = None
-                self.nk_editor_title.setText("")
-                self.nk_editor_body.set_markdown_text("")
-                self.nk_editor_body.set_audio_sync_data(None)
-                if hasattr(self, "nk_audio_bar"):
-                    self.nk_audio_bar.unload()
-                self._set_nk_autosave_badge(saved=True)
-                self._nk_dirty_for_snapshot = False
-                self._nk_last_snapshot_ts = time.time()
-            finally:
-                self._nk_loading_note = False
+            tab.is_dirty = False
+            pane.close_tab(pane.current_tab_index)
             self._refresh_notekeeper()
 
     def _on_nk_ask_whis_clicked(self):
@@ -3262,6 +3495,19 @@ class FlowLocalHub(QMainWindow):
             self.whis_input.setFocus()
 
     def _on_nk_new_subject_clicked(self):
+        active_gid = getattr(self, "_nk_active_workspace_group_id", None)
+        if active_gid is not None:
+            groups = {int(g["id"]): g for g in db.get_flow_groups()}
+            g = groups.get(int(active_gid))
+            if g is not None:
+                name, ok = QInputDialog.getText(self, "Nuova Materia / Canale Gruppo", "Nome materia/canale:")
+                if ok and name.strip():
+                    try:
+                        flow_groups.create_group_subject(g, name.strip())
+                        self._refresh_notekeeper()
+                    except Exception as exc:
+                        QMessageBox.warning(self, "FlowGroups", str(exc))
+                return
         prof = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Alessandro"
         dlg = NewSubjectTopicDialog(self, default_profile=prof)
         if dlg.exec():
@@ -3275,7 +3521,7 @@ class FlowLocalHub(QMainWindow):
         note = db.get_study_note_by_id(self._nk_selected_note_id)
         if not note:
             return
-        self._extract_flashcards_clicked(note, self.nk_fc_btn)
+        self._extract_flashcards_clicked(note, getattr(self, "nk_fc_btn", getattr(self, "nk_more_btn", None)))
 
     # -----------------------------------------------------------------
     # FLASHCARD ESAME (PILASTRO FLOWSTUDY - SCHEDA DEDICATA)
@@ -3379,7 +3625,7 @@ class FlowLocalHub(QMainWindow):
         layout.addWidget(ans_frame)
 
         toggle_btn = _make_button("👁️ Mostra Risposta")
-        def _toggle(f=ans_frame, b=toggle_btn):
+        def _toggle(_checked=False, f=ans_frame, b=toggle_btn):
             if f.isVisible():
                 f.hide()
                 b.setText("👁️ Mostra Risposta")
