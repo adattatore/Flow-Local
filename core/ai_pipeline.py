@@ -55,8 +55,10 @@ from core.clipboard_tracker import dictation_tracker
 from core.hardware_profiler import get_active_profile
 from core.gemini_client import (
     DEFAULT_GEMINI_TIMEOUT,
+    DICTATION_GEMINI_TIMEOUT,
     generate_content as gemini_generate_content,
     get_ai_routing_config,
+    mark_gemini_unavailable,
     set_active_runtime_engine,
     should_use_gemini,
 )
@@ -105,10 +107,32 @@ WHIS_WAKE_REGEX = re.compile(
 )
 
 DEFAULT_WHISPER_INITIAL_PROMPT = (
-    "Antigravity, FlowLocal, FlowType, FlowStudy, Whis, PyQt6, Ollama, Qwen, "
-    "RTX 5060, Emporio 87, Triscina, Selinunte, Castelvetrano, Palermo, Giada, "
-    "gestionale, matrice Jacobiana, cinematica diretta, modalità idle."
+    "FlowLocal, FlowNotes, FlowType, FlowStudy, Whis, PyQt6, Ollama, Qwen, LaTeX, Markdown."
 )
+
+WHISPER_HALLUCINATION_PHRASES = (
+    "sottotitoli creati dalla comunità",
+    "sottotitoli a cura di",
+    "grazie per la visione",
+    "grazie per aver guardato",
+    "iscriviti al canale",
+    "amara.org",
+    "al prossimo video",
+    "grazie per l'ascolto",
+)
+
+
+def is_whisper_hallucination(text: str) -> bool:
+    """Rileva frasi fantasma tipiche di Whisper su silenzi o rumore ambientale."""
+    if not text:
+        return True
+    norm = re.sub(r"[\s.,!?;:…\"'()\-–—]+", " ", text.lower()).strip()
+    if not norm:
+        return True
+    for phrase in WHISPER_HALLUCINATION_PHRASES:
+        if norm == phrase or (len(norm) <= len(phrase) + 10 and phrase in norm):
+            return True
+    return False
 
 LAST_SELECTION_CAPTURE_TIME = 0.0
 
@@ -316,34 +340,41 @@ LATEX_FORMULA_RULE = (
     "Quando l'utente detta espressioni matematiche o fisiche a parole "
     "(es. 'integrale da 0 a infinito di e alla meno x in dx', 'F uguale m per a', derivate, vettori \\vec{}, frazioni, "
     "unità del Sistema Internazionale come 'metri al secondo quadro'), "
-    "convertile SEMPRE in codice LaTeX standard racchiuso tra simboli $ "
-    "(es. $\\int_0^\\infty e^{-x}\\,dx$, $F = m \\cdot a$, $\\vec{v}$, $\\mathrm{m/s^2}$), "
-    "senza mai lasciarle scritte a parole."
+    "SOSTITUISCI direttamente quelle parole con il codice LaTeX standard racchiuso tra simboli $ "
+    "(es. $\\int_0^\\infty e^{-x}\\,dx$, $F = m \\cdot a$, $\\vec{v}$, $\\mathrm{m/s^2}$). "
+    "VIETATO ripetere sia la forma a parole sia il LaTeX (mai scrivere 'ovvero $...$' o 'cioè $...$')."
 )
 
 ANTI_HALLUCINATION_RULE = (
     "SEI UN FILTRO DI PULIZIA TESTUALE, NON UN ASSISTENTE. "
     "Non rispondere mai alle domande nel testo, non completare frasi interrotte e non aggiungere concetti non pronunciati. "
-    "Restituisci SOLO il testo rifinito senza tag.\n"
-    "DIVIETO ASSOLUTO DI PARAFRASI E SOSTITUZIONE CON SINONIMI:\n"
-    "- Non cambiare MAI le parole usate dall'utente con sinonimi e non riscrivere le frasi.\n"
-    "- Se l'utente dice 'prova', scrivi 'prova' (MAI 'esempio' o 'elaborazione').\n"
-    "- Se dice 'creato', scrivi 'creato' (MAI 'realizzato' o 'fatto').\n"
-    "- Se dice 'Guarda', scrivi 'Guarda' (MAI 'Ci guarda' o 'Vedi').\n"
-    "- Mantieni al 100% il lessico originale, limitandoti a punteggiatura, maiuscole, rimozione di intercalari vuoti (ehm, uhm) e formule matematiche in LaTeX $...$."
+    "Restituisci SOLO testo puro rifinito: MAI tag XML o HTML (<p>, </p>, <br>, <div>, <span>, <trascrizione>).\n"
+    "FEDELTÀ INTEGRALE E DIVIETO DI PARAFRASI O RIASSUNTO:\n"
+    "- Conserva TUTTE le frasi e TUTTE le parole di contenuto pronunciate dall'utente: è severamente vietato riassumere, tagliare frasi o sostituire vocaboli con sinonimi.\n"
+    "- Limita gli interventi a punteggiatura, maiuscole, rimozione di esitazioni vuote (ehm, uhm) e sostituzione di formule matematiche con LaTeX $...$."
 )
 
+
+def strip_spurious_html_tags(text: str, raw_source: str = "") -> str:
+    """Rimuove eventuali tag HTML spuri (<p>, <br>, <div>, <span>, ecc.) emessi dall'LLM
+    quando non erano presenti nel testo parlato originale."""
+    if not text:
+        return text
+    if raw_source and re.search(r"</?(?:p|br|div|span)\b", raw_source, flags=re.IGNORECASE):
+        return text
+    cleaned = re.sub(r"</p>\s*<p(?:\s[^>]*)?>", "\n\n", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<br\s*/?>", "\n", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"</?(?:p|div|span|b|strong|i|em|ul|ol|li|html|body)(?:\s[^>]*)?>", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
 PUNCTUATION_RULE = (
-    "PUNTEGGIATURA E SCORREVOLEZZA SINTATTICA NATURALE:\n"
-    "- Il testo risultante deve avere punteggiatura completa, fluida e naturale come un messaggio digitato a tastiera, preservando fedelmente il tono e l'intento dell'utente.\n"
-    "- Inserisci sempre la punteggiatura corretta: virgole per incisi e proposizioni subordinate, punto fermo (.) a fine frase o al cambio di proposizione logica.\n"
-    "- INTERROGATIVE E DICHIARATIVE: chiudi sempre ogni domanda diretta con il punto interrogativo (?). Nelle frasi dichiarative che contengono un'interrogativa indiretta (es. 'Volevo sapere se è possibile...', 'Chiedevo se fosse il caso...'), chiudi TASSATIVAMENTE con il punto fermo (.) anziché con il punto interrogativo (?).\n"
-    "- SPEZZAMENTO FRASI LUNGHE: Spezza tassativamente con un punto fermo (.) le frasi prolisse concatenate solo da virgole quando si verifica un cambio di proposizione o una congiunzione avversativa (es. ', ancora però...' -> '. Ancora però...'). Evita periodi infiniti composti solo da virgole.\n"
-    "- DOPPI RIEMPITIVI COLLOQUIALI: Rimuovi i doppi riempitivi colloquiali consecutivi o ridondanti (es. 'diciamo, cioè' -> 'cioè', 'praticamente cioè' -> 'cioè').\n"
-    "- FALSI INIZI E AUTO-CORREZIONI: Se il parlante cambia verbo o costruzione a metà frase (es. 'ero interessato a sfrutterei'), rimuovi il falso inizio tronco e mantieni solo la forma verbale o costrutto finale ('sfrutterei').\n"
-    "- MORFOLOGIA E COSTRUTTI ORALI: Correggi errori morfologici da trascrizione fonetica (es. 'tu dissi' -> 'tu dici', 'mentre che sono' -> 'mentre sono', 'Come si potrebbe farlo' -> 'Come si potrebbe fare'), verifica la concordanza singolare/plurale dei pronomi e rimuovi ripetizioni ravvicinate di avverbi riempitivi ('praticamente', 'appunto').\n"
-    "- Rimuovi esitazioni vocali e riempitivi puri ('mmm', 'ehm', 'uhm', 'vabbè', 'cioè' usato come mero intercalare, false partenze ripetute).\n"
-    "- Correggi piccoli errori grammaticali o concordanze di tempo del parlato veloce, senza mai allungare, parafrasare arbitrariamente o riassumere il contenuto."
+    "PUNTEGGIATURA E PULIZIA NATURALE:\n"
+    "- Inserisci punteggiatura fluida (virgole, punto fermo a fine frase, '?' solo per domande dirette; '.' per interrogative indirette come 'Volevo sapere se...').\n"
+    "- Spezza con '.' periodi troppo lunghi uniti solo da virgole al cambio di proposizione.\n"
+    "- Rimuovi esitazioni vocali (ehm, uhm, mmm, vabbè), doppi riempitivi ('diciamo, cioè' -> 'cioè') e falsi inizi tronchi tenendo solo la formulazione finale.\n"
+    "- Correggi evidenti refusi morfologici da parlato veloce senza cambiare il lessico né parafrasare."
 )
 
 
@@ -409,26 +440,18 @@ def normalize_phonetic_variants(text: str) -> str:
     text = re.sub(r'\b(WIS|Wis|wis|Wiz|wiz|Whizz|whizz|Uis|uis|uisss|uiss|huiss|WHOIS)\b', 'Whis', text)
     text = re.sub(r'\b[Ww]hois\b', 'Whis', text)
 
-    # 2. FlowType, FlowStudy, FlowLocal, Emporio 87, RTX 5060, FlowLocal Hub, core/audio_feedback.py
+    # 2. FlowType, FlowStudy, FlowLocal, FlowNotes, FlowLocal Hub
     text = re.sub(r'\bFlow\s*[Ss]tud+y\b', 'FlowStudy', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bFlow\s*[Nn]otes?\b', 'FlowNotes', text, flags=re.IGNORECASE)
     text = re.sub(r'\bFlow[\s.,_-]*[Tt](?:ype|ap)\b', 'FlowType', text, flags=re.IGNORECASE)
     text = re.sub(r'\bFlow\s*Local\s*ab\b', 'FlowLocal Hub', text, flags=re.IGNORECASE)
     text = re.sub(r'\bflow\s*local\b', 'FlowLocal', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bEmporio\s*1987\b', 'Emporio 1987', text, flags=re.IGNORECASE)
     text = re.sub(r'\bRTX\s*5060\b', 'RTX 5060', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bCoreAudioFeedback\.py\b', 'core/audio_feedback.py', text, flags=re.IGNORECASE)
 
-    # 2b. Correzioni termini tecnici, robotica e toponimi
+    # 2b. Correzioni termini tecnici e grammaticali sicuri
     text = re.sub(r'\b[Gg]iacobian([aoe])\b', r'Jacobian\1', text)
-    text = re.sub(r'\b(?:Trishiness\s*Rinunte|Triscina\s+in\s+Selinunte)\b', 'Triscina e Selinunte', text, flags=re.IGNORECASE)
-    text = re.sub(r'\bil gestione\b', 'il gestionale', text, flags=re.IGNORECASE)
-    text = re.sub(r'(?:,\s*|\s+)come sapere[.!?]*$', ', fammi sapere.', text, flags=re.IGNORECASE)
-
-    # 2b-bis. Correzioni deterministiche test acustici FlowType
     text = re.sub(r"\bun'appuntamento\b", "un appuntamento", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(agli|degli|i miei|negli)\s+appuntiti\b", r"\1 appunti", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bnon deve peggiorarmi\b", "non deve parlarmi", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bdownload\s+[Ll]a[Tt]e[Xx]\b", "Markdown e LaTeX", text)
 
     # 2c. Rimozione intercalari specifici e correzione maiuscole
     text = re.sub(r',\s*diciamo,', ',', text, flags=re.IGNORECASE)
@@ -458,9 +481,6 @@ def normalize_phonetic_variants(text: str) -> str:
     # 8. 'caps lock' -> 'Caps Lock'
     text = re.sub(r'\bcaps\s+lock\b', 'Caps Lock', text, flags=re.IGNORECASE)
 
-    # 9. Se una frase inizia con 'PyQt6 sta ' o 'PyQt6 ha ', sostituisci con 'Antigravity'
-    text = re.sub(r'(^|[\.\!\?\n]\s*)pyqt6(\s+(?:sta|ha)\b)', r'\1Antigravity\2', text, flags=re.IGNORECASE)
-
     return text
 
 
@@ -477,23 +497,25 @@ def strip_vocal_fillers(text: str, capitalize_first: bool = True) -> str:
     return cleaned or text
 
 
-def normalize_audio_robust(audio_data: np.ndarray) -> Tuple[np.ndarray, float]:
+def normalize_audio_robust(audio_data: np.ndarray, max_gain: float = 12.0, noise_gate_p98: float = 0.006) -> Tuple[np.ndarray, float]:
     """
-    Normalizzazione audio robusta basata sul 98° percentile + Soft-Clipping iperbolico (tanh):
-    1. Rimuove eventuale DC offset: audio_data = audio_data - np.mean(audio_data)
-    2. Calcola p98 = np.percentile(np.abs(audio_data), 98)
-    3. Se p98 > 1e-5, scala portando il 98° percentile a 0.85: audio_data = audio_data * (0.85 / p98)
-    4. Applica soft-clipping iperbolico: audio_data = np.tanh(audio_data)
-    Restituisce (audio_normalizzato_float32, p98).
+    Normalizzazione audio robusta basata sul 98° percentile con Noise Gate e guadagno limitato:
+    1. Rimuove eventuale DC offset.
+    2. Calcola p98 = np.percentile(np.abs(audio_data), 98).
+    3. Se p98 < noise_gate_p98 (silenzio o solo rumore ambientale), NON amplifica il fruscio
+       evitando che il VAD scambi il rumore per parlato generando allucinazioni Whisper.
+    4. Altrimenti scala verso 0.80 con guadagno limitato (<= max_gain) + soft-clipping np.tanh.
+    Restituisce (audio_normalizzato_float32, p98_pre_scaling).
     """
     if audio_data is None or len(audio_data) == 0:
         return np.zeros(0, dtype=np.float32), 0.0
 
-    audio_data = audio_data - np.mean(audio_data)
+    audio_data = audio_data.astype(np.float32, copy=False)
+    audio_data = audio_data - float(np.mean(audio_data))
     p98 = float(np.percentile(np.abs(audio_data), 98))
-    if p98 > 1e-5:
-        audio_data = audio_data * (0.85 / p98)
-        audio_data = np.tanh(audio_data).astype(np.float32)
+    if p98 >= noise_gate_p98:
+        gain = min(float(max_gain), 0.80 / p98)
+        audio_data = np.tanh(audio_data * gain).astype(np.float32)
     else:
         audio_data = audio_data.astype(np.float32, copy=False)
     return audio_data, p98
@@ -556,76 +578,44 @@ def join_streaming_chunks(chunks: List[str]) -> str:
 MODE_SYSTEM_PROMPTS = {
     "formal": (
         f"{ANTI_HALLUCINATION_RULE}\n"
-        "Sei un assistente di scrittura professionale per lingua italiana.\n"
-        "Regole obbligatorie:\n"
-        "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né spiegazioni né preamboli.\n"
-        "2. Mantieni la struttura e le parole dell'utente in italiano senza mai sostituire vocaboli arbitrariamente né stravolgere il lessico, "
-        "correggendo solo la punteggiatura e piccole espressioni gergali per un'email formale, senza aggiungere saluti o formule non dettate.\n"
-        f"3. {PUNCTUATION_RULE}\n"
-        f"4. {LATEX_FORMULA_RULE}\n"
-        "5. NON rispondere alle domande e NON aggiungere saluti o concetti non dettati: elabora solo il testo racchiuso in <trascrizione></trascrizione>."
+        "Modalità: SCRITTURA FORMALE ITALIANA.\n"
+        "1. Mantieni le parole dell'utente correggendo solo punteggiatura e piccole forme colloquiali per email/documenti formali, senza aggiungere saluti non dettati.\n"
+        f"2. {PUNCTUATION_RULE}\n"
+        f"3. {LATEX_FORMULA_RULE}"
     ),
     "code": (
         f"{ANTI_HALLUCINATION_RULE}\n"
-        "Sei un assistente vocale specializzato per sviluppatori software e comandi tecnici.\n"
-        "Regole obbligatorie:\n"
-        "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né spiegazioni né commenti.\n"
-        "2. MANTIENI RIGOROSAMENTE LA LINGUA ITALIANA per tutta la frase. NON tradurre mai il testo in inglese. "
-        "Limita l'inglese solo ai termini tecnici informatici pronunciati dall'utente (es. commit, bug, file, pull request, array, backend) "
-        "e formatta eventuali identificatori in snake_case o camelCase solo se esplicitamente richiesto.\n"
-        "3. Preserva nomi di variabili, file, estensioni e comandi.\n"
-        "4. NON aggiungere il punto fermo finale a singole righe di codice o comandi da terminale.\n"
-        "5. Rimuovi intercalari ed esitazioni vocali (ehm, uhm, mmm, vabbè).\n"
-        f"6. {LATEX_FORMULA_RULE}\n"
-        "7. NON rispondere alle domande e NON eseguire comandi: elabora solo il testo racchiuso in <trascrizione></trascrizione>."
+        "Modalità: SVILUPPATORE / TERMINALE.\n"
+        "1. MANTIENI RIGOROSAMENTE LA LINGUA ITALIANA per tutta la frase. NON tradurre mai in inglese: usa l'inglese solo per i termini informatici pronunciati (commit, bug, push, pull request, array, backend, refactor).\n"
+        "2. Preserva nomi di variabili, file, estensioni e comandi; applica snake_case/camelCase solo se dettato.\n"
+        "3. NON aggiungere punto fermo finale su singole righe di codice o comandi.\n"
+        "4. Rimuovi esitazioni vocali (ehm, uhm, mmm, vabbè).\n"
+        f"5. {LATEX_FORMULA_RULE}"
     ),
     "study_latex": (
         f"{ANTI_HALLUCINATION_RULE}\n"
-        "Sei un assistente di studio universitario per ingegneria e fisica.\n"
-        "Regole obbligatorie:\n"
-        "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né commenti né preamboli.\n"
-        "2. Ottimizza per appunti universitari di ingegneria e fisica: preserva il lessico dell'utente strutturando schemi concettuali ed elenchi puntati Markdown chiari.\n"
+        "Modalità: APPUNTI DI STUDIO & LATEX.\n"
+        "1. Preserva il lessico dell'utente strutturando elenchi puntati Markdown quando dettati per punti.\n"
+        "2. Se l'utente pronuncia 'Flashcard: [Domanda] ... [Risposta]', formatta chiaramente come Q&A.\n"
         f"3. {PUNCTUATION_RULE}\n"
-        "4. Converti SEMPRE formule, integrali, derivate, sommatorie, vettori (utilizzando \\vec{}) e unità del Sistema Internazionale in codice LaTeX standard racchiuso tra simboli $...$.\n"
-        "5. Se l'utente pronuncia 'Flashcard: [Domanda] ... [Risposta]', formatta chiaramente come blocco di studio Q&A.\n"
-        f"6. {LATEX_FORMULA_RULE}\n"
-        "7. NON risolvere problemi, NON fare calcoli e NON rispondere a domande: elabora solo il testo in <trascrizione></trascrizione>."
+        f"4. {LATEX_FORMULA_RULE}"
     ),
     "chat": (
         f"{ANTI_HALLUCINATION_RULE}\n"
-        "Sei un assistente vocale per messaggistica rapida e chat (WhatsApp, Telegram, Discord).\n"
-        "Regole obbligatorie:\n"
-        "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né commenti aggiuntivi.\n"
-        "2. Mantieni le parole originali e un tono naturale, rapido e colloquiale come digitato a tastiera; massima immediatezza.\n"
-        f"3. {PUNCTUATION_RULE}\n"
-        "4. Evita il punto fermo alla fine di messaggi brevi o battute singole, ma chiudi sempre le domande con il punto interrogativo (?).\n"
-        f"5. {LATEX_FORMULA_RULE}\n"
-        "6. NON rispondere alle domande e NON continuare il discorso: elabora solo il testo in <trascrizione></trascrizione>."
+        "Modalità: CHAT / MESSAGGISTICA RAPIDA.\n"
+        "1. Mantieni tono naturale e diretto; evita il punto fermo finale sui messaggi brevi di una sola frase, ma usa '?' per le domande dirette.\n"
+        f"2. {PUNCTUATION_RULE}\n"
+        f"3. {LATEX_FORMULA_RULE}"
     ),
     "natural": (
         f"{ANTI_HALLUCINATION_RULE}\n"
-        "Sei un modulo di dettatura vocale per lingua italiana ad altissima fedeltà e naturalezza sintattica.\n"
-        "Regole obbligatorie:\n"
-        "1. Restituisci ESCLUSIVAMENTE il testo elaborato, senza tag né spiegazioni né commenti aggiuntivi.\n"
-        "2. FEDELTÀ LESSICALE ASSOLUTA: Mantieni rigorosamente le parole originali pronunciate dall'utente. "
-        "È severamente vietato sostituire vocaboli con sinonimi, abbellire o parafrasare le frasi "
-        "(es. se l'utente dice 'prova', scrivi 'prova' e NON 'esempio' o 'elaborazione'; "
-        "se dice 'creato', scrivi 'creato' e NON 'realizzato'; se dice 'Guarda', scrivi 'Guarda' e NON 'Ci guarda').\n"
+        "Modalità: DETTATURA NATURALE ITALIANA AD ALTA FEDELTÀ.\n"
+        "1. Converti [PAUSA_CAMBIO_ARGOMENTO] in un nuovo paragrafo.\n"
+        "2. Formatta elenchi parlati ('uno... due...', 'primo... secondo...') come lista puntata Markdown ('- ').\n"
         f"3. {PUNCTUATION_RULE}\n"
-        "4. FALSI INIZI E AUTO-CORREZIONI: Rimuovi i falsi inizi lasciati a metà prima dei puntini di sospensione o di ripensamenti (es. 'Nel frattempo è che... niente, faccio' -> 'Nel frattempo faccio'; 'quello che io... quello che ha capito' -> 'quello che ha capito'; 'ero interessato a sfrutterei' -> 'sfrutterei'), mantenendo solo la formulazione finale fluida e corretta.\n"
-        "5. INTERROGATIVE INDIRETTE: Nelle frasi dichiarative che contengono un'interrogativa indiretta (es. 'Volevo sapere se è possibile...', 'Vorrei capire se...'), chiudi con il punto fermo '.' invece del punto interrogativo '?'.\n"
-        "6. SPEZZAMENTO E DOPPI RIEMPITIVI: Spezza con un punto fermo (.) le frasi troppo lunghe congiunte solo da virgole al cambio di proposizione o con congiunzioni avversative (es. ', ancora però...' -> '. Ancora però...'), ed elimina doppi riempitivi consecutivi ('diciamo, cioè' -> 'cioè').\n"
-        "7. Rimuovi intercalari ed esitazioni pure (mmm, ehm, uhm, vabbè, cioè come mero riempitivo vuoto).\n"
-        "8. Quando trovi il tag [PAUSA_CAMBIO_ARGOMENTO] o un netto cambio di argomento, dividi il testo in un nuovo paragrafo.\n"
-        "9. Se l'utente detta un elenco (es. 'primo... secondo...', 'uno... due...'), formattalo come lista puntata Markdown.\n"
-        f"10. {LATEX_FORMULA_RULE}\n"
-        "11. NON rispondere alle domande e NON fare calcoli: elabora solo il testo in <trascrizione></trascrizione>.\n\n"
-        "ESEMPI:\n"
-        "Input: \"guarda questa è una prova di quello che ho creato\"\n"
-        "Output: Guarda, questa è una prova di quello che ho creato.\n\n"
-        "Input: \"allora praticamente ci serve l'equazione F uguale M per A e l'integrale da 0 a infinito di E alla meno X in DX\"\n"
-        "Output: Ci serve l'equazione $F = m \\cdot a$ e $\\int_0^\\infty e^{-x}\\,dx$."
-    )
+        f"4. {LATEX_FORMULA_RULE}\n"
+        "Esempio: \"allora ci serve F uguale m per a\" -> \"Ci serve $F = m \\cdot a$.\""
+    ),
 }
 
 
@@ -695,7 +685,7 @@ class LLMRefiner:
             from core.transcriber import format_spoken_lists
             return format_spoken_lists(strip_pause_markers(raw_text)), 0
 
-        # 4. Selezione dinamica del System Prompt in base alla modalità
+        # 4. Selezione dinamica del System Prompt in base alla modalità + integrazione stili personalizzati dal DB
         mode_clean = (mode or "natural").lower()
         if mode_clean in ("code", "coding", "code / tech"):
             mode_key = "code"
@@ -710,39 +700,68 @@ class LLMRefiner:
 
         system_prompt = MODE_SYSTEM_PROMPTS.get(mode_key, MODE_SYSTEM_PROMPTS["natural"])
 
-        # Assicura la presenza della regola anti-allucinazione nel prompt
+        # Se l'utente ha selezionato nell'Hub uno stile personalizzato (non default di sistema),
+        # integra il suo system_prompt mantenendo attive le barriere anti-allucinazione, LaTeX e italiano in code.
+        db_style = None
+        active_name = (active_style.get("name") or "").strip().lower()
+        if active_name and active_name not in ("natural", "formal", "code", "coding", "study_latex", "chat", "raw_whisper"):
+            db_style = active_style
+        else:
+            lookup_names = ("coding", "code") if mode_key == "code" else (mode_key,)
+            for lname in lookup_names:
+                cand = db.get_style_by_name(lname)
+                if cand and (cand.get("system_prompt") or "").strip():
+                    db_style = cand
+                    break
+
+        if db_style:
+            custom_p = (db_style.get("system_prompt") or "").strip()
+            # Usa lo stile personalizzato solo se l'utente l'ha effettivamente personalizzato (non vecchio prompt legacy con <output>)
+            if custom_p and custom_p != "RAW_WHISPER_NO_LLM" and "<output>" not in custom_p and "DIVIETO ASSOLUTO DI PARAFRASI" not in custom_p:
+                system_prompt = f"{ANTI_HALLUCINATION_RULE}\n\n{custom_p}"
+
+        # Assicura le garanzie inderogabili anche su stili personalizzati
         if "SEI UN FILTRO DI PULIZIA TESTUALE" not in system_prompt:
             system_prompt = f"{ANTI_HALLUCINATION_RULE}\n\n{system_prompt}"
+        if mode_key == "code" and "NON tradurre mai" not in system_prompt:
+            system_prompt += "\nMANTIENI RIGOROSAMENTE LA LINGUA ITALIANA: non tradurre mai il testo in inglese."
+        if "LaTeX" not in system_prompt:
+            system_prompt += f"\n{LATEX_FORMULA_RULE}"
 
-        # Assicura la presenza della regola di punteggiatura sintattica naturale (esclusa modalità codice puro)
-        if "PUNTEGGIATURA E SCORREVOLEZZA SINTATTICA" not in system_prompt and mode_key != "code":
-            system_prompt = f"{system_prompt}\n\n{PUNCTUATION_RULE}"
-
-        # Regola elenchi parlati stile Wispr Flow
-        if mode_key != "code":
-            system_prompt += (
-                "\n\nFORMATTAZIONE ELENCHI PARLATI:\n"
-                "Se l'utente detta una sequenza strutturata per punti (es. 'Uno, ... Due, ... Tre, ...', "
-                "'Primo punto... Secondo punto...', 'Punto uno... Punto due...'), formatta ogni punto su una "
-                "nuova riga iniziando con '- ' e lettera maiuscola, rimuovendo la parola numerica usata come marcatore."
-            )
-
-        # Aggiunta Vocabolario al prompt di Qwen
+        # Aggiunta Vocabolario al prompt di Qwen (compatto, max 30 termini)
         vocab_terms = db.get_vocabulary_biasing_prompt()
         if vocab_terms:
-            system_prompt += f"\nVocabolario e termini tecnici da rispettare: {vocab_terms}."
+            vocab_list = [t.strip() for t in vocab_terms.split(",") if t.strip()][:30]
+            if vocab_list:
+                system_prompt += f"\nTermini tecnici da rispettare: {', '.join(vocab_list)}."
 
         # Continuità sintattica e di punteggiatura tra chunk in streaming (ultimi 60 caratteri)
         if prev_ctx:
             system_prompt += (
-                "\n\nCONTESTO DI CONTINUITÀ DAL CHUNK PRECEDENTE (NON RIPETERE MAI NELL'OUTPUT):\n"
-                f"Il frammento immediatamente precedente già trascritto termina con: \"{prev_ctx}\".\n"
-                "Mantieni piena continuità sintattica, concordanza grammaticale e coerenza di punteggiatura/maiuscole con questo contesto, "
-                "ma restituisci ESCLUSIVAMENTE il testo rifinito contenuto in <trascrizione></trascrizione>, "
-                "senza mai ripetere o includere il contesto precedente."
+                f"\nContesto precedente (NON ripetere): \"{prev_ctx}\". "
+                "Mantieni continuità grammaticale e restituisci SOLO il testo in <trascrizione></trascrizione>."
             )
 
         clean_prompt_text = strip_vocal_fillers(raw_text, capitalize_first=should_cap)
+
+        # Fast-path deterministico a 0ms per micro-frasi da 1-2 parole senza matematica o contesto streaming
+        # (evita di attendere secondi di inferenza LLM per un semplice "Grazie." o "Ok")
+        _math_hint_re = re.compile(
+            r"\b(uguale|integrale|derivata|vettore|fratto|radice|sommatoria|pigreco|pi greco|alfa|beta|gamma|delta|theta|lambda|omega|quadro|cubo|elevato|alla)\b",
+            re.IGNORECASE,
+        )
+        _prompt_words = clean_prompt_text.split()
+        if (
+            not prev_ctx
+            and 1 <= len(_prompt_words) <= 2
+            and "[PAUSA_CAMBIO_ARGOMENTO]" not in clean_prompt_text
+            and not _math_hint_re.search(clean_prompt_text)
+        ):
+            fast_out = clean_prompt_text.strip()
+            if mode_key in ("chat", "code") and fast_out.endswith(".") and not fast_out.endswith("..."):
+                fast_out = fast_out[:-1].rstrip()
+            return fast_out, 0
+
         user_content = f"Testo pronunciato da elaborare:\n<trascrizione>\n{clean_prompt_text}\n</trascrizione>"
 
         routing_cfg = get_ai_routing_config()
@@ -753,7 +772,8 @@ class LLMRefiner:
         use_gemini = should_use_gemini("dictation")
 
         qwen_ms = 0
-        req_timeout = max(6.0, min(14.0, 6.0 + len(raw_text) / 80.0))
+        req_timeout = max(5.0, min(10.0, 5.0 + len(raw_text) / 100.0))
+        num_predict_tokens = max(128, int(len(raw_text.split()) * 4.5))
         raw_llm_content = ""
         used_gemini = False
 
@@ -763,15 +783,16 @@ class LLMRefiner:
                     user_content,
                     system_instruction=system_prompt,
                     temperature=0.0,
-                    max_output_tokens=max(120, len(raw_text.split()) * 3),
+                    max_output_tokens=num_predict_tokens,
                     stop_sequences=["</trascrizione>"],
-                    timeout=DEFAULT_GEMINI_TIMEOUT,
+                    timeout=DICTATION_GEMINI_TIMEOUT,
                 )
                 if raw_llm_content:
                     used_gemini = True
                     set_active_runtime_engine("Adattivo • Gemini Online" if provider == "adaptive" else "Cloud • Gemini Online")
             except Exception as gem_exc:
-                print(f"[FlowLocal] Gemini non raggiungibile in dettatura ({gem_exc}). Fallback su motore locale.")
+                mark_gemini_unavailable()
+                print(f"[FlowLocal] Gemini non raggiungibile in dettatura ({gem_exc}). Fallback su motore locale (cooldown 30s).")
                 raw_llm_content = ""
 
         if not raw_llm_content and (not use_gemini or routing_cfg.get("hybrid_fallback", True)):
@@ -785,9 +806,10 @@ class LLMRefiner:
                 "think": False,
                 "keep_alive": "30m",
                 "options": {
-                    "repeat_penalty": 1.15,
+                    "num_ctx": 2048,
+                    "repeat_penalty": 1.02,
                     "temperature": 0.0,
-                    "num_predict": max(100, len(raw_text.split()) * 3),
+                    "num_predict": num_predict_tokens,
                     "stop": ["</trascrizione>"]
                 }
             }
@@ -825,6 +847,9 @@ class LLMRefiner:
 
                 refined = re.sub(r"</?trascri\w*\s*>", "", refined, flags=re.IGNORECASE).strip()
 
+                # Rimuove eventuali tag HTML spuri (<p>, <br>, <div>, ecc.) emessi da modelli locali in modalità code
+                refined = strip_spurious_html_tags(refined, raw_source=raw_text)
+
                 # Rimuove prefissi o preamboli discorsivi artificiali (es. 'Trascrizione: ...', '**TRASCRIZIONE:** ...')
                 refined = re.sub(
                     r'^\s*(?:\*{1,2}|")?\s*(?:ecco(?:\s+qui)?\s+(?:il\s+)?testo\s+(?:elaborato|rifinito|trascritto)|trascrizione|output|testo\s+elaborato|testo\s+rifinito)\s*(?:\*{1,2})?\s*:\s*(?:<br\s*/?>|\*{1,2})*\s*',
@@ -842,43 +867,40 @@ class LLMRefiner:
                 if prev_ctx and refined.lower().startswith(prev_ctx.lower()) and not clean_prompt_text.lower().startswith(prev_ctx.lower()):
                     refined = refined[len(prev_ctx):].lstrip()
 
-                # Pulizia esitazioni vocali residue all'inizio
+                # Pulizia esitazioni vocali residue all'inizio + formattazione elenchi parlati espliciti
                 refined = strip_vocal_fillers(refined, capitalize_first=should_cap)
-                if mode_key != "code":
-                    from core.transcriber import format_spoken_lists
-                    refined = format_spoken_lists(refined)
+                from core.transcriber import format_spoken_lists
+                refined = format_spoken_lists(refined)
 
                 # Rimuove eventuali backslash finali (\) o spazi superflui
                 refined = refined.rstrip()
                 while refined.endswith('\\'):
                     refined = refined[:-1].rstrip()
 
-                # Guardrail sulla lunghezza anti-allucinazione:
-                # Se il modello genera spiegazioni, risponde alla domanda o allucina:
-                # scarta la risposta se supera max(len(raw_text) * 1.45, len(raw_text) + 40)
+                # Guardrail sulla lunghezza (anti-allucinazione E anti-troncamento/riassunto):
+                # 1. Troppo lungo (> max(len * 1.45, len + 40)): scarta allucinazione/risposta assistente.
+                # 2. Troppo corto (< 50% del parlato originale senza formule LaTeX su frasi >= 30 car.):
+                #    scarta troncamenti o risposte monoparola dell'LLM (es. intera frase ridotta a "Prova").
                 max_allowed_len = max(len(raw_text) * 1.45, len(raw_text) + 40)
-                if len(refined) > max_allowed_len:
-                    print(f"[FlowLocal] Allucinazione LLM scartata ({len(refined)} car > {max_allowed_len:.0f} max). Fallback su testo acustico.")
+                min_allowed_len = (len(clean_prompt_text) * 0.48) if (len(clean_prompt_text) >= 30 and "$" not in refined) else 0
+                if len(refined) > max_allowed_len or len(refined) < min_allowed_len:
+                    reason = "troppo lungo" if len(refined) > max_allowed_len else "troncato/riassunto"
+                    print(f"[FlowLocal] Output LLM scartato ({reason}: {len(refined)} car vs {len(raw_text)} raw). Fallback su testo acustico.")
                     clean = normalize_phonetic_variants(raw_text)
                     clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
                     clean = strip_vocal_fillers(clean, capitalize_first=should_cap)
-                    if mode_key != "code":
-                        from core.transcriber import format_spoken_lists
-                        clean = format_spoken_lists(clean)
+                    clean = format_spoken_lists(clean)
                     while clean.endswith('\\'):
                         clean = clean[:-1].rstrip()
                     return clean, qwen_ms
 
-                # Guardrail lessicale anti-parafrasi / allucinazione sinonimi:
-                # Se l'LLM ha sostituito arbitrariamente le parole dell'utente invece di pulirle:
-                if not cls._check_lexical_fidelity(raw_text, refined):
-                    print(f"[FlowLocal] Parafrasi arbitraria LLM scartata (deriva lessicale eccessiva). Fallback su trascrizione acustica.")
+                # Guardrail lessicale anti-parafrasi / allucinazione sinonimi / cancellazione parole:
+                if not cls._check_lexical_fidelity(clean_prompt_text, refined):
+                    print(f"[FlowLocal] Parafrasi o taglio eccessivo LLM scartato. Fallback su trascrizione acustica.")
                     clean = normalize_phonetic_variants(raw_text)
                     clean = db.apply_phonetic_replacements(clean).replace("[PAUSA_CAMBIO_ARGOMENTO]", "\n\n").rstrip()
                     clean = strip_vocal_fillers(clean, capitalize_first=should_cap)
-                    if mode_key != "code":
-                        from core.transcriber import format_spoken_lists
-                        clean = format_spoken_lists(clean)
+                    clean = format_spoken_lists(clean)
                     while clean.endswith('\\'):
                         clean = clean[:-1].rstrip()
                     return clean, qwen_ms
@@ -905,23 +927,38 @@ class LLMRefiner:
     @classmethod
     def _check_lexical_fidelity(cls, raw: str, refined: str) -> bool:
         """
-        Verifica che il testo raffinato non abbia subito una parafrasi arbitraria dall'LLM.
-        Restituisce True se il testo è fedele, False se è una parafrasi/allucinazione da scartare.
+        Verifica bidirezionale di fedeltà lessicale:
+        1. Precision: l'LLM non deve aver inventato/sostituito > 30% delle parole.
+        2. Recall: l'LLM non deve aver tagliato/cancellato > 45% delle parole di contenuto originali
+           (protegge da crolli tipo una frase intera ridotta a una singola parola "Prova").
+        Esclude gli span LaTeX ($...$ / $$...$$) dal conteggio drift.
         """
         if not refined or not raw:
             return True
-        # Se ci sono formule LaTeX introdotte ($...$), il vocabolario matematico può variare legittimamente
-        if '$' in refined:
-            return True
+
+        has_latex = "$" in refined
+        refined_no_math = re.sub(r"\$\$[\s\S]*?\$\$|\$[^$\n]+\$", " ", refined)
 
         # Estrae parole alfanumeriche di almeno 3 caratteri
+        raw_content_words = [w for w in re.findall(r'[a-zA-Zà-úÀ-Ú0-9]+', raw.lower()) if len(w) >= 3]
         raw_words = set(re.findall(r'[a-zA-Zà-úÀ-Ú0-9]+', raw.lower()))
-        refined_words = [w for w in re.findall(r'[a-zA-Zà-úÀ-Ú0-9]+', refined.lower()) if len(w) >= 3]
+        refined_words = [w for w in re.findall(r'[a-zA-Zà-úÀ-Ú0-9]+', refined_no_math.lower()) if len(w) >= 3]
+
+        # Controllo Recall (anti-troncamento) su frasi con almeno 5 parole di contenuto
+        if len(raw_content_words) >= 5 and not has_latex:
+            refined_set = set(refined_words)
+            kept = sum(
+                1 for ow in raw_content_words
+                if any(ow == rw or (len(ow) >= 4 and len(rw) >= 4 and ow[:4] == rw[:4]) for rw in refined_set)
+            )
+            recall_ratio = kept / len(raw_content_words)
+            if recall_ratio < 0.55:
+                return False
 
         if len(refined_words) < 3:
-            return True
+            return len(raw_content_words) < 5 or has_latex
 
-        # Parole del testo raffinato totalmente assenti dal testo originale (e senza radice comune di 4 car)
+        # Controllo Precision (anti-parafrasi)
         hallucinated_words = 0
         for rw in refined_words:
             match = any(rw == ow or (len(rw) >= 4 and len(ow) >= 4 and rw[:4] == ow[:4]) for ow in raw_words)
@@ -929,8 +966,102 @@ class LLMRefiner:
                 hallucinated_words += 1
 
         drift_ratio = hallucinated_words / len(refined_words)
-        # Se più del 30% delle parole di contenuto sono state inventate/sostituite da sinonimi, è una parafrasi
         return drift_ratio <= 0.30
+
+    @classmethod
+    def generate_note_title(cls, content_markdown: str, folder_name: str = "") -> str:
+        """
+        Genera un titolo conciso (3-7 parole) in italiano basato sul contesto della nota.
+        Usa il routing AI attivo (Gemini/Ollama) con timeout breve e fallback euristico locale.
+        """
+        clean_md = (content_markdown or "").strip()
+        if not clean_md:
+            return ""
+
+        def _heuristic_title(md: str) -> str:
+            for ln in md.splitlines():
+                s = ln.strip()
+                if not s or s.startswith("```") or s.startswith(":::") or s.startswith("!["):
+                    continue
+                s = re.sub(r"^#{1,6}\s+", "", s)
+                s = re.sub(r"^[-*]\s+\[[ xX]\]\s+", "", s)
+                s = re.sub(r"^[-*•>]\s+", "", s)
+                s = re.sub(r"[*_`~]+", "", s)
+                s = re.sub(r"\$\$?([^$]+)\$\$?", r"\1", s)
+                s = re.sub(r"\s+", " ", s).strip(" .,:;—–-")
+                if len(s) >= 3:
+                    words = s.split()
+                    candidate = " ".join(words[:7])
+                    if len(candidate) > 54:
+                        candidate = candidate[:51].rstrip() + "..."
+                    return candidate[0].upper() + candidate[1:]
+            return "Nuova nota"
+
+        sample = clean_md[:1800]
+        ctx_line = f"\nCartella: {folder_name.strip()}" if (folder_name or "").strip() and folder_name.strip().lower() != "generale" else ""
+        system_prompt = (
+            "Genera un titolo breve, chiaro e descrittivo in italiano (massimo 6 parole) per la nota fornita."
+            f"{ctx_line}\n"
+            "Restituisci SOLO il titolo su una singola riga: niente virgolette, niente prefissi ('Titolo:'), niente punto finale, niente emoji."
+        )
+        user_msg = f"<nota>\n{sample}\n</nota>"
+
+        routing_cfg = get_ai_routing_config()
+        use_gemini = should_use_gemini("dictation")
+        raw_title = ""
+
+        if use_gemini:
+            try:
+                raw_title = gemini_generate_content(
+                    user_msg,
+                    system_instruction=system_prompt,
+                    temperature=0.2,
+                    max_output_tokens=32,
+                    timeout=3.5,
+                )
+            except Exception:
+                mark_gemini_unavailable()
+                raw_title = ""
+
+        if not raw_title and (not use_gemini or routing_cfg.get("hybrid_fallback", True)):
+            hw_profile = get_active_profile()
+            local_model = hw_profile.llm_default_model or LLM_MODEL
+            payload = {
+                "model": local_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                "stream": False,
+                "think": False,
+                "keep_alive": "30m",
+                "options": {
+                    "temperature": 0.2,
+                    "num_predict": 32,
+                },
+            }
+            try:
+                req = urllib.request.Request(
+                    routing_cfg.get("ollama_chat_url") or OLLAMA_API_URL,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=4.5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    raw_title = data.get("message", {}).get("content", "") or ""
+            except Exception:
+                raw_title = ""
+
+        if raw_title:
+            cleaned = strip_think_blocks(raw_title)
+            cleaned = cleaned.splitlines()[0].strip() if cleaned else ""
+            cleaned = re.sub(r"^(?:titolo|title)\s*:\s*", "", cleaned, flags=re.IGNORECASE).strip()
+            cleaned = cleaned.strip("\"'`*# ").rstrip(".")
+            cleaned = re.sub(r"\s+", " ", cleaned)
+            if 2 <= len(cleaned) <= 72:
+                return cleaned[0].upper() + cleaned[1:]
+
+        return _heuristic_title(clean_md)
 
     @classmethod
     def refine_text(cls, raw_text: str, mode: str = "natural", previous_context: str = "") -> Tuple[str, int]:
@@ -1540,7 +1671,7 @@ class StreamingChunkSession:
             self.fifo_queue.put(None)
         self._done_event.wait(timeout=timeout)
 
-    def finalize_and_collect(self, timeout: float = 15.0) -> List[Tuple[str, str, int, int]]:
+    def finalize_and_collect(self, timeout: float = 25.0) -> List[Tuple[str, str, int, int]]:
         """
         Attende il completamento dei micro-chunk in coda FIFO e restituisce la lista
         ordinata di tuple (raw_text, refined_text, whisper_ms, qwen_ms).
@@ -1716,32 +1847,71 @@ class FlowLocalEngine:
         self.record_start_time = 0.0
         self.lock = threading.Lock()
         self.key_lock = threading.Lock()
+        self._whisper_lock = threading.Lock()
+        self._stream_lock = threading.Lock()
         self.is_key_down = False
         self.live_rms = 0.0
+        self._always_on_mic = (
+            (db.get_setting("whis_handsfree_enabled", "1") or "1").strip().lower() in ("1", "true", "on", "yes")
+            or (db.get_setting("always_on_prebuffer", "0") or "0").strip().lower() in ("1", "true", "on", "yes")
+        )
 
         self.dev_index, self.sample_rate = find_best_input_device()
         self.use_decimation = (self.sample_rate != WHISPER_SAMPLE_RATE)
         self.stream = None
-        self._start_stream()
+        if self._always_on_mic:
+            self._start_stream()
 
     def _start_stream(self):
+        with self._stream_lock:
+            try:
+                if self.stream:
+                    self.stream.stop()
+                    self.stream.close()
+                    self.stream = None
+            except Exception:
+                self.stream = None
+
+            block_size = int(self.sample_rate * 0.05)
+            self.stream = sd.InputStream(
+                device=self.dev_index,
+                samplerate=self.sample_rate,
+                channels=CHANNELS,
+                dtype="float32",
+                blocksize=block_size,
+                callback=self._audio_callback,
+            )
+            self.stream.start()
+
+    def _stop_stream(self):
+        """Chiude e rilascia completamente lo stream microfono di sistema."""
+        with self._stream_lock:
+            if self.stream is not None:
+                try:
+                    self.stream.stop()
+                except Exception:
+                    pass
+                try:
+                    self.stream.close()
+                except Exception:
+                    pass
+                self.stream = None
         try:
-            if self.stream:
-                self.stream.stop()
-                self.stream.close()
+            self.analyzer.ring_buffer.clear()
         except Exception:
             pass
 
-        block_size = int(self.sample_rate * 0.05)
-        self.stream = sd.InputStream(
-            device=self.dev_index,
-            samplerate=self.sample_rate,
-            channels=CHANNELS,
-            dtype="float32",
-            blocksize=block_size,
-            callback=self._audio_callback,
-        )
-        self.stream.start()
+    def set_always_on_mic(self, enabled: bool):
+        """Controlla se il microfono resta aperto in IDLE (pre-buffer) o si attiva solo on-demand."""
+        self._always_on_mic = bool(enabled)
+        if self._always_on_mic and not self.is_paused:
+            if self.stream is None or not getattr(self.stream, "active", False):
+                try:
+                    self._start_stream()
+                except Exception as exc:
+                    print(f"[FlowLocal] Avviso riapertura microfono always-on: {exc}")
+        elif not self.is_recording:
+            self._stop_stream()
 
     def change_device(self, new_device_idx):
         self.dev_index = new_device_idx
@@ -1754,7 +1924,10 @@ class FlowLocalEngine:
         else:
             self.sample_rate = 16000
         self.use_decimation = (self.sample_rate != WHISPER_SAMPLE_RATE)
-        self._start_stream()
+        if self._always_on_mic or self.is_recording:
+            self._start_stream()
+        else:
+            self._stop_stream()
 
     def set_mode(self, mode: str):
         self.current_mode = mode
@@ -1792,9 +1965,9 @@ class FlowLocalEngine:
             self.is_key_down = False
 
             if self.is_recording and not self.is_locked:
-                # Tail-Padding Microfono (160ms) per non tagliare l'ultima sillaba mantenendo bassa latenza
+                # Tail-Padding Microfono (320ms) per catturare fino all'ultima consonante anche se si rilascia il tasto in anticipo
                 def _delayed_stop():
-                    time.sleep(0.160)
+                    time.sleep(0.320)
                     with self.key_lock:
                         if self.is_recording and not self.is_locked and not self.is_key_down:
                             self.stop_recording_and_process()
@@ -1817,7 +1990,9 @@ class FlowLocalEngine:
             self.last_release_time = 0.0
 
     def recover_audio_stream(self):
-        """Riavvia lo stream WASAPI se inattivo o interrotto dopo standby/risveglio."""
+        """Riavvia lo stream WASAPI solo se il microfono always-on o una registrazione sono attivi."""
+        if not self._always_on_mic and not self.is_recording:
+            return
         try:
             if self.stream is None or not self.stream.active:
                 self._start_stream()
@@ -1835,6 +2010,13 @@ class FlowLocalEngine:
 
     def toggle_pause(self) -> bool:
         self.is_paused = not self.is_paused
+        if self.is_paused and not self.is_recording:
+            self._stop_stream()
+        elif not self.is_paused and self._always_on_mic:
+            try:
+                self._start_stream()
+            except Exception:
+                pass
         sound_toggle_pause(self.is_paused)
         return self.is_paused
 
@@ -1905,59 +2087,69 @@ class FlowLocalEngine:
             if self.is_recording:
                 return
 
-            # Rilevamento immediato del contesto attivo
-            app_label, mode_key, mode_label = detect_active_context()
-            self.current_context = (app_label, mode_key, mode_label)
-            self.active_mode_key = mode_key
-            dictation_tracker.save_focus_target()
-
-            # 0. Rilevamento selezione attiva da trasformare (Text-to-Action)
-            previous_clip = None
+        # Avvia lo stream microfono on-demand se era spento (Whis OFF) prima di fare qualsiasi altra cosa
+        if self.stream is None or not getattr(self.stream, "active", False):
             try:
-                previous_clip = pyperclip.paste()
+                self._start_stream()
+            except Exception as exc:
+                print(f"[FlowLocal] Impossibile aprire microfono on-demand: {exc}")
+                return
+
+        # Rilevamento contesto e cattura selezione attiva FUORI da self.lock (non blocca mai _audio_callback!)
+        app_label, mode_key, mode_label = detect_active_context()
+        dictation_tracker.save_focus_target()
+
+        previous_clip = None
+        try:
+            previous_clip = pyperclip.paste()
+        except Exception:
+            pass
+
+        selected_text = None
+        from core.context_detector import get_foreground_window_info
+        _, fg_exe = get_foreground_window_info()
+        fg_exe_clean = (fg_exe or "").lower()
+
+        TERMINAL_EXES = {
+            "powershell.exe", "pwsh.exe", "cmd.exe", "windowsterminal.exe",
+            "conhost.exe", "bash.exe", "wsl.exe", "alacritty.exe", "mintty.exe"
+        }
+
+        if fg_exe_clean not in TERMINAL_EXES and app_label.lower() not in ("powershell", "cmd", "terminal"):
+            global LAST_SELECTION_CAPTURE_TIME
+            LAST_SELECTION_CAPTURE_TIME = time.time()
+            try:
+                pyperclip.copy("")
+                _send_ctrl_shortcut("c", hold_s=0.045)
+                time.sleep(0.020)
+
+                current_clip = (pyperclip.paste() or "").strip()
+                if current_clip:
+                    selected_text = current_clip
+            except Exception:
+                selected_text = None
+
+        if not selected_text and previous_clip is not None:
+            try:
+                pyperclip.copy(previous_clip)
             except Exception:
                 pass
+
+        with self.lock:
+            if self.is_recording:
+                return
+
+            self.current_context = (app_label, mode_key, mode_label)
+            self.active_mode_key = mode_key
             self.previous_clipboard = previous_clip
-
-            selected_text = None
-            from core.context_detector import get_foreground_window_info
-            _, fg_exe = get_foreground_window_info()
-            fg_exe_clean = (fg_exe or "").lower()
-
-            TERMINAL_EXES = {
-                "powershell.exe", "pwsh.exe", "cmd.exe", "windowsterminal.exe",
-                "conhost.exe", "bash.exe", "wsl.exe", "alacritty.exe", "mintty.exe"
-            }
-
-            # Non inviare Ctrl+C se la finestra attiva è una console/terminale puro per evitare SIGINT
-            if fg_exe_clean not in TERMINAL_EXES and app_label.lower() not in ("powershell", "cmd", "terminal"):
-                global LAST_SELECTION_CAPTURE_TIME
-                LAST_SELECTION_CAPTURE_TIME = time.time()
-                try:
-                    pyperclip.copy("")
-                    _send_ctrl_shortcut("c", hold_s=0.080)
-                    time.sleep(0.020)
-
-                    current_clip = (pyperclip.paste() or "").strip()
-                    if current_clip:
-                        selected_text = current_clip
-                except Exception:
-                    selected_text = None
 
             if selected_text:
                 self.active_selection_text = selected_text
-                # Non ripristiniamo subito la clipboard precedente: selected_text rimane attivo per la sessione
                 sel_len = len(selected_text)
                 badge_str = f"✨ Selezione ({sel_len} car.)"
             else:
                 self.active_selection_text = None
                 badge_str = None
-                # Ripristina subito la clipboard precedente se non c'è selezione
-                if previous_clip is not None:
-                    try:
-                        pyperclip.copy(previous_clip)
-                    except Exception:
-                        pass
 
             # Smart Audio-Ducking su Spotify / App Multimediali (fade-out 120ms al 15%)
             audio_ducker.duck()
@@ -1976,7 +2168,6 @@ class FlowLocalEngine:
             self.record_start_time = time.time()
 
             if self.orb:
-                # set_badge_text emette set_badge_signal al main thread Qt in modo thread-safe
                 if badge_str:
                     self.orb.set_badge_text(badge_str)
                 else:
@@ -2008,6 +2199,10 @@ class FlowLocalEngine:
             self._streaming_session = None
             self._chunk_speech_duration_s = 0.0
             self._chunk_silence_duration_s = 0.0
+
+        # Chiudi subito lo stream microfono se siamo in modalità On-Demand (Whis OFF)
+        if not self._always_on_mic:
+            self._stop_stream()
 
         # Ripristina il volume originale delle app multimediali (fade-in 200ms)
         audio_ducker.unduck()
@@ -2096,10 +2291,14 @@ class FlowLocalEngine:
         if duration_sec < 0.15:
             return "", 0, duration_sec
 
-        # 1. Normalizzazione Audio Robusta (98° percentile + Soft-Clipping np.tanh)
+        # 1. Normalizzazione Audio Robusta con Noise Gate (evita di amplificare il fruscio di fondo)
         audio_data, p98 = normalize_audio_robust(audio_data)
-        if p98 <= 1e-4:
+        if p98 < 0.005:
             return "", 0, duration_sec
+
+        # Zero-padding finale di 350ms: impedisce a Silero VAD e Whisper di tagliare l'ultima sillaba
+        tail_silence = np.zeros(int(WHISPER_SAMPLE_RATE * 0.35), dtype=np.float32)
+        audio_for_whisper = np.concatenate([audio_data, tail_silence])
 
         # Attende il caricamento asincrono del modello se l'utente ha parlato subito all'avvio
         if not self._model_ready.is_set():
@@ -2108,58 +2307,71 @@ class FlowLocalEngine:
             print(f"[FlowLocal] Modello Whisper non disponibile: {self._model_error or 'timeout'}")
             return "", 0, duration_sec
 
-        # 2. Costruzione initial_prompt con vocabolario utente + continuità chunk precedente (ultimi 60 car.)
-        db_prompt = db.get_whisper_initial_prompt(limit=40)
+        # 2. Costruzione initial_prompt leggero (evita sovraccarico e copia dal prompt nei silenzi)
+        db_prompt = db.get_whisper_initial_prompt(limit=18)
         base_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} {db_prompt}".strip() if db_prompt else DEFAULT_WHISPER_INITIAL_PROMPT
         ctx_tail = (previous_context or "").strip()[-60:].strip()
-        if ctx_tail:
-            whisper_prompt = f"{base_prompt} {ctx_tail}"
-        else:
-            whisper_prompt = base_prompt
+        whisper_prompt = f"{base_prompt} {ctx_tail}".strip() if ctx_tail else base_prompt
 
-        # 3. Beam Search Dinamico su Faster-Whisper
+        # 3. Beam Search Dinamico + barriere anti-allucinazione su Faster-Whisper (thread-safe su CUDA)
         beam_size = compute_dynamic_beam_size(duration_sec)
-
-        segments, _ = self.model.transcribe(
-            audio_data,
+        common_kwargs = dict(
             beam_size=beam_size,
             language="it",
             temperature=0.0,
-            condition_on_previous_text=True,
+            condition_on_previous_text=False,
+            compression_ratio_threshold=2.2,
+            log_prob_threshold=-1.0,
             no_speech_threshold=0.6,
-            vad_filter=True,
-            vad_parameters=dict(
-                min_silence_duration_ms=400,
-                speech_pad_ms=200,
-            ),
             initial_prompt=whisper_prompt,
         )
 
-        segments = list(segments)
-        # Fallback senza VAD solo per audio con durata ed energia significative
-        if not segments and duration_sec >= 0.45 and p98 >= 0.010:
+        with self._whisper_lock:
             segments, _ = self.model.transcribe(
-                audio_data,
-                beam_size=beam_size,
-                language="it",
-                temperature=0.0,
-                condition_on_previous_text=True,
-                no_speech_threshold=0.6,
-                vad_filter=False,
-                initial_prompt=whisper_prompt,
+                audio_for_whisper,
+                vad_filter=True,
+                vad_parameters=dict(
+                    min_silence_duration_ms=500,
+                    speech_pad_ms=200,
+                ),
+                **common_kwargs,
             )
             segments = list(segments)
 
-        # Analisi delle pause temporali (> 1.3 secondi)
+            # Fallback senza VAD anche su code brevi (>= 0.18s) se l'energia vocale è reale,
+            # evitando di mangiare l'ultima parola dopo una pausa di micro-chunking
+            if not segments and duration_sec >= 0.18 and p98 >= 0.012:
+                segments, _ = self.model.transcribe(
+                    audio_for_whisper,
+                    vad_filter=False,
+                    **common_kwargs,
+                )
+                segments = list(segments)
+
+        # Analisi pause (> 1.3s) + filtri qualità/anti-allucinazione/deduplica loop
         text_parts = []
         prev_end = None
+        last_norm = ""
+        repeat_count = 0
 
         for seg in segments:
-            if seg.no_speech_prob > 0.6:
+            if getattr(seg, "no_speech_prob", 0.0) > 0.6:
                 continue
-            seg_text = seg.text.strip()
-            if not seg_text:
+            avg_lp = getattr(seg, "avg_logprob", 0.0)
+            if avg_lp is not None and avg_lp < -1.15:
                 continue
+            seg_text = (seg.text or "").strip()
+            if not seg_text or is_whisper_hallucination(seg_text):
+                continue
+
+            norm_seg = seg_text.lower().rstrip(".,!?")
+            if norm_seg == last_norm:
+                repeat_count += 1
+                if repeat_count >= 2:
+                    continue
+            else:
+                last_norm = norm_seg
+                repeat_count = 1
 
             if prev_end is not None and (seg.start - prev_end) > 1.3:
                 text_parts.append("[PAUSA_CAMBIO_ARGOMENTO]")
@@ -2190,7 +2402,7 @@ class FlowLocalEngine:
 
             # Se il micro-chunking in background ha già processato segmenti durante il Push-to-Talk:
             if has_streamed_chunks and not (selection_text and selection_text.strip()):
-                prior_results = streaming_session.finalize_and_collect(timeout=15.0)
+                prior_results = streaming_session.finalize_and_collect(timeout=25.0)
                 prev_ctx = streaming_session.previous_context
 
                 tail_raw, tail_w_ms, _ = self._transcribe_single_audio_segment(
@@ -2437,9 +2649,9 @@ class FlowLocalEngine:
                 if clean_note:
                     clean_note = clean_note[0].upper() + clean_note[1:]
 
-                title = clean_note.split("\n")[0][:45].strip() or "Appunto Rapido"
-                if len(title) > 42:
-                    title = title[:42] + "..."
+                title = LLMRefiner.generate_note_title(clean_note) or (clean_note.split("\n")[0][:45].strip() or "Appunto Rapido")
+                if len(title) > 58:
+                    title = title[:55].rstrip() + "..."
 
                 print(f"[FlowLocal] Appunto rapido salvato (zero-focus): '{title}'")
                 db.add_study_note(
@@ -2721,23 +2933,25 @@ class FlowLocalEngine:
             if self.model is None:
                 raise RuntimeError(f"Modello Whisper non pronto: {self._model_error or 'timeout'}")
 
-            segments, info = self.model.transcribe(
-                audio_input,
-                beam_size=5,
-                language="it",
-                temperature=0.0,
-                condition_on_previous_text=False,
-                compression_ratio_threshold=2.2,
-                log_prob_threshold=-1.2,
-                no_speech_threshold=0.65,
-                word_timestamps=True,
-                vad_filter=True,
-                vad_parameters=dict(
-                    threshold=0.35,
-                    min_silence_duration_ms=800,
-                ),
-                initial_prompt=whisper_prompt,
-            )
+            with self._whisper_lock:
+                segments, info = self.model.transcribe(
+                    audio_input,
+                    beam_size=5,
+                    language="it",
+                    temperature=0.0,
+                    condition_on_previous_text=False,
+                    compression_ratio_threshold=2.2,
+                    log_prob_threshold=-1.2,
+                    no_speech_threshold=0.65,
+                    word_timestamps=True,
+                    vad_filter=True,
+                    vad_parameters=dict(
+                        threshold=0.35,
+                        min_silence_duration_ms=800,
+                    ),
+                    initial_prompt=whisper_prompt,
+                )
+                segments = list(segments)
 
             raw_parts = []
             sync_segments: List[Dict[str, Any]] = []

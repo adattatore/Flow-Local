@@ -57,6 +57,8 @@ ICON_MAP: Dict[str, str] = {
     "folder": "ph.folder-light",
     "file": "ph.file-text-light",
     "pin": "ph.push-pin-light",
+    "star": "ph.star-light",
+    "star_fill": "ph.star-fill",
     "download": "ph.download-simple-light",
     "upload": "ph.upload-simple-light",
     "caret_right": "ph.caret-right",

@@ -165,9 +165,10 @@ def map_context(title: str, exe_name: str) -> Tuple[str, str, str]:
             return ("Mail", "formal", "Formale")
 
     # 3. Studio / LaTeX
-    for kw in ("obsidian", "notion", "word", "overleaf", "pdf"):
+    for kw in ("flowlocal", "flownotes", "flowstudy", "obsidian", "notion", "word", "overleaf", "pdf"):
         if kw in combined:
-            return ("Appunti", "study_latex", "Studio / LaTeX")
+            label = "FlowNotes" if kw in ("flowlocal", "flownotes", "flowstudy") else "Appunti"
+            return (label, "study_latex", "Studio / LaTeX")
 
     # 4. Chat / Diretto
     for kw in ("whatsapp", "telegram", "discord"):

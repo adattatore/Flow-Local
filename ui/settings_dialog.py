@@ -556,6 +556,46 @@ class HubSettingsDialog(QDialog):
         font_sec.addLayout(scale_row)
 
         layout.addLayout(font_sec)
+
+        layout.addWidget(_make_divider())
+
+        # 3. Preferenze FlowNotes (Nota all'avvio & Titolo AI automatico)
+        fn_sec = QVBoxLayout()
+        fn_sec.setSpacing(10)
+        fn_sec.addWidget(_make_label("FlowNotes & Editor", "CardTitle"))
+
+        startup_row = QHBoxLayout()
+        startup_row.setSpacing(10)
+        startup_lbl = _make_label("All'avvio apri", "CardBody")
+        startup_lbl.setMinimumWidth(115)
+        startup_row.addWidget(startup_lbl)
+
+        self.startup_note_combo = QComboBox()
+        self.startup_note_combo.setMinimumHeight(34)
+        self.startup_note_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.startup_note_combo.addItem("Ultima nota visualizzata (Consigliato)", "last_viewed")
+        self.startup_note_combo.addItem("Ripristina tutte le schede aperte", "restore_tabs")
+        self.startup_note_combo.addItem("Nota più recente", "most_recent")
+        self.startup_note_combo.addItem("Nuova nota vuota", "empty")
+        saved_startup = (db.get_setting("startup_note_mode", "last_viewed") or "last_viewed").strip()
+        s_idx = self.startup_note_combo.findData(saved_startup)
+        if s_idx >= 0:
+            self.startup_note_combo.setCurrentIndex(s_idx)
+        self.startup_note_combo.currentIndexChanged.connect(
+            lambda: db.set_setting("startup_note_mode", self.startup_note_combo.currentData() or "last_viewed")
+        )
+        startup_row.addWidget(self.startup_note_combo, 1)
+        fn_sec.addLayout(startup_row)
+
+        self.auto_title_chk = QCheckBox("Genera automaticamente il titolo delle nuove note dal contesto (AI)")
+        self.auto_title_chk.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.auto_title_chk.setChecked((db.get_setting("auto_generate_note_title", "1") or "1").strip() == "1")
+        self.auto_title_chk.toggled.connect(
+            lambda chk: db.set_setting("auto_generate_note_title", "1" if chk else "0")
+        )
+        fn_sec.addWidget(self.auto_title_chk)
+
+        layout.addLayout(fn_sec)
         layout.addStretch(1)
         return page
 
@@ -853,6 +893,16 @@ class HubSettingsDialog(QDialog):
         self.auto_duck_checkbox.toggled.connect(self._on_auto_duck_toggled)
         audio_sec.addWidget(self.auto_duck_checkbox)
 
+        self.always_on_mic_chk = QCheckBox("Mantieni il microfono in pre-buffer anche quando Whis è OFF")
+        self.always_on_mic_chk.setToolTip(
+            "Se disattivato (consigliato), quando spegni Whis il microfono di sistema si spegne completamente "
+            "e viene aperto on-demand solo quando premi Shift Destro / F8."
+        )
+        self.always_on_mic_chk.setChecked((db.get_setting("always_on_prebuffer", "0") or "0").strip() == "1")
+        self.always_on_mic_chk.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.always_on_mic_chk.toggled.connect(self._on_always_on_mic_toggled)
+        audio_sec.addWidget(self.always_on_mic_chk)
+
         fb_row = QHBoxLayout()
         fb_row.setSpacing(10)
         fb_lbl = _make_label("Feedback Whis", "CardBody")
@@ -984,6 +1034,13 @@ class HubSettingsDialog(QDialog):
             self.hub.styles_auto_duck_chk.blockSignals(True)
             self.hub.styles_auto_duck_chk.setChecked(bool(checked))
             self.hub.styles_auto_duck_chk.blockSignals(False)
+
+    def _on_always_on_mic_toggled(self, checked: bool):
+        db.set_setting("always_on_prebuffer", "1" if checked else "0")
+        eng = getattr(self.hub, "engine", None)
+        if eng is not None and hasattr(eng, "set_always_on_mic"):
+            hf_on = bool(getattr(self.hub, "is_handsfree_enabled", False))
+            eng.set_always_on_mic(bool(checked or hf_on))
 
     def _on_settings_audio_mode_changed(self):
         mode = self.settings_audio_combo.currentData()
@@ -1167,7 +1224,14 @@ class HubSettingsDialog(QDialog):
 
     def _refresh_gcal_status(self):
         from core.calendar_sync import calendar_manager
-        if calendar_manager.has_token_file():
+        if calendar_manager.is_auth_expired():
+            self.gcal_account_badge.setText("Sessione scaduta")
+            self.gcal_status_lbl.setText(
+                "⚠️ Token Google scaduto o revocato (invalid_grant). Clicca 'Riconnetti Google' per rinnovare."
+            )
+            self.gcal_connect_btn.setText("Riconnetti Google")
+            self.gcal_sync_btn.setEnabled(False)
+        elif calendar_manager.has_token_file():
             self.gcal_account_badge.setText("Connesso")
             self.gcal_status_lbl.setText("Connesso • Calendario FlowTime sincronizzato.")
             self.gcal_connect_btn.setText("Cambia Account")

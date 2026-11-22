@@ -661,9 +661,11 @@ class GlobalCommandPalette(QDialog):
         else:
             q_low = query.lower()
 
-            # 1. FlowNotes: Note & Sbobine (priorità ai match nel titolo!)
+            # 1. FlowNotes: Note & Sbobine tramite SQLite FTS5 (BM25 ranking, fallback LIKE automatico)
             try:
-                notes = db.get_notes_by_hierarchy(search_query=query)
+                notes = db.search_notes_fts(query, limit=25) if hasattr(db, "search_notes_fts") else db.get_notes_by_hierarchy(search_query=query)
+                if not notes:
+                    notes = db.get_notes_by_hierarchy(search_query=query)
                 title_matches: List[PaletteEntry] = []
                 body_matches: List[PaletteEntry] = []
                 for row in notes:

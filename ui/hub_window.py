@@ -304,6 +304,11 @@ class FlowLocalHub(QMainWindow):
 
     def closeEvent(self, event):
         self._save_nk_snapshot_if_dirty("Chiusura finestra")
+        if hasattr(self, "save_workspace_session_state"):
+            try:
+                self.save_workspace_session_state()
+            except Exception:
+                pass
         event.ignore()
         self.hide()
 
@@ -1212,8 +1217,14 @@ class FlowLocalHub(QMainWindow):
         meta_row.addStretch(1)
 
         text = t.get("final_text") or ""
+        body_lbl = _make_label(text, "CardBody", wrap=True)
+        body_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
         fix_btn = _make_button("✏️ Correggi")
-        fix_btn.clicked.connect(lambda _c=False, s=text: self._open_quick_rule_dialog(s))
+        fix_btn.setToolTip("Micro-correzione 1-clic nel Dizionario (puoi anche evidenziare una parola prima di cliccare)")
+        fix_btn.clicked.connect(
+            lambda _c=False, s=text, lbl=body_lbl: self._open_quick_rule_dialog(s, lbl.selectedText())
+        )
         meta_row.addWidget(fix_btn)
 
         copy_btn = _make_button("📋 Copia")
@@ -1221,11 +1232,11 @@ class FlowLocalHub(QMainWindow):
         meta_row.addWidget(copy_btn)
         layout.addLayout(meta_row)
 
-        layout.addWidget(_make_label(text, "CardBody", wrap=True))
+        layout.addWidget(body_lbl)
         return card
 
-    def _open_quick_rule_dialog(self, text: str):
-        dlg = QuickRuleDialog(text, parent=self)
+    def _open_quick_rule_dialog(self, text: str, selected_fragment: str = ""):
+        dlg = QuickRuleDialog(text, parent=self, selected_fragment=selected_fragment)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._refresh_dictionary()
 
@@ -1577,14 +1588,22 @@ class FlowLocalHub(QMainWindow):
 
     def _on_handsfree_toggled(self, checked: bool):
         """Gestisce il click sullo switch Attivazione Mani Libere."""
-        self.is_handsfree_enabled = checked
+        self.is_handsfree_enabled = bool(checked)
+        db.set_setting("whis_handsfree_enabled", "1" if checked else "0")
         if self.wake_listener:
             if checked:
                 if not self.wake_listener.isRunning():
+                    self.wake_listener.set_paused(False)
                     self.wake_listener.start()
-                self.wake_listener.set_paused(False)
+                else:
+                    self.wake_listener.set_paused(False)
             else:
                 self.wake_listener.set_paused(True)
+
+        eng = getattr(self, "engine", None)
+        if eng is not None and hasattr(eng, "set_always_on_mic"):
+            always_prebuf = (db.get_setting("always_on_prebuffer", "0") or "0").strip().lower() in ("1", "true", "on", "yes")
+            eng.set_always_on_mic(bool(checked or always_prebuf))
 
         self._update_handsfree_ui(checked)
         if callable(getattr(self, "on_handsfree_changed", None)):
@@ -1936,6 +1955,7 @@ class FlowLocalHub(QMainWindow):
         self.nk_tree.changeFolderColorRequested.connect(self._on_nk_change_folder_color)
         self.nk_tree.deleteFolderRequested.connect(self._on_nk_delete_folder)
         self.nk_tree.toggleNoteStudiedRequested.connect(self._on_nk_toggle_studied)
+        self.nk_tree.toggleNoteFavoriteRequested.connect(self._on_nk_toggle_favorite)
         self.nk_tree.nodeLeftClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=False))
         self.nk_tree.nodeMiddleClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
         self.nk_tree.nodeDoubleClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
@@ -1946,9 +1966,10 @@ class FlowLocalHub(QMainWindow):
         # Footer compatto della Sidebar
         col1_btn_layout = QVBoxLayout()
         col1_btn_layout.setSpacing(5)
-        self.nk_new_sub_btn = _make_button("+ Materia")
+        self.nk_new_sub_btn = _make_button("+ Cartella")
         self.nk_new_sub_btn.setObjectName("NKCol1Btn")
         self.nk_new_sub_btn.setFixedHeight(30)
+        self.nk_new_sub_btn.setToolTip("Crea una nuova cartella in FlowNotes")
         self.nk_new_sub_btn.clicked.connect(self._on_nk_new_subject_clicked)
         col1_btn_layout.addWidget(self.nk_new_sub_btn)
 
@@ -2068,6 +2089,15 @@ class FlowLocalHub(QMainWindow):
         self.nk_rsvp_btn.clicked.connect(self._on_nk_rsvp_btn_clicked)
         strip_lay.addWidget(self.nk_rsvp_btn)
 
+        self.nk_favorite_btn = _make_button("", "ghost")
+        self.nk_favorite_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_favorite_btn.setFixedSize(28, 28)
+        self.nk_favorite_btn.setCheckable(True)
+        self.nk_favorite_btn.setIcon(get_icon("star", theme_key=self._current_theme, role="subtitle", size=14))
+        self.nk_favorite_btn.setToolTip("Aggiungi o rimuovi questa nota dai Preferiti")
+        self.nk_favorite_btn.clicked.connect(self._on_nk_toggle_favorite_active)
+        strip_lay.addWidget(self.nk_favorite_btn)
+
         self.nk_ask_whis_btn = _make_button("", "ghost")
         self.nk_ask_whis_btn.setObjectName("NKToolbarIconBtn")
         self.nk_ask_whis_btn.setFixedSize(28, 28)
@@ -2175,6 +2205,8 @@ class FlowLocalHub(QMainWindow):
             pane.splitTabRequested.connect(self._on_nk_split_specific_tab)
             pane.tabDroppedFromPane.connect(self._on_nk_tab_dropped_from_pane)
             pane.nodeDroppedFromTree.connect(self._on_nk_node_dropped_from_tree)
+            pane.wikilinkOpenRequested.connect(self._open_note_by_wikilink_title)
+            pane.noteIdOpenRequested.connect(self._load_note_into_nk_editor)
             pane.breadcrumb.rootClicked.connect(self._on_nk_breadcrumb_root_clicked)
             pane.breadcrumb.subjectClicked.connect(self._on_nk_breadcrumb_subject_clicked)
 
@@ -2223,6 +2255,9 @@ class FlowLocalHub(QMainWindow):
         self._nk_selected_note_id = None
         self._nk_current_filter_subject = None
         self._nk_current_filter_topic = None
+        self._nk_filter_favorites_only = False
+        self._nk_initial_note_loaded = False
+        self._restoring_nk_session = False
 
         return page
 
@@ -2328,11 +2363,62 @@ class FlowLocalHub(QMainWindow):
     def _on_nk_active_tab_changed(self, tab: Optional[TabContext]):
         if tab is not None and tab.workspace_type == "local":
             self._nk_selected_note_id = tab.note_id
+            if tab.note_id is not None and not getattr(self, "_restoring_nk_session", False):
+                try:
+                    db.set_setting("last_viewed_note_id", str(int(tab.note_id)))
+                except Exception:
+                    pass
+        if not getattr(self, "_restoring_nk_session", False):
+            self.save_workspace_session_state()
         self._sync_toolbar_from_active_pane()
+
+    def save_workspace_session_state(self):
+        """Salva le schede locali aperte (left/right pane) e lo stato Split View per ripristino all'avvio."""
+        if not hasattr(self, "nk_pane_left"):
+            return
+        try:
+            left_ids = [
+                int(t.note_id)
+                for t in self.nk_pane_left.tabs
+                if t.workspace_type == "local" and t.note_id is not None
+            ]
+            right_ids = [
+                int(t.note_id)
+                for t in self.nk_pane_right.tabs
+                if t.workspace_type == "local" and t.note_id is not None
+            ] if hasattr(self, "nk_pane_right") else []
+            payload = {
+                "left_ids": left_ids[:15],
+                "left_active": self.nk_pane_left.current_tab_index,
+                "right_ids": right_ids[:15],
+                "right_active": self.nk_pane_right.current_tab_index if hasattr(self, "nk_pane_right") else -1,
+                "split_open": bool(hasattr(self, "nk_pane_right") and not self.nk_pane_right.isHidden() and right_ids),
+            }
+            db.set_setting("flownotes_open_session", json.dumps(payload))
+        except Exception:
+            pass
 
     def _sync_toolbar_from_active_pane(self):
         pane = self._active_nk_pane()
         tab = pane.active_tab()
+        if hasattr(self, "nk_favorite_btn"):
+            is_local_saved = bool(tab and tab.workspace_type == "local" and tab.note_id is not None)
+            is_fav = bool(tab and tab.is_favorite) if is_local_saved else False
+            self.nk_favorite_btn.setEnabled(is_local_saved)
+            self.nk_favorite_btn.blockSignals(True)
+            self.nk_favorite_btn.setChecked(is_fav)
+            self.nk_favorite_btn.setIcon(
+                get_icon(
+                    "star_fill" if is_fav else "star",
+                    theme_key=self._current_theme,
+                    role="warning" if is_fav else "subtitle",
+                    size=14,
+                )
+            )
+            self.nk_favorite_btn.setToolTip(
+                "Rimuovi dai Preferiti" if is_fav else "Aggiungi questa nota ai Preferiti"
+            )
+            self.nk_favorite_btn.blockSignals(False)
         if hasattr(self, "nk_studio_btn"):
             is_st = bool(tab and tab.is_studio_view) or bool(pane.editor_body.is_studio_view)
             self.nk_studio_btn.blockSignals(True)
@@ -2359,10 +2445,47 @@ class FlowLocalHub(QMainWindow):
                 profile=self._nk_author_name(),
             )
 
-    def _on_nk_pane_local_saved(self, saved_id: int, _title: str, was_new: bool):
+    def _on_nk_pane_local_saved(self, saved_id: int, title: str, was_new: bool):
         self._nk_selected_note_id = saved_id
-        if was_new and self._nk_active_workspace_group_id is None:
-            self._refresh_notekeeper()
+        try:
+            db.set_setting("last_viewed_note_id", str(int(saved_id)))
+        except Exception:
+            pass
+        self.save_workspace_session_state()
+        self._sync_toolbar_from_active_pane()
+        if self._nk_active_workspace_group_id is None:
+            if was_new:
+                self._refresh_notekeeper()
+            else:
+                # Aggiorna il titolo nel tree e nelle card senza ricostruire l'intera UI
+                clean_t = strip_markdown_syntax((title or "Senza titolo").strip()) or "Senza titolo"
+                if hasattr(self, "nk_tree"):
+                    from PyQt6.QtWidgets import QTreeWidgetItemIterator
+                    it = QTreeWidgetItemIterator(self.nk_tree)
+                    while it.value():
+                        item = it.value()
+                        ndata = item.data(0, ROLE_NODE_DATA)
+                        if ndata and ndata[0] == "note" and int(ndata[1]) == int(saved_id):
+                            old_lbl = item.text(0)
+                            prefix = ""
+                            for tok in ("★ ", "🎙️ ", "✅ ", "📄 "):
+                                if old_lbl.startswith(tok):
+                                    prefix += tok
+                                    old_lbl = old_lbl[len(tok):]
+                            if not prefix:
+                                prefix = "📄 "
+                            item.setText(0, f"{prefix}{clean_t[:32]}")
+                            item.setToolTip(0, clean_t)
+                        it += 1
+                if hasattr(self, "nk_notes_list"):
+                    for i in range(self.nk_notes_list.vbox.count()):
+                        w = self.nk_notes_list.vbox.itemAt(i).widget()
+                        if w is not None and w.objectName() == "NKNoteCard" and w.property("note_id") == saved_id:
+                            for lbl in w.findChildren(QLabel):
+                                if lbl.objectName() == "NKNoteTitle":
+                                    lbl.setText(clean_t)
+                                    break
+                            break
 
     def _on_nk_workspace_selected(self, group_id: Optional[int]):
         self._nk_active_workspace_group_id = int(group_id) if group_id is not None else None
@@ -2483,6 +2606,9 @@ class FlowLocalHub(QMainWindow):
             in_new_tab = True
 
         kind = data[0]
+        if kind == "todos":
+            self._open_all_todos_dialog()
+            return
         if kind == "note":
             self._load_note_into_nk_editor(int(data[1]), pane=target_pane, in_new_tab=in_new_tab)
         elif kind == "group_board":
@@ -2814,13 +2940,15 @@ class FlowLocalHub(QMainWindow):
         is_sbobina = (note.get("note_type") == "sbobina") or bool(note.get("audio_path"))
         tags_str = (note.get("tags") or "")
         is_studied = bool(note.get("is_studied")) or ("Studiata" in tags_str)
+        is_favorite = bool(note.get("is_favorite"))
         icon_prefix = "🎙️" if is_sbobina else ("✅" if is_studied else "📄")
-        label = f"{icon_prefix} {clean_t[:max_len]}"
+        fav_prefix = "★ " if is_favorite else ""
+        label = f"{fav_prefix}{icon_prefix} {clean_t[:max_len]}"
         leaf = QTreeWidgetItem([label])
         leaf.setData(0, Qt.ItemDataRole.UserRole, ("note", note["id"]))
         leaf.setData(0, ROLE_NODE_DATA, ("note", note["id"]))
         leaf.setData(0, ROLE_IS_FOLDER, False)
-        leaf.setToolTip(0, clean_t)
+        leaf.setToolTip(0, f"★ {clean_t}" if is_favorite else clean_t)
         leaf.setForeground(0, QBrush(QColor(p["text"])))
         leaf.setFlags(
             Qt.ItemFlag.ItemIsEnabled
@@ -2880,6 +3008,38 @@ class FlowLocalHub(QMainWindow):
         all_item.setForeground(0, QBrush(QColor(p["title"])))
         all_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         self.nk_tree.addTopLevelItem(all_item)
+
+        # 1b. Sezione rapida: Preferiti
+        fav_notes = [n for n in all_notes if bool(n.get("is_favorite"))]
+        fav_item = QTreeWidgetItem(["Preferiti"])
+        fav_item.setData(0, Qt.ItemDataRole.UserRole, ("favorites",))
+        fav_item.setData(0, ROLE_NODE_DATA, ("favorites",))
+        fav_item.setData(0, ROLE_IS_FOLDER, True)
+        fav_item.setData(0, ROLE_LOCKED_FOLDER, True)
+        fav_item.setData(0, ROLE_COUNT, len(fav_notes))
+        fav_item.setIcon(0, get_icon("star_fill" if fav_notes else "star", theme_key=self._current_theme, role="warning", size=15))
+        fav_item.setFont(0, f_top)
+        fav_item.setForeground(0, QBrush(QColor(p["title"])))
+        fav_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        for n in fav_notes:
+            fav_item.addChild(self._make_note_leaf_item(n, p, max_len=30))
+        self.nk_tree.addTopLevelItem(fav_item)
+        if fav_notes:
+            fav_item.setExpanded(True)
+
+        # 1c. Sezione rapida: Tutti i To-Do aperti (aggregati da tutte le note)
+        open_todos = db.get_all_note_todos(include_completed=False, profile=prof_filter)
+        todos_item = QTreeWidgetItem(["To-Do aperti"])
+        todos_item.setData(0, Qt.ItemDataRole.UserRole, ("todos",))
+        todos_item.setData(0, ROLE_NODE_DATA, ("todos",))
+        todos_item.setData(0, ROLE_IS_FOLDER, True)
+        todos_item.setData(0, ROLE_LOCKED_FOLDER, True)
+        todos_item.setData(0, ROLE_COUNT, len(open_todos))
+        todos_item.setIcon(0, get_icon("check_square", theme_key=self._current_theme, role="success" if open_todos else "subtitle", size=15))
+        todos_item.setFont(0, f_top)
+        todos_item.setForeground(0, QBrush(QColor(p["title"])))
+        todos_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        self.nk_tree.addTopLevelItem(todos_item)
 
         # 2. Sezione rapida: Recenti (ultimi appunti modificati)
         recent_slice = all_notes[:8]
@@ -3067,19 +3227,27 @@ class FlowLocalHub(QMainWindow):
         data = current.data(0, Qt.ItemDataRole.UserRole)
         if not data:
             return
-        if data[0] in ("note", "group_board", "group_note"):
-            # L'apertura della nota avviene su click sinistro rilasciato (nodeLeftClicked),
+        if data[0] in ("note", "group_board", "group_note", "todos"):
+            # L'apertura della nota/bacheca/vista To-Do avviene su click sinistro rilasciato (nodeLeftClicked),
             # mai su currentItemChanged, così tasto destro e drag & drop non la aprono per errore.
             return
         if data[0] in ("all", "recent"):
+            self._nk_filter_favorites_only = False
+            self._nk_current_filter_folder_id = None
+            self._nk_current_filter_subject = None
+            self._nk_current_filter_topic = None
+        elif data[0] == "favorites":
+            self._nk_filter_favorites_only = True
             self._nk_current_filter_folder_id = None
             self._nk_current_filter_subject = None
             self._nk_current_filter_topic = None
         elif data[0] == "folder":
+            self._nk_filter_favorites_only = False
             self._nk_current_filter_folder_id = data[1]
             self._nk_current_filter_subject = None
             self._nk_current_filter_topic = None
         elif data[0] == "filter":
+            self._nk_filter_favorites_only = False
             self._nk_current_filter_folder_id = None
             _, subj, topic = data
             if subj == "all":
@@ -3108,13 +3276,15 @@ class FlowLocalHub(QMainWindow):
             search_query=sq,
             folder_id=getattr(self, "_nk_current_filter_folder_id", None),
         )
+        if getattr(self, "_nk_filter_favorites_only", False):
+            notes = [n for n in notes if bool(n.get("is_favorite"))]
 
         self.nk_notes_list.clear()
         if not notes:
             self.nk_notes_list.show_empty(
-                "Cartella vuota",
-                icon_name="notes",
-                subtitle="Crea una nuova nota o sbobina una lezione.",
+                "Nessuna nota nei Preferiti" if getattr(self, "_nk_filter_favorites_only", False) else "Cartella vuota",
+                icon_name="star" if getattr(self, "_nk_filter_favorites_only", False) else "notes",
+                subtitle="Clicca la stella su una nota per aggiungerla ai Preferiti." if getattr(self, "_nk_filter_favorites_only", False) else "Crea una nuova nota o sbobina una lezione.",
                 shortcut_hint="Ctrl+N",
                 theme_key=self._current_theme,
             )
@@ -3124,8 +3294,60 @@ class FlowLocalHub(QMainWindow):
             card = self._make_nk_note_card(n)
             self.nk_notes_list.add_card(card)
 
-        # Se nessuna nota è selezionata, carica la prima nell'editor
-        if getattr(self, "_nk_selected_note_id", None) is None and notes:
+        # Caricamento iniziale intelligente (configurabile da Impostazioni: ultima nota visualizzata / ripristina schede / più recente / vuota)
+        if not getattr(self, "_nk_initial_note_loaded", False) and getattr(self, "_nk_selected_note_id", None) is None:
+            self._nk_initial_note_loaded = True
+            self._restore_initial_note_if_needed(notes)
+
+    def _restore_initial_note_if_needed(self, notes: List[Dict[str, Any]]):
+        """Apre all'avvio la nota/sessione configurata dall'utente in Impostazioni."""
+        mode = (db.get_setting("startup_note_mode", "last_viewed") or "last_viewed").strip().lower()
+        if mode == "empty":
+            self._active_nk_pane().open_new_empty_tab(
+                subject="Generale",
+                topic="Generale",
+                profile=self._nk_author_name(),
+            )
+            return
+
+        if mode == "restore_tabs":
+            raw_sess = db.get_setting("flownotes_open_session", "") or ""
+            if raw_sess:
+                try:
+                    sess = json.loads(raw_sess)
+                    left_ids = [int(i) for i in (sess.get("left_ids") or []) if db.get_study_note_by_id(int(i))]
+                    right_ids = [int(i) for i in (sess.get("right_ids") or []) if db.get_study_note_by_id(int(i))]
+                    if left_ids:
+                        self._restoring_nk_session = True
+                        try:
+                            for idx_n, nid in enumerate(left_ids):
+                                self._load_note_into_nk_editor(nid, pane=self.nk_pane_left, in_new_tab=(idx_n > 0))
+                            l_act = int(sess.get("left_active", 0))
+                            if 0 <= l_act < len(self.nk_pane_left.tabs):
+                                self.nk_pane_left.switch_to_tab(l_act)
+                            if sess.get("split_open") and right_ids:
+                                self.nk_pane_right.show()
+                                for idx_r, nid in enumerate(right_ids):
+                                    self._load_note_into_nk_editor(nid, pane=self.nk_pane_right, in_new_tab=(idx_r > 0))
+                                r_act = int(sess.get("right_active", 0))
+                                if 0 <= r_act < len(self.nk_pane_right.tabs):
+                                    self.nk_pane_right.switch_to_tab(r_act)
+                        finally:
+                            self._restoring_nk_session = False
+                        self._sync_toolbar_from_active_pane()
+                        return
+                except Exception:
+                    self._restoring_nk_session = False
+
+        if mode in ("last_viewed", "restore_tabs"):
+            raw_last = (db.get_setting("last_viewed_note_id", "") or "").strip()
+            if raw_last.isdigit():
+                last_note = db.get_study_note_by_id(int(raw_last))
+                if last_note and not int(last_note.get("trashed") or 0):
+                    self._load_note_into_nk_editor(int(raw_last))
+                    return
+
+        if notes:
             self._load_note_into_nk_editor(notes[0]["id"])
 
     # -----------------------------------------------------------------
@@ -3198,6 +3420,247 @@ class FlowLocalHub(QMainWindow):
     def _on_nk_toggle_studied(self, note_id: int):
         db.toggle_note_studied(note_id)
         self._refresh_notekeeper()
+
+    def _on_nk_toggle_favorite(self, note_id: int):
+        new_state = db.toggle_note_favorite(int(note_id))
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is None:
+                continue
+            for t in pane.tabs:
+                if t.workspace_type == "local" and t.note_id == int(note_id):
+                    t.is_favorite = new_state
+        self._sync_toolbar_from_active_pane()
+        self._refresh_notekeeper()
+
+    def _on_nk_toggle_favorite_active(self):
+        pane = self._active_nk_pane()
+        tab = pane.active_tab()
+        if tab is None or tab.workspace_type != "local" or tab.note_id is None:
+            return
+        self._on_nk_toggle_favorite(int(tab.note_id))
+
+    def _open_note_by_wikilink_title(self, title: str):
+        """Apre la nota locale corrispondente a un [[wikilink]] (o ne propone la creazione)."""
+        clean = (title or "").strip()
+        if not clean:
+            return
+        matches = db.search_note_titles_for_wikilink(clean, limit=10)
+        chosen = None
+        for m in matches:
+            t_norm = (m.get("title") or "").strip().lower()
+            if t_norm == clean.lower() or t_norm == f"nota: {clean.lower()}":
+                chosen = m
+                break
+        if chosen is None and matches:
+            chosen = matches[0]
+        if chosen is not None:
+            self._load_note_into_nk_editor(int(chosen["id"]))
+            return
+        ans = QMessageBox.question(
+            self,
+            "Crea nota collegata",
+            f"Nessuna nota trovata per [[{clean}]].\nVuoi creare subito una nuova nota con questo titolo?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if ans == QMessageBox.StandardButton.Yes:
+            prof = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Alessandro"
+            if prof == "Tutti i profili":
+                prof = "Alessandro"
+            nid = db.add_study_note(
+                title=clean,
+                content_markdown="",
+                note_type="appunto",
+                profile=prof,
+                subject=self._nk_current_filter_subject or "Generale",
+                topic=self._nk_current_filter_topic or "Generale",
+                folder_id=getattr(self, "_nk_current_filter_folder_id", None),
+            )
+            self._refresh_notekeeper()
+            self._load_note_into_nk_editor(int(nid))
+
+    def _reload_open_tabs_for_note(self, note_id: int):
+        """Aggiorna il contenuto nei pane aperti se una nota è stata modificata esternamente (es. toggle To-Do)."""
+        note = db.get_study_note_by_id(int(note_id))
+        if not note:
+            return
+        new_md = note.get("content_markdown") or ""
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is None:
+                continue
+            for idx, tab in enumerate(pane.tabs):
+                if tab.workspace_type == "local" and tab.note_id == int(note_id):
+                    tab.content_markdown = new_md
+                    tab.is_dirty = False
+                    if idx == pane.current_tab_index:
+                        pane.editor_body.set_markdown_text(new_md)
+
+    def _jump_to_note_line(self, note_id: int, line_index: int):
+        """Apre la nota nell'editor attivo e posiziona il cursore sulla riga del To-Do."""
+        self._load_note_into_nk_editor(int(note_id))
+        pane = self._active_nk_pane()
+        if pane is not None and hasattr(pane, "editor_body"):
+            doc = pane.editor_body.document()
+            blk = doc.findBlockByNumber(max(0, int(line_index)))
+            if blk.isValid():
+                cur = QTextCursor(blk)
+                pane.editor_body.setTextCursor(cur)
+                pane.editor_body.ensureCursorVisible()
+                pane.editor_body.setFocus()
+
+    def _open_all_todos_dialog(self):
+        """Apre la vista aggregata di tutti i To-Do presenti nelle note locali."""
+        pal = self._active_palette()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Tutti i To-Do delle Note")
+        dlg.resize(740, 560)
+        dlg.setStyleSheet(
+            f"QDialog {{ background-color: {pal['bg']}; color: {pal['text']}; }}"
+            f"QLabel {{ color: {pal['text']}; }}"
+        )
+
+        root = QVBoxLayout(dlg)
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(10)
+
+        hdr = QHBoxLayout()
+        hdr.setSpacing(8)
+        title_lbl = QLabel("✅ Tutti i To-Do delle Note")
+        title_lbl.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {pal['title']};")
+        hdr.addWidget(title_lbl)
+        hdr.addStretch(1)
+        count_lbl = QLabel("")
+        count_lbl.setStyleSheet(f"font-size: 12px; color: {pal['subtitle']};")
+        hdr.addWidget(count_lbl)
+        root.addLayout(hdr)
+
+        # Barra ricerca + filtro (SEMPRE fuori dalla QScrollArea — AGENTS.md Regola 7)
+        filter_row = QHBoxLayout()
+        filter_row.setSpacing(8)
+        search_edit = QLineEdit()
+        search_edit.setPlaceholderText("🔍 Filtra attività, nota o cartella...")
+        search_edit.setMinimumHeight(36)
+        filter_row.addWidget(search_edit, 1)
+
+        show_done_cb = QCheckBox("Mostra anche completati")
+        show_done_cb.setChecked(False)
+        filter_row.addWidget(show_done_cb)
+        root.addLayout(filter_row)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        cards_lay = QVBoxLayout(container)
+        cards_lay.setContentsMargins(0, 4, 4, 4)
+        cards_lay.setSpacing(8)
+        cards_lay.addStretch(1)
+        scroll.setWidget(container)
+        root.addWidget(scroll, 1)
+
+        prof_text = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Tutti i profili"
+        prof_filter = None if prof_text == "Tutti i profili" else prof_text
+
+        def _rebuild_list():
+            while cards_lay.count() > 1:
+                it = cards_lay.takeAt(0)
+                if it.widget() is not None:
+                    it.widget().deleteLater()
+
+            include_done = show_done_cb.isChecked()
+            q = search_edit.text().strip().lower()
+            items = db.get_all_note_todos(include_completed=include_done, profile=prof_filter)
+            if q:
+                items = [
+                    t for t in items
+                    if q in (t.get("text") or "").lower()
+                    or q in (t.get("note_title") or "").lower()
+                    or q in (t.get("folder_name") or "").lower()
+                    or q in (t.get("subject") or "").lower()
+                ]
+            open_cnt = sum(1 for t in items if not t.get("checked"))
+            count_lbl.setText(f"{open_cnt} aperti · {len(items)} mostrati")
+
+            if not items:
+                empty_lbl = QLabel("Nessun To-Do trovato con i filtri attuali.")
+                empty_lbl.setWordWrap(True)
+                empty_lbl.setStyleSheet(f"color: {pal['subtitle']}; font-size: 13px; padding: 24px;")
+                empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                cards_lay.insertWidget(0, empty_lbl)
+                return
+
+            for td in items:
+                card = QFrame()
+                card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+                card.setStyleSheet(
+                    f"QFrame {{ background-color: {pal['card_bg']}; border: 1px solid {pal['card_border']}; "
+                    f"border-radius: 10px; }}"
+                )
+                c_lay = QHBoxLayout(card)
+                c_lay.setContentsMargins(12, 9, 12, 9)
+                c_lay.setSpacing(10)
+
+                cb = QCheckBox()
+                cb.setChecked(bool(td.get("checked")))
+                cb.setCursor(Qt.CursorShape.PointingHandCursor)
+
+                def _on_toggle(state, nid=td["note_id"], lidx=td["line_index"]):
+                    ok = db.toggle_note_todo_line(int(nid), int(lidx))
+                    if ok:
+                        self._reload_open_tabs_for_note(int(nid))
+                        self._refresh_notekeeper()
+                        _rebuild_list()
+
+                cb.stateChanged.connect(_on_toggle)
+                c_lay.addWidget(cb, 0, Qt.AlignmentFlag.AlignTop)
+
+                txt_col = QVBoxLayout()
+                txt_col.setContentsMargins(0, 0, 0, 0)
+                txt_col.setSpacing(3)
+
+                indent_prefix = "↳ " * min(int(td.get("indent") or 0), 3)
+                task_lbl = QLabel(f"{indent_prefix}{td.get('text') or ''}")
+                task_lbl.setWordWrap(True)
+                if td.get("checked"):
+                    task_lbl.setStyleSheet(
+                        f"color: {pal['subtitle']}; font-size: 13px; text-decoration: line-through; border: none;"
+                    )
+                else:
+                    task_lbl.setStyleSheet(
+                        f"color: {pal['text']}; font-size: 13px; font-weight: 500; border: none;"
+                    )
+                txt_col.addWidget(task_lbl)
+
+                meta_lbl = QLabel(f"📄 {td.get('note_title')}  ·  📁 {td.get('folder_name') or td.get('subject') or 'Generale'}")
+                meta_lbl.setWordWrap(True)
+                meta_lbl.setStyleSheet(f"color: {pal['subtitle']}; font-size: 11px; border: none;")
+                txt_col.addWidget(meta_lbl)
+                c_lay.addLayout(txt_col, 1)
+
+                open_btn = _make_button("Apri →", "ghost")
+                open_btn.setMinimumHeight(30)
+                open_btn.clicked.connect(
+                    lambda _c=False, nid=td["note_id"], lidx=td["line_index"]: (
+                        dlg.accept(),
+                        self._jump_to_note_line(int(nid), int(lidx)),
+                    )
+                )
+                c_lay.addWidget(open_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+                cards_lay.insertWidget(cards_lay.count() - 1, card)
+
+        search_edit.textChanged.connect(lambda _t: _rebuild_list())
+        show_done_cb.stateChanged.connect(lambda _s: _rebuild_list())
+        _rebuild_list()
+
+        foot = QHBoxLayout()
+        foot.addStretch(1)
+        close_btn = _make_button("Chiudi", "primary")
+        close_btn.clicked.connect(dlg.accept)
+        foot.addWidget(close_btn)
+        root.addLayout(foot)
+
+        dlg.exec()
 
     # -----------------------------------------------------------------
     # Command Palette Globale (Ctrl+K)
@@ -3301,6 +3764,8 @@ class FlowLocalHub(QMainWindow):
         if raw_title.lower().startswith("nota: "):
             raw_title = raw_title[6:].strip() or "Senza titolo"
         raw_title = strip_markdown_syntax(raw_title) or "Senza titolo"
+        if bool(note.get("is_favorite")):
+            raw_title = f"★ {raw_title}"
 
         t_lbl = QLabel(raw_title)
         t_lbl.setObjectName("NKNoteTitle")
@@ -3416,6 +3881,8 @@ class FlowLocalHub(QMainWindow):
             title=title_txt or "Appunto senza titolo",
             content_markdown=note.get("content_markdown") or "",
             is_dirty=False,
+            is_favorite=bool(note.get("is_favorite")),
+            auto_title_done=bool(title_txt and title_txt.lower() not in ("nuova nota", "appunto senza titolo", "senza titolo")),
             created_by_name=note.get("created_by_name") or "",
             created_by_email=note.get("created_by_email") or "",
             created_by_avatar=note.get("created_by_avatar") or "",
@@ -3424,6 +3891,13 @@ class FlowLocalHub(QMainWindow):
             last_edited_at_utc=note.get("last_edited_at_utc") or "",
         )
         target_pane.open_tab(ctx, in_new_tab=in_new_tab)
+        if not getattr(self, "_restoring_nk_session", False):
+            try:
+                db.set_setting("last_viewed_note_id", str(int(note_id)))
+            except Exception:
+                pass
+            self.save_workspace_session_state()
+        self._sync_toolbar_from_active_pane()
 
     def _set_nk_autosave_badge(self, saved: bool, custom_text: Optional[str] = None):
         if hasattr(self, "nk_pane_left"):
@@ -3464,6 +3938,11 @@ class FlowLocalHub(QMainWindow):
                     break
         if was_new or not updated_in_place:
             self._refresh_notekeeper()
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is not None and hasattr(pane, "refresh_backlinks"):
+                tab = pane.active_tab()
+                if tab is not None and tab.workspace_type == "local" and tab.note_id is not None:
+                    pane.refresh_backlinks(tab.note_id, tab.title)
 
     def _on_nk_studio_btn_clicked(self, checked: bool):
         if hasattr(self, "nk_editor_body"):
@@ -3738,7 +4217,7 @@ class FlowLocalHub(QMainWindow):
             groups = {int(g["id"]): g for g in db.get_flow_groups()}
             g = groups.get(int(active_gid))
             if g is not None:
-                name, ok = QInputDialog.getText(self, "Nuova Materia / Canale Gruppo", "Nome materia/canale:")
+                name, ok = QInputDialog.getText(self, "Nuova Cartella Gruppo", "Nome cartella:")
                 if ok and name.strip():
                     try:
                         flow_groups.create_group_subject(g, name.strip())
@@ -3746,10 +4225,61 @@ class FlowLocalHub(QMainWindow):
                     except Exception as exc:
                         QMessageBox.warning(self, "FlowGroups", str(exc))
                 return
-        prof = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Alessandro"
-        dlg = NewSubjectTopicDialog(self, default_profile=prof)
-        if dlg.exec():
-            db.sync_folders_from_notes()
+
+        from ui.notes_tree import FOLDER_PALETTE, make_vector_folder_icon
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Nuova Cartella")
+        dlg.setFixedWidth(400)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(10)
+
+        lay.addWidget(_make_label("Crea una nuova cartella", "CardTitle"))
+        lay.addWidget(QLabel("Nome cartella:"))
+        name_edit = QLineEdit()
+        name_edit.setMinimumHeight(36)
+        name_edit.setPlaceholderText("Es. Fisica 1, Progetti, Appunti vari...")
+        lay.addWidget(name_edit)
+
+        lay.addWidget(QLabel("Colore:"))
+        color_combo = QComboBox()
+        color_combo.setMinimumHeight(34)
+        for c_name, c_hex in FOLDER_PALETTE:
+            color_combo.addItem(make_vector_folder_icon(c_hex, 14), c_name, c_hex)
+        lay.addWidget(color_combo)
+
+        lay.addWidget(QLabel("Cartella padre (opzionale):"))
+        parent_combo = QComboBox()
+        parent_combo.setMinimumHeight(34)
+        parent_combo.addItem("Nessuna (cartella principale)", None)
+        cur_parent = getattr(self, "_nk_current_filter_folder_id", None)
+        for f in db.get_folders_tree():
+            parent_combo.addItem(f["name"], int(f["id"]))
+            if cur_parent is not None and int(f["id"]) == int(cur_parent):
+                parent_combo.setCurrentIndex(parent_combo.count() - 1)
+        lay.addWidget(parent_combo)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        cancel_b = _make_button("Annulla", "ghost")
+        cancel_b.clicked.connect(dlg.reject)
+        btn_row.addWidget(cancel_b)
+        ok_b = _make_button("Crea Cartella", "primary")
+        ok_b.clicked.connect(dlg.accept)
+        btn_row.addWidget(ok_b)
+        lay.addLayout(btn_row)
+
+        name_edit.setFocus()
+        if dlg.exec() == QDialog.DialogCode.Accepted and name_edit.text().strip():
+            prof = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Alessandro"
+            if prof == "Tutti i profili":
+                prof = "Alessandro"
+            db.create_folder(
+                name=name_edit.text().strip(),
+                parent_id=parent_combo.currentData(),
+                color=color_combo.currentData() or "#6366F1",
+                profile=prof,
+            )
             self._refresh_notekeeper()
 
     def _on_nk_extract_flashcards_clicked(self):
@@ -3782,6 +4312,13 @@ class FlowLocalHub(QMainWindow):
         self.fc_profile_filter.currentIndexChanged.connect(self._refresh_flashcards_page)
         toolbar.addWidget(self.fc_profile_filter)
 
+        self.fc_due_only_btn = _make_button("📅 Da ripassare oggi (0)", "ghost")
+        self.fc_due_only_btn.setCheckable(True)
+        self.fc_due_only_btn.setMinimumHeight(36)
+        self.fc_due_only_btn.setToolTip("Mostra solo le flashcard in scadenza oggi (algoritmo SM-2)")
+        self.fc_due_only_btn.toggled.connect(self._refresh_flashcards_page)
+        toolbar.addWidget(self.fc_due_only_btn)
+
         layout.addLayout(toolbar)
 
         self.fc_list = ScrollList("Nessuna flashcard d'esame presente. Creala da un appunto cliccando '🧠 Flashcard'.")
@@ -3791,12 +4328,27 @@ class FlowLocalHub(QMainWindow):
     def _refresh_flashcards_page(self):
         if not hasattr(self, "fc_list"):
             return
+        from datetime import date as _date
+        today_str = _date.today().isoformat()
         query = self.fc_search.text().strip().lower() if hasattr(self, "fc_search") else ""
         prof = self.fc_profile_filter.currentText().strip() if hasattr(self, "fc_profile_filter") else "Tutti i profili"
 
         all_fc = db.get_all_study_notes(note_type="Flashcard")
         if prof != "Tutti i profili":
             all_fc = [f for f in all_fc if (f.get("profile") or "Alessandro") == prof or (prof in (f.get("tags") or ""))]
+
+        due_cnt = sum(
+            1 for f in all_fc
+            if not (f.get("sr_next_review") or "").strip() or (f.get("sr_next_review") or "")[:10] <= today_str
+        )
+        if hasattr(self, "fc_due_only_btn"):
+            self.fc_due_only_btn.setText(f"📅 Da ripassare oggi ({due_cnt})")
+
+        if hasattr(self, "fc_due_only_btn") and self.fc_due_only_btn.isChecked():
+            all_fc = [
+                f for f in all_fc
+                if not (f.get("sr_next_review") or "").strip() or (f.get("sr_next_review") or "")[:10] <= today_str
+            ]
 
         if query:
             all_fc = [
@@ -3806,15 +4358,33 @@ class FlowLocalHub(QMainWindow):
                 or query in (f.get("tags") or "").lower()
             ]
 
+        # Ordina: prima quelle da ripassare oggi, poi per data di ripasso più vicina
+        all_fc.sort(
+            key=lambda f: (
+                0 if (not (f.get("sr_next_review") or "").strip() or (f.get("sr_next_review") or "")[:10] <= today_str) else 1,
+                (f.get("sr_next_review") or "0000-00-00")[:10],
+            )
+        )
+
         self.fc_list.clear()
         if not all_fc:
-            self.fc_list.show_empty("Nessuna flashcard trovata con i filtri attuali.")
+            empty_msg = (
+                "🎉 Tutte le flashcard di oggi sono state ripassate!"
+                if (hasattr(self, "fc_due_only_btn") and self.fc_due_only_btn.isChecked())
+                else "Nessuna flashcard trovata con i filtri attuali."
+            )
+            self.fc_list.show_empty(empty_msg)
             return
 
         for fc in all_fc:
             self.fc_list.add_card(self._make_flashcard_study_card(fc))
 
+    def _on_flashcard_sm2_rated(self, fid: int, quality: int):
+        db.review_flashcard_sm2(int(fid), int(quality))
+        self._refresh_flashcards_page()
+
     def _make_flashcard_study_card(self, fc: Dict) -> QFrame:
+        from datetime import date as _date
         card, layout = _make_card()
         fc_id = fc.get("id")
         title = fc.get("title") or "Domanda d'esame"
@@ -3839,6 +4409,22 @@ class FlowLocalHub(QMainWindow):
             meta_row.addWidget(_make_label(f"📚 {subj}", "BadgeMuted"))
         if top != "Generale":
             meta_row.addWidget(_make_label(f"🏷️ {top}", "BadgeMuted"))
+
+        # Badge stato Spaced Repetition (SM-2)
+        next_rev = (fc.get("sr_next_review") or "").strip()[:10]
+        reps = int(fc.get("sr_repetitions") or 0)
+        today_str = _date.today().isoformat()
+        if not next_rev and reps == 0:
+            sr_badge = _make_label("🆕 Nuova", "BadgeMuted")
+        elif not next_rev or next_rev <= today_str:
+            sr_badge = _make_label("🔥 Da ripassare", "Badge")
+        else:
+            try:
+                delta_days = (_date.fromisoformat(next_rev) - _date.today()).days
+                sr_badge = _make_label(f"✅ Tra {delta_days}g", "BadgeMuted")
+            except Exception:
+                sr_badge = _make_label(f"✅ {next_rev}", "BadgeMuted")
+        meta_row.addWidget(sr_badge)
         meta_row.addStretch(1)
 
         del_btn = _make_button("🗑️", "danger")
@@ -3855,10 +4441,33 @@ class FlowLocalHub(QMainWindow):
         ans_frame = QFrame()
         ans_frame.setStyleSheet("background-color: #131722; border: 1px dashed #334155; border-radius: 6px; padding: 8px;")
         ans_layout = QVBoxLayout(ans_frame)
+        ans_layout.setSpacing(8)
         ans_label = QLabel(ans_text)
         ans_label.setWordWrap(True)
         ans_label.setStyleSheet("color: #E2E8F0; font-size: 12.5px; line-height: 1.4;")
         ans_layout.addWidget(ans_label)
+
+        # Valutazione SM-2 (Anki-style)
+        rate_hint = QLabel("Quanto bene la ricordavi? (aggiorna la pianificazione SM-2)")
+        rate_hint.setWordWrap(True)
+        rate_hint.setStyleSheet("color: #94A3B8; font-size: 11px; border: none; padding-top: 4px;")
+        ans_layout.addWidget(rate_hint)
+
+        rate_row = QHBoxLayout()
+        rate_row.setSpacing(6)
+        for lbl_txt, q_val, tip in (
+            ("🔁 Ripeti (1g)", 1, "Non ricordata: ripeti domani"),
+            ("🟠 Difficile", 3, "Ricordata con fatica"),
+            ("🟢 Bene", 4, "Ricordata correttamente"),
+            ("⚡ Facile", 5, "Ricordata subito: intervallo lungo"),
+        ):
+            r_btn = _make_button(lbl_txt, "ghost")
+            r_btn.setToolTip(tip)
+            r_btn.setMinimumHeight(30)
+            r_btn.clicked.connect(lambda _c=False, fid=fc_id, q=q_val: self._on_flashcard_sm2_rated(fid, q))
+            rate_row.addWidget(r_btn)
+        ans_layout.addLayout(rate_row)
+
         ans_frame.hide()
         layout.addWidget(ans_frame)
 

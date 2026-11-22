@@ -125,12 +125,7 @@ def safe_handle_press(engine: FlowLocalEngine):
 
 
 def safe_handle_release(engine: FlowLocalEngine):
-    global last_release_time
     with keyboard_lock:
-        now = time.time()
-        if (now - last_release_time) < 0.350:  # Debounce 350ms su rilascio Shift Destro / F8
-            return
-        last_release_time = now
         engine.handle_key_release()
 
 
@@ -464,18 +459,32 @@ def main():
     wake_listener.status_message.connect(whis_hud.set_listening_status)
     whis_hud.set_wake_listener(wake_listener)
 
-    handsfree_state = {"enabled": True}
+    saved_hf = (db.get_setting("whis_handsfree_enabled", "1") or "1").strip().lower()
+    handsfree_state = {"enabled": saved_hf in ("1", "true", "on", "yes")}
     hub_ref = {"hub": None}
+
+    def _sync_engine_mic_policy():
+        """Spegne realmente il microfono di sistema quando Whis è OFF (e pre-buffer always-on non richiesto)."""
+        always_prebuf = (db.get_setting("always_on_prebuffer", "0") or "0").strip().lower() in ("1", "true", "on", "yes")
+        keep_open = bool(handsfree_state["enabled"] or always_prebuf)
+        if hasattr(engine, "set_always_on_mic"):
+            engine.set_always_on_mic(keep_open)
 
     def on_device_changed(new_dev_idx):
         engine.change_device(new_dev_idx)
         if wake_listener:
             wake_listener.device_index = new_dev_idx
+            if handsfree_state["enabled"] and wake_listener.isRunning():
+                wake_listener.set_paused(True)
+                wake_listener.set_paused(False)
 
-    # Avvio di default: Attivo (ON) subito all'apertura
+    # Applica politica microfono all'avvio in base allo stato persistito di Whis
+    _sync_engine_mic_policy()
     if handsfree_state["enabled"]:
-        wake_listener.start()
         wake_listener.set_paused(False)
+        wake_listener.start()
+    else:
+        wake_listener.set_paused(True)
 
     # Gestione automatica della pausa: quando l'utente usa Shift Destro / F8,
     # il listener hands-free si mette istantaneamente in pausa per evitare conflitti audio
@@ -625,23 +634,29 @@ def main():
     handsfree_act.setChecked(handsfree_state["enabled"])
 
     def on_toggle_handsfree(checked: bool):
-        handsfree_state["enabled"] = checked
+        handsfree_state["enabled"] = bool(checked)
+        db.set_setting("whis_handsfree_enabled", "1" if checked else "0")
         handsfree_act.setIcon(mic_icon_on if checked else mic_icon_off)
+        _sync_engine_mic_policy()
         hub = hub_ref["hub"]
         if hub is not None and hasattr(hub, "handsfree_switch"):
             hub.handsfree_switch.setChecked(checked)
         elif wake_listener:
             if checked:
                 if not wake_listener.isRunning():
+                    wake_listener.set_paused(False)
                     wake_listener.start()
-                wake_listener.set_paused(False)
+                else:
+                    wake_listener.set_paused(False)
             else:
                 wake_listener.set_paused(True)
 
     handsfree_act.toggled.connect(on_toggle_handsfree)
 
     def on_hub_handsfree_changed(active: bool):
-        handsfree_state["enabled"] = active
+        handsfree_state["enabled"] = bool(active)
+        db.set_setting("whis_handsfree_enabled", "1" if active else "0")
+        _sync_engine_mic_policy()
         handsfree_act.blockSignals(True)
         handsfree_act.setChecked(active)
         handsfree_act.setIcon(mic_icon_on if active else mic_icon_off)
@@ -678,17 +693,32 @@ def main():
             tray.hide()
             orb.hide()
             if hub_ref["hub"] is not None:
+                try:
+                    if hasattr(hub_ref["hub"], "save_workspace_session_state"):
+                        hub_ref["hub"].save_workspace_session_state()
+                except Exception:
+                    pass
                 hub_ref["hub"].hide()
             whis_hud.hide()
             if wake_listener:
                 wake_listener.stop()
-            if engine.stream:
+            if hasattr(engine, "_stop_stream"):
+                engine._stop_stream()
+            elif engine.stream:
                 engine.stream.stop()
                 engine.stream.close()
         except Exception:
             pass
+        try:
+            cleanup_keyboard()
+        except Exception:
+            pass
+        try:
+            db.checkpoint_and_close()
+        except Exception:
+            pass
         app.quit()
-        os._exit(0)
+        QTimer.singleShot(450, lambda: os._exit(0))
 
     exit_icon = create_svg_icon(
         '<path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>'

@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
@@ -17,11 +18,33 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 DEFAULT_GEMINI_TIMEOUT = 8.0
+DICTATION_GEMINI_TIMEOUT = 3.0
+GEMINI_COOLDOWN_SECONDS = 30.0
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 _runtime_lock = threading.Lock()
 _active_runtime_engine: str = ""
 _runtime_listeners: List[Callable[[str], None]] = []
+_gemini_cooldown_until: float = 0.0
+
+
+def mark_gemini_unavailable(cooldown_s: float = GEMINI_COOLDOWN_SECONDS) -> None:
+    """Attiva un breve cooldown dopo errori di rete/timeout per evitare attese ripetute su ogni chunk."""
+    global _gemini_cooldown_until
+    with _runtime_lock:
+        _gemini_cooldown_until = max(_gemini_cooldown_until, time.monotonic() + max(1.0, float(cooldown_s)))
+
+
+def clear_gemini_cooldown() -> None:
+    """Azzera il cooldown Gemini (es. dopo verifica API Key o cambio impostazioni)."""
+    global _gemini_cooldown_until
+    with _runtime_lock:
+        _gemini_cooldown_until = 0.0
+
+
+def is_gemini_in_cooldown() -> bool:
+    with _runtime_lock:
+        return time.monotonic() < _gemini_cooldown_until
 
 
 def set_active_runtime_engine(label: str):
@@ -140,9 +163,13 @@ def should_use_gemini(task_type: str, db_manager=None) -> bool:
         return False
 
     provider = cfg["provider"]
+    if provider == "adaptive" and is_gemini_in_cooldown():
+        return False
     if provider in ("adaptive", "gemini"):
         return True
     if provider == "hybrid":
+        if is_gemini_in_cooldown() and cfg.get("hybrid_fallback", True):
+            return False
         return task_type in ("vision_ocr", "whis_screen", "whis_deep", "lecture_heavy")
     return False
 
@@ -159,6 +186,7 @@ def verify_api_key(api_key: str, model: str = DEFAULT_GEMINI_MODEL, timeout: flo
 
         client = genai.Client(api_key=key)
         client.models.get(model=model)
+        clear_gemini_cooldown()
         return True, "Chiave valida"
     except ImportError:
         pass
@@ -174,6 +202,7 @@ def verify_api_key(api_key: str, model: str = DEFAULT_GEMINI_MODEL, timeout: flo
         req = urllib.request.Request(url, method="GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             if resp.status == 200:
+                clear_gemini_cooldown()
                 return True, "Chiave valida"
             return False, f"Chiave non valida (HTTP {resp.status})"
     except urllib.error.HTTPError as he:

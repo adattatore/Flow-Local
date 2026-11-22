@@ -134,18 +134,12 @@ def format_spoken_lists(text: str) -> str:
 
 
 def normalize_post_transcription(text: str) -> str:
-    """Normalizzazione regex nomi e correzioni deterministiche post-trascrizione."""
+    """Normalizzazione regex nomi e correzioni deterministiche sicure post-trascrizione."""
     if not text:
         return text
-    # Micro-fix regex nomi specifici
     text = re.sub(r"\bFlow\s*Local\s*ab\b", "FlowLocal Hub", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bCoreAudioFeedback\.py\b", "core/audio_feedback.py", text, flags=re.IGNORECASE)
-
-    # Correzioni deterministiche emerse dai test acustici FlowType
     text = re.sub(r"\bun'appuntamento\b", "un appuntamento", text, flags=re.IGNORECASE)
     text = re.sub(r"\b(agli|degli|i miei|negli)\s+appuntiti\b", r"\1 appunti", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bnon deve peggiorarmi\b", "non deve parlarmi", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bdownload\s+[Ll]a[Tt]e[Xx]\b", "Markdown e LaTeX", text)
     return text
 
 

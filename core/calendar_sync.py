@@ -83,7 +83,16 @@ class GoogleCalendarManager:
         self._is_syncing = False
         self._last_sync_ts = 0.0
         self._last_sync_error: str = ""
+        self._auth_expired: bool = False
+        self._auth_expired_notified: bool = False
         self._sync_listeners: List[Callable[[bool, str], None]] = []
+
+    def is_auth_expired(self) -> bool:
+        """Restituisce True se il refresh token OAuth è scaduto/revocato (invalid_grant)."""
+        return bool(self._auth_expired)
+
+    def get_last_sync_error(self) -> str:
+        return self._last_sync_error or ""
 
     def is_local_ready(self) -> bool:
         """Il calendario locale SQLite è sempre pronto e attivo senza configurazioni esterne."""
@@ -164,8 +173,30 @@ class GoogleCalendarManager:
                     creds.refresh(Request())
                     with open(self.token_path, "w", encoding="utf-8") as token_file:
                         token_file.write(creds.to_json())
+                    self._auth_expired = False
+                    self._auth_expired_notified = False
+                    self._last_sync_error = ""
                 except Exception as e:
-                    print(f"[GoogleCalendar] Impossibile rinnovare il token: {e}")
+                    err_s = str(e)
+                    is_revoked = ("invalid_grant" in err_s.lower()) or ("expired or revoked" in err_s.lower())
+                    if is_revoked:
+                        self._auth_expired = True
+                        self._last_sync_error = (
+                            "Sessione Google Calendar scaduta o revocata (invalid_grant). "
+                            "Riconnetti l'account in Impostazioni → Google & Gruppi."
+                        )
+                        if not self._auth_expired_notified:
+                            self._auth_expired_notified = True
+                            print(f"[GoogleCalendar] {self._last_sync_error}")
+                            self._notify_sync_listeners(False, self._last_sync_error)
+                        # In modalità interattiva rimuovi il token scaduto così OAuth riparte pulito
+                        if interactive and os.path.exists(self.token_path):
+                            try:
+                                os.remove(self.token_path)
+                            except Exception:
+                                pass
+                    else:
+                        print(f"[GoogleCalendar] Impossibile rinnovare il token: {e}")
                     creds = None
             else:
                 creds = None
@@ -186,6 +217,9 @@ class GoogleCalendarManager:
             os.makedirs(os.path.dirname(os.path.abspath(self.token_path)), exist_ok=True)
             with open(self.token_path, "w", encoding="utf-8") as token_file:
                 token_file.write(creds.to_json())
+            self._auth_expired = False
+            self._auth_expired_notified = False
+            self._last_sync_error = ""
 
         return creds
 
@@ -826,6 +860,8 @@ class GoogleCalendarManager:
     def sync_in_background(self, force: bool = False):
         """Avvia la sincronizzazione Google Calendar in un thread daemon non bloccante."""
         if not GOOGLE_LIBS_AVAILABLE or not self.has_token_file():
+            return
+        if self._auth_expired and not force:
             return
         if self._is_syncing:
             return

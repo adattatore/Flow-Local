@@ -1017,21 +1017,21 @@ class KnowledgeGraphWidget(QFrame):
 
 
 class QuickRuleDialog(QDialog):
-    """Dialog rapido per trasformare una trascrizione in regola Dizionario o Snippet."""
+    """Dialog rapido di micro-correzione 1-clic per trasformare una parola/frase della trascrizione in regola Dizionario o Snippet."""
 
-    def __init__(self, initial_text: str = "", parent=None):
+    def __init__(self, initial_text: str = "", parent=None, selected_fragment: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("Correggi / Salva Regola")
-        self.setMinimumWidth(520)
+        self.setWindowTitle("Correggi / Impara nel Dizionario")
+        self.setMinimumWidth(560)
         self.setStyleSheet(parent.styleSheet() if parent and parent.styleSheet() else HUB_QSS)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(12)
+        layout.setSpacing(10)
 
-        layout.addWidget(_make_label("Crea regola rapida dalla trascrizione", "PageTitle"))
+        layout.addWidget(_make_label("Micro-correzione rapida dalla trascrizione", "PageTitle"))
         layout.addWidget(_make_label(
-            "Salva una correzione fonetica nel Dizionario oppure trasforma la frase in uno Snippet vocale.",
+            "Clicca una parola qui sotto (oppure seleziona una breve frase nel riquadro) per salvarla subito nel Dizionario.",
             "PageSubtitle",
             wrap=True,
         ))
@@ -1058,19 +1058,81 @@ class QuickRuleDialog(QDialog):
 
         self.stack = QStackedWidget()
 
-        # Pagina 0: Dizionario
+        # Pagina 0: Dizionario con selezione 1-clic dalla trascrizione
         dict_w = QWidget()
         dl = QVBoxLayout(dict_w)
         dl.setContentsMargins(0, 4, 0, 0)
         dl.setSpacing(8)
-        dl.addWidget(_make_label("Parola errata / alias pronunciato", "CardMeta"))
-        self.alias_edit = QLineEdit(initial_text.strip())
-        self.alias_edit.setPlaceholderText("Es. antigraffiti")
+
+        full_clean = (initial_text or "").strip()
+        if full_clean:
+            src_hdr = QHBoxLayout()
+            src_hdr.addWidget(_make_label("Trascrizione (evidenzia la parte sbagliata o clicca una parola):", "CardMeta"))
+            src_hdr.addStretch(1)
+            use_sel_btn = _make_button("↘ Usa selezione", "ghost")
+            use_sel_btn.setFixedHeight(26)
+            src_hdr.addWidget(use_sel_btn)
+            dl.addLayout(src_hdr)
+
+            self._src_preview = QTextEdit()
+            self._src_preview.setReadOnly(True)
+            self._src_preview.setMinimumHeight(74)
+            self._src_preview.setMaximumHeight(110)
+            self._src_preview.setPlainText(full_clean)
+            dl.addWidget(self._src_preview)
+
+            def _apply_preview_selection():
+                sel = self._src_preview.textCursor().selectedText().replace("\u2029", " ").strip(" .,!?;:\"'()[]")
+                if sel:
+                    self.alias_edit.setText(sel)
+                    self.term_edit.setFocus()
+
+            use_sel_btn.clicked.connect(_apply_preview_selection)
+            self._src_preview.selectionChanged.connect(
+                lambda: _apply_preview_selection() if 1 <= len(self._src_preview.textCursor().selectedText().strip()) <= 45 else None
+            )
+
+            # Chip cliccabili 1-clic per le parole significative (max 14 parole distinte)
+            raw_tokens = re.findall(r"[A-Za-zÀ-ÿ0-9'\-]{3,}", full_clean)
+            seen_tok = set()
+            chips: List[str] = []
+            for tok in raw_tokens:
+                tl = tok.lower()
+                if tl not in seen_tok:
+                    seen_tok.add(tl)
+                    chips.append(tok)
+                    if len(chips) >= 14:
+                        break
+            if chips:
+                chips_row1 = QHBoxLayout()
+                chips_row1.setSpacing(5)
+                chips_row2 = QHBoxLayout()
+                chips_row2.setSpacing(5)
+                for idx_c, tok in enumerate(chips):
+                    cb = QPushButton(tok)
+                    cb.setObjectName("FilterPill")
+                    cb.setCursor(Qt.CursorShape.PointingHandCursor)
+                    cb.setFixedHeight(26)
+                    cb.clicked.connect(lambda _c=False, w=tok: self._pick_alias_word(w))
+                    (chips_row1 if idx_c < 7 else chips_row2).addWidget(cb)
+                chips_row1.addStretch(1)
+                dl.addLayout(chips_row1)
+                if len(chips) > 7:
+                    chips_row2.addStretch(1)
+                    dl.addLayout(chips_row2)
+
+        initial_alias = (selected_fragment or "").strip()
+        if not initial_alias and len(full_clean.split()) <= 3:
+            initial_alias = full_clean
+
+        dl.addWidget(_make_label("Parola o frase errata / alias pronunciato", "CardMeta"))
+        self.alias_edit = QLineEdit(initial_alias)
+        self.alias_edit.setPlaceholderText("Es. punti cavi, antigraffiti...")
         self.alias_edit.setMinimumHeight(36)
         dl.addWidget(self.alias_edit)
         dl.addWidget(_make_label("Parola corretta da inserire", "CardMeta"))
         self.term_edit = QLineEdit()
-        self.term_edit.setPlaceholderText("Es. Antigravity")
+        self.term_edit.setPlaceholderText("Es. punti chiave, Antigravity...")
         self.term_edit.setMinimumHeight(36)
         dl.addWidget(self.term_edit)
         dl.addStretch(1)
@@ -1089,7 +1151,7 @@ class QuickRuleDialog(QDialog):
         sl.addWidget(_make_label("Testo espanso completo", "CardMeta"))
         self.expansion_edit = QTextEdit()
         self.expansion_edit.setMinimumHeight(110)
-        self.expansion_edit.setPlainText(initial_text.strip())
+        self.expansion_edit.setPlainText(full_clean)
         sl.addWidget(self.expansion_edit, 1)
         self.stack.addWidget(snip_w)
 
@@ -1105,6 +1167,13 @@ class QuickRuleDialog(QDialog):
         btns.addWidget(cancel_btn)
         btns.addWidget(save_btn)
         layout.addLayout(btns)
+
+        if initial_alias:
+            self.term_edit.setFocus()
+
+    def _pick_alias_word(self, word: str):
+        self.alias_edit.setText(word)
+        self.term_edit.setFocus()
 
     def _on_save(self):
         if self.stack.currentIndex() == 0:

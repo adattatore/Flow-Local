@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
-from PyQt6.QtCore import QEvent, QMimeData, QPoint, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QMimeData, QPoint, QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QDrag, QFont, QIcon, QMouseEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -68,6 +68,8 @@ class TabContext:
     lock_info: Optional[Dict[str, Any]] = None
     is_studio_view: bool = False
     is_new_empty: bool = False
+    is_favorite: bool = False
+    auto_title_done: bool = False
     created_by_name: str = ""
     created_by_email: str = ""
     created_by_avatar: str = ""
@@ -1029,6 +1031,27 @@ class GroupBoardWidget(QWidget):
         self.scroll_vbox.addStretch(1)
 
 
+class _AutoTitleWorker(QThread):
+    """Worker asincrono non bloccante per generare il titolo della nota dal contenuto."""
+
+    titleReady = pyqtSignal(str, str)  # (tab_id, generated_title)
+
+    def __init__(self, tab_id: str, content_md: str, folder_name: str = "", parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._tab_id = tab_id
+        self._content_md = content_md
+        self._folder_name = folder_name
+
+    def run(self):
+        try:
+            from core.ai_pipeline import LLMRefiner
+            title = LLMRefiner.generate_note_title(self._content_md, folder_name=self._folder_name)
+            if title:
+                self.titleReady.emit(self._tab_id, title)
+        except Exception:
+            pass
+
+
 class EditorPane(QWidget):
     """Pannello Editor autonomo (Left / Right) con TabBar Win11, Breadcrumb, Editor e Bacheca."""
 
@@ -1050,6 +1073,8 @@ class EditorPane(QWidget):
     splitTabRequested = pyqtSignal(object, int)
     tabDroppedFromPane = pyqtSignal(str, int, object, object)  # source_pane_id, tab_idx, target_pane, drop_pos
     nodeDroppedFromTree = pyqtSignal(object, object)  # node_data, target_pane
+    wikilinkOpenRequested = pyqtSignal(str)  # titolo nota da [[wikilink]]
+    noteIdOpenRequested = pyqtSignal(int)    # apertura nota da pannello Backlinks
 
     def __init__(
         self,
@@ -1123,11 +1148,25 @@ class EditorPane(QWidget):
         ed_lay.setContentsMargins(12, 10, 12, 6)
         ed_lay.setSpacing(6)
 
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
+
         self.editor_title = DictationGhostLineEdit(dark_mode=is_dark)
         self.editor_title.setObjectName("NKEditorTitle")
         self.editor_title.setPlaceholderText("Titolo della nota...")
         self.editor_title.setMinimumHeight(36)
-        ed_lay.addWidget(self.editor_title)
+        title_row.addWidget(self.editor_title, 1)
+
+        self.btn_auto_title = QPushButton("")
+        self.btn_auto_title.setObjectName("NKToolbarIconBtn")
+        self.btn_auto_title.setFixedSize(28, 28)
+        self.btn_auto_title.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_auto_title.setIcon(get_icon("magic", theme_key=theme_key, role="accent", size=14))
+        self.btn_auto_title.setToolTip("Genera titolo automatico in base al contenuto della nota")
+        self.btn_auto_title.clicked.connect(lambda: self.trigger_auto_title(manual=True))
+        title_row.addWidget(self.btn_auto_title)
+        ed_lay.addLayout(title_row)
 
         self.editor_author_lbl = QLabel("")
         self.editor_author_lbl.setObjectName("NKEditorAuthorMeta")
@@ -1143,7 +1182,7 @@ class EditorPane(QWidget):
 
         self.editor_subject = QLineEdit()
         self.editor_subject.setObjectName("NKEditorPill")
-        self.editor_subject.setPlaceholderText("Materia")
+        self.editor_subject.setPlaceholderText("Cartella")
         self.editor_subject.setFixedHeight(26)
         self.editor_subject.setMaximumWidth(150)
         meta_grid.addWidget(self.editor_subject)
@@ -1207,6 +1246,26 @@ class EditorPane(QWidget):
         self.audio_bar.hide()
         ed_lay.addWidget(self.audio_bar)
 
+        # Pannello Backlinks compatto (Note collegate / citazioni [[Wikilink]])
+        self.backlinks_bar = QFrame()
+        self.backlinks_bar.setObjectName("NKBacklinksBar")
+        self.backlinks_bar.setStyleSheet(
+            "QFrame#NKBacklinksBar { background-color: rgba(148, 163, 184, 0.06); "
+            "border-top: 1px solid rgba(148, 163, 184, 0.16); border-radius: 6px; }"
+        )
+        bl_lay = QHBoxLayout(self.backlinks_bar)
+        bl_lay.setContentsMargins(10, 5, 10, 5)
+        bl_lay.setSpacing(6)
+        self._backlinks_lbl = QLabel("🔗 Note collegate:")
+        self._backlinks_lbl.setStyleSheet("color: #94A3B8; font-size: 11px; font-weight: 600; background: transparent;")
+        bl_lay.addWidget(self._backlinks_lbl)
+        self._backlinks_pills_lay = QHBoxLayout()
+        self._backlinks_pills_lay.setContentsMargins(0, 0, 0, 0)
+        self._backlinks_pills_lay.setSpacing(5)
+        bl_lay.addLayout(self._backlinks_pills_lay, 1)
+        self.backlinks_bar.hide()
+        ed_lay.addWidget(self.backlinks_bar)
+
         self.audio_bar.positionChangedMs.connect(self.editor_body.highlight_audio_position)
         self.audio_bar.playbackStateChanged.connect(
             lambda playing: None if playing else self.editor_body.clear_audio_highlight()
@@ -1224,11 +1283,17 @@ class EditorPane(QWidget):
         self.board_widget.refreshRequested.connect(lambda: self.refreshBoardRequested.emit(self))
         self.stack.addWidget(self.board_widget)
 
-        # Autosave timer
+        # Autosave timer + Auto-Title timer (generazione automatica titolo contestuale)
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.setInterval(800)
         self._autosave_timer.timeout.connect(self._perform_autosave)
+
+        self._auto_title_timer = QTimer(self)
+        self._auto_title_timer.setSingleShot(True)
+        self._auto_title_timer.setInterval(2400)
+        self._auto_title_timer.timeout.connect(lambda: self.trigger_auto_title(manual=False))
+        self._auto_title_workers: List[_AutoTitleWorker] = []
 
         self.editor_title.textChanged.connect(self._on_editor_modified)
         self.editor_subject.textChanged.connect(self._on_editor_modified)
@@ -1241,6 +1306,7 @@ class EditorPane(QWidget):
         self.editor_body.studioViewChanged.connect(self.studioViewChanged.emit)
         self.editor_body.rsvpRequested.connect(self.rsvpRequested.emit)
         self.editor_body.sendSelectionToSplitRequested.connect(self.sendSelectionToSplitRequested.emit)
+        self.editor_body.wikilinkClicked.connect(self.wikilinkOpenRequested.emit)
 
         for w in (self, self.editor_title, self.editor_body, self.editor_subject, self.editor_topic, self.tab_bar_widget):
             w.installEventFilter(self)
@@ -1316,6 +1382,8 @@ class EditorPane(QWidget):
             self.editor_body.set_sync_accent_color(accent)
         if hasattr(self.editor_title, "set_dark_mode"):
             self.editor_title.set_dark_mode(is_dark)
+        if hasattr(self, "btn_auto_title"):
+            self.btn_auto_title.setIcon(get_icon("magic", theme_key=theme_key, role="accent", size=14))
         self.set_active_pane(self._is_active_pane)
 
     def active_tab(self) -> Optional[TabContext]:
@@ -1608,10 +1676,45 @@ class EditorPane(QWidget):
             if tab.workspace_type == "group":
                 badge_txt = "Modifica con Lock attivo" if tab.is_locked_by_me else "Sola lettura (Acquisisci Lock per modificare)"
                 self.set_autosave_badge(True, badge_txt)
+                self.refresh_backlinks(None, "")
             else:
                 self.set_autosave_badge(not tab.is_dirty)
+                self.refresh_backlinks(tab.note_id, tab.title)
         finally:
             self._loading_note = False
+
+    def refresh_backlinks(self, note_id: Optional[int], title: str = ""):
+        """Aggiorna la barra compatta dei Backlinks / Note collegate sotto l'editor."""
+        if not hasattr(self, "backlinks_bar"):
+            return
+        while self._backlinks_pills_lay.count():
+            it = self._backlinks_pills_lay.takeAt(0)
+            if it and it.widget():
+                it.widget().deleteLater()
+        if not note_id:
+            self.backlinks_bar.hide()
+            return
+        try:
+            links = db.get_note_backlinks(int(note_id), title or "")
+        except Exception:
+            links = []
+        if not links:
+            self.backlinks_bar.hide()
+            return
+        self._backlinks_lbl.setText(f"🔗 Collegate ({len(links)}):")
+        for lk in links[:6]:
+            lid = int(lk["id"])
+            ltitle = (lk.get("title") or "Nota").strip()
+            short_t = (ltitle[:24] + "…") if len(ltitle) > 25 else ltitle
+            btn = QPushButton(short_t)
+            btn.setObjectName("FilterPill")
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(22)
+            btn.setToolTip(f"{ltitle} — {lk.get('reason') or 'Nota collegata'}")
+            btn.clicked.connect(lambda _c=False, target_id=lid: self.noteIdOpenRequested.emit(target_id))
+            self._backlinks_pills_lay.addWidget(btn)
+        self._backlinks_pills_lay.addStretch(1)
+        self.backlinks_bar.show()
 
     def set_autosave_badge(self, saved: bool, custom_text: Optional[str] = None):
         if saved:
@@ -1636,8 +1739,93 @@ class EditorPane(QWidget):
             self._dirty_for_snapshot = True
             self.set_autosave_badge(False)
             self._autosave_timer.start(800)
+
+            # Pianifica generazione automatica del titolo se assente/default e contenuto sufficiente
+            auto_enabled = (db.get_setting("auto_generate_note_title", "1") or "1").strip() == "1"
+            cur_title = self.editor_title.text().strip()
+            is_default_title = (not cur_title) or (cur_title.lower() in ("nuova nota", "appunto senza titolo", "senza titolo"))
+            if auto_enabled and is_default_title and not tab.auto_title_done and len(tab.content_markdown.strip()) >= 45:
+                self._auto_title_timer.start(2400)
         else:
             self.set_autosave_badge(False, "Modifiche locali (premi Pubblica per salvare nel Gruppo)")
+
+    def trigger_auto_title(self, manual: bool = False):
+        """Avvia la generazione asincrona del titolo in base al contenuto della nota."""
+        tab = self.active_tab()
+        if tab is None or tab.workspace_type != "local":
+            return
+        if self.editor_title.isReadOnly():
+            return
+        content = self.editor_body.get_markdown_text().strip()
+        if len(content) < (12 if manual else 45):
+            if manual:
+                self.set_autosave_badge(True, "Scrivi prima qualche riga per generare il titolo")
+            return
+        cur_title = self.editor_title.text().strip()
+        is_default_title = (not cur_title) or (cur_title.lower() in ("nuova nota", "appunto senza titolo", "senza titolo"))
+        if not manual and not is_default_title:
+            return
+
+        folder_name = self.editor_subject.text().strip() or tab.subject or ""
+        if manual:
+            self.set_autosave_badge(False, "✦ Generazione titolo in corso...")
+
+        worker = _AutoTitleWorker(tab.tab_id, content, folder_name=folder_name, parent=self)
+        self._auto_title_workers.append(worker)
+        worker.titleReady.connect(
+            lambda tid, new_title, is_man=manual: self._on_auto_title_ready(tid, new_title, is_man)
+        )
+        worker.finished.connect(lambda w=worker: self._cleanup_title_worker(w))
+        worker.start()
+
+    def _cleanup_title_worker(self, worker: _AutoTitleWorker):
+        if worker in self._auto_title_workers:
+            self._auto_title_workers.remove(worker)
+        worker.deleteLater()
+
+    def _on_auto_title_ready(self, tab_id: str, generated_title: str, manual: bool):
+        clean_t = (generated_title or "").strip()
+        if not clean_t:
+            return
+        target_tab = next((t for t in self.tabs if t.tab_id == tab_id), None)
+        if target_tab is None or target_tab.workspace_type != "local":
+            return
+        is_active = (self.active_tab() is target_tab)
+        cur_title = self.editor_title.text().strip() if is_active else (target_tab.title or "").strip()
+        is_default_title = (not cur_title) or (cur_title.lower() in ("nuova nota", "appunto senza titolo", "senza titolo"))
+        if not manual and not is_default_title:
+            return
+
+        target_tab.title = clean_t
+        target_tab.auto_title_done = True
+        if is_active:
+            had_body_focus = self.editor_body.hasFocus()
+            self._loading_note = True
+            try:
+                self.editor_title.setText(clean_t)
+            finally:
+                self._loading_note = False
+            if had_body_focus:
+                self.editor_body.setFocus()
+            self.tab_bar_widget.update_tab_title(self.current_tab_index, target_tab)
+            self.breadcrumb.update_from_tab(target_tab)
+            self.set_autosave_badge(False, "✦ Titolo generato")
+            self._autosave_timer.start(350)
+        elif target_tab.note_id:
+            try:
+                db.update_study_note(
+                    target_tab.note_id,
+                    clean_t,
+                    target_tab.content_markdown,
+                    target_tab.profile,
+                    target_tab.subject,
+                    target_tab.topic,
+                    target_tab.note_type,
+                )
+            except Exception:
+                pass
+            idx = self.tabs.index(target_tab)
+            self.tab_bar_widget.update_tab_title(idx, target_tab)
 
     def _perform_autosave(self):
         if self._loading_note:

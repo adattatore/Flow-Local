@@ -111,6 +111,11 @@ class DatabaseManager:
             ("audio_path", "TEXT DEFAULT ''"),
             ("folder_id", "INTEGER DEFAULT NULL"),
             ("is_studied", "INTEGER DEFAULT 0"),
+            ("is_favorite", "INTEGER DEFAULT 0"),
+            ("sr_ease", "REAL DEFAULT 2.5"),
+            ("sr_interval", "INTEGER DEFAULT 0"),
+            ("sr_repetitions", "INTEGER DEFAULT 0"),
+            ("sr_next_review", "TEXT DEFAULT ''"),
             ("updated_at", "TEXT DEFAULT ''"),
             ("trashed", "INTEGER DEFAULT 0"),
             ("created_by_name", "TEXT DEFAULT ''"),
@@ -355,9 +360,61 @@ class DatabaseManager:
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_flow_groups_folder ON flow_groups(drive_folder_id);")
 
         conn.commit()
+        self._init_fts5_index()
         self._seed_default_data()
         self._ensure_updated_defaults()
         self.sync_folders_from_notes()
+
+    def _init_fts5_index(self):
+        """Inizializza l'indice Full-Text SQLite FTS5 sincronizzato automaticamente via trigger su study_notes."""
+        self._fts5_enabled = False
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS study_notes_fts USING fts5(
+                    title,
+                    content_markdown,
+                    tags,
+                    subject,
+                    topic,
+                    content='study_notes',
+                    content_rowid='id',
+                    tokenize='unicode61 remove_diacritics 2'
+                );
+            """)
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS study_notes_ai AFTER INSERT ON study_notes BEGIN
+                    INSERT INTO study_notes_fts(rowid, title, content_markdown, tags, subject, topic)
+                    VALUES (new.id, COALESCE(new.title,''), COALESCE(new.content_markdown,''), COALESCE(new.tags,''), COALESCE(new.subject,''), COALESCE(new.topic,''));
+                END;
+            """)
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS study_notes_ad AFTER DELETE ON study_notes BEGIN
+                    INSERT INTO study_notes_fts(study_notes_fts, rowid, title, content_markdown, tags, subject, topic)
+                    VALUES('delete', old.id, COALESCE(old.title,''), COALESCE(old.content_markdown,''), COALESCE(old.tags,''), COALESCE(old.subject,''), COALESCE(old.topic,''));
+                END;
+            """)
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS study_notes_au AFTER UPDATE ON study_notes BEGIN
+                    INSERT INTO study_notes_fts(study_notes_fts, rowid, title, content_markdown, tags, subject, topic)
+                    VALUES('delete', old.id, COALESCE(old.title,''), COALESCE(old.content_markdown,''), COALESCE(old.tags,''), COALESCE(old.subject,''), COALESCE(old.topic,''));
+                    INSERT INTO study_notes_fts(rowid, title, content_markdown, tags, subject, topic)
+                    VALUES (new.id, COALESCE(new.title,''), COALESCE(new.content_markdown,''), COALESCE(new.tags,''), COALESCE(new.subject,''), COALESCE(new.topic,''));
+                END;
+            """)
+            # Ricostruisci indice una volta se vuoto rispetto alle note esistenti
+            cursor.execute("SELECT COUNT(*) FROM study_notes")
+            notes_cnt = int(cursor.fetchone()[0] or 0)
+            if notes_cnt > 0:
+                cursor.execute("SELECT COUNT(*) FROM study_notes_fts")
+                fts_cnt = int(cursor.fetchone()[0] or 0)
+                if fts_cnt != notes_cnt:
+                    cursor.execute("INSERT INTO study_notes_fts(study_notes_fts) VALUES('rebuild');")
+            conn.commit()
+            self._fts5_enabled = True
+        except sqlite3.OperationalError:
+            self._fts5_enabled = False
 
     def _ensure_updated_defaults(self):
         conn = self._get_connection()
@@ -704,22 +761,25 @@ class DatabaseManager:
         active_terms = [item["correct_term"] for item in items if item.get("is_active", 1)]
         return ", ".join(active_terms)
 
-    def get_whisper_initial_prompt(self, limit: int = 40) -> str:
-        """Estrae i termini distinti dal vocabolario per il bias acustico in Faster-Whisper."""
-        items = self.get_all_vocabulary()
+    def get_whisper_initial_prompt(self, limit: int = 18) -> str:
+        """Estrae i termini distinti più recenti dal vocabolario per il bias acustico in Faster-Whisper (senza prefissi meta)."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT correct_term FROM vocabulary WHERE COALESCE(is_active, 1) = 1 ORDER BY id DESC"
+        )
         seen = set()
         terms = []
-        for item in items:
-            if item.get("is_active", 1):
-                term = (item.get("correct_term") or "").strip()
-                if term and term.lower() not in seen:
-                    seen.add(term.lower())
-                    terms.append(term)
-                    if len(terms) >= limit:
-                        break
+        for row in cursor.fetchall():
+            term = (row["correct_term"] or "").strip()
+            if term and term.lower() not in seen:
+                seen.add(term.lower())
+                terms.append(term)
+                if len(terms) >= limit:
+                    break
         if not terms:
             return ""
-        return f"Glossario tecnico: {', '.join(terms)}."
+        return ", ".join(terms) + "."
 
     def learn_vocabulary_pair(self, alias: str, correct_term: str) -> bool:
         """Salva o aggiorna la coppia (alias_errato, parola_corretta) nella tabella vocabulary."""
@@ -1061,7 +1121,10 @@ class DatabaseManager:
         cursor = conn.cursor()
         cols = (
             "id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic, "
-            "folder_id, created_at, updated_at, trashed, "
+            "folder_id, is_studied, COALESCE(is_favorite, 0) AS is_favorite, "
+            "COALESCE(sr_ease, 2.5) AS sr_ease, COALESCE(sr_interval, 0) AS sr_interval, "
+            "COALESCE(sr_repetitions, 0) AS sr_repetitions, COALESCE(sr_next_review, '') AS sr_next_review, "
+            "created_at, updated_at, trashed, "
             "created_by_name, created_by_email, created_by_avatar, "
             "last_edited_by_name, last_edited_by_email, last_edited_at_utc"
         )
@@ -1082,7 +1145,7 @@ class DatabaseManager:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, title, content_markdown, note_type, tags, parent_note_id, profile, subject, topic,
-                   folder_id, created_at, updated_at, trashed,
+                   folder_id, is_studied, COALESCE(is_favorite, 0) AS is_favorite, created_at, updated_at, trashed,
                    created_by_name, created_by_email, created_by_avatar,
                    last_edited_by_name, last_edited_by_email, last_edited_at_utc
             FROM study_notes
@@ -1128,14 +1191,19 @@ class DatabaseManager:
         search_query: str = "",
         folder_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Recupera le note filtrate per profilo, materia, argomento, cartella e testo di ricerca."""
+        """Recupera le note filtrate per profilo, materia, argomento, cartella e testo di ricerca (con FTS5)."""
+        if search_query and search_query.strip() and not subject and not topic and getattr(self, "_fts5_enabled", False):
+            fts_res = self.search_notes_fts(search_query, profile=profile, folder_id=folder_id, limit=120)
+            if fts_res:
+                return fts_res
         conn = self._get_connection()
         cursor = conn.cursor()
         query = """
             SELECT id, title, content_markdown, note_type, tags, parent_note_id,
-                   profile, subject, topic, audio_path, folder_id, is_studied, created_at
+                   profile, subject, topic, audio_path, folder_id, is_studied,
+                   COALESCE(is_favorite, 0) AS is_favorite, created_at
             FROM study_notes
-            WHERE (parent_note_id IS NULL AND note_type != 'Flashcard')
+            WHERE (parent_note_id IS NULL AND note_type != 'Flashcard' AND COALESCE(trashed, 0) = 0)
         """
         params: List[Any] = []
         if profile and profile.strip().lower() not in ("tutti", "all", ""):
@@ -1377,6 +1445,52 @@ class DatabaseManager:
         conn.commit()
         return cursor.rowcount > 0
 
+    def toggle_note_favorite(self, note_id: int) -> bool:
+        """Alterna lo stato Preferito di una nota e restituisce il nuovo stato booleano."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE study_notes SET is_favorite = CASE WHEN COALESCE(is_favorite, 0) = 1 THEN 0 ELSE 1 END WHERE id = ?",
+            (int(note_id),),
+        )
+        conn.commit()
+        cursor.execute("SELECT COALESCE(is_favorite, 0) AS fav FROM study_notes WHERE id = ?", (int(note_id),))
+        row = cursor.fetchone()
+        return bool(row["fav"]) if row else False
+
+    def set_note_favorite(self, note_id: int, is_favorite: bool) -> bool:
+        """Imposta esplicitamente lo stato Preferito di una nota."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE study_notes SET is_favorite = ? WHERE id = ?",
+            (1 if is_favorite else 0, int(note_id)),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def get_favorite_notes(self, profile: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Restituisce tutte le note contrassegnate come Preferite."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        query = """
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id,
+                   profile, subject, topic, audio_path, folder_id, is_studied,
+                   COALESCE(is_favorite, 0) AS is_favorite, created_at
+            FROM study_notes
+            WHERE parent_note_id IS NULL
+              AND note_type != 'Flashcard'
+              AND COALESCE(trashed, 0) = 0
+              AND COALESCE(is_favorite, 0) = 1
+        """
+        params: List[Any] = []
+        if profile and profile.strip().lower() not in ("tutti", "all", ""):
+            query += " AND profile = ?"
+            params.append(profile.strip())
+        query += " ORDER BY id DESC"
+        cursor.execute(query, tuple(params))
+        return [dict(row) for row in cursor.fetchall()]
+
     def search_knowledge_base(
         self,
         query: str,
@@ -1414,6 +1528,12 @@ class DatabaseManager:
         # (MAI restituire note fallback a caso se la domanda non contiene termini precisi!)
         if not keywords:
             return []
+
+        # Fast-path SQLite FTS5 con ranking BM25 per il RAG di Whis
+        if getattr(self, "_fts5_enabled", False) and not subject and not topic:
+            fts_hits = self.search_notes_fts(" ".join(keywords[:6]), limit=limit, include_flashcards=True)
+            if fts_hits:
+                return fts_hits
 
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1472,7 +1592,8 @@ class DatabaseManager:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT id, title, content_markdown, note_type, tags, parent_note_id,
-                   profile, subject, topic, audio_path, folder_id, created_at, updated_at, trashed,
+                   profile, subject, topic, audio_path, folder_id, is_studied,
+                   COALESCE(is_favorite, 0) AS is_favorite, created_at, updated_at, trashed,
                    created_by_name, created_by_email, created_by_avatar,
                    last_edited_by_name, last_edited_by_email, last_edited_at_utc
             FROM study_notes
@@ -2465,6 +2586,312 @@ class DatabaseManager:
             (int(group_id),),
         )
         conn.commit()
+
+    def search_notes_fts(
+        self,
+        query: str,
+        profile: Optional[str] = None,
+        folder_id: Optional[int] = None,
+        limit: int = 40,
+        include_flashcards: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Ricerca Full-Text istantanea tramite SQLite FTS5 con ranking BM25 (titolo 4x, tag 2x, contenuto 1x)."""
+        clean_q = (query or "").strip()
+        if not clean_q or not getattr(self, "_fts5_enabled", False):
+            return []
+
+        tokens = re.findall(r"[A-Za-z0-9_À-ÿ]+", clean_q)
+        if not tokens:
+            return []
+        fts_expr = " ".join(f'"{tok}"*' for tok in tokens[:8])
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        sql = """
+            SELECT n.id, n.title, n.content_markdown, n.note_type, n.tags, n.parent_note_id,
+                   n.profile, n.subject, n.topic, n.audio_path, n.folder_id, n.is_studied,
+                   COALESCE(n.is_favorite, 0) AS is_favorite, n.created_at,
+                   snippet(study_notes_fts, 1, '', '', '…', 14) AS fts_snippet,
+                   bm25(study_notes_fts, 4.0, 1.0, 2.0, 1.5, 1.5) AS fts_rank
+            FROM study_notes_fts
+            JOIN study_notes n ON n.id = study_notes_fts.rowid
+            WHERE study_notes_fts MATCH ?
+              AND COALESCE(n.trashed, 0) = 0
+        """
+        params: List[Any] = [fts_expr]
+        if not include_flashcards:
+            sql += " AND (n.parent_note_id IS NULL AND n.note_type != 'Flashcard')"
+        if profile and profile.strip().lower() not in ("tutti", "all", ""):
+            sql += " AND n.profile = ?"
+            params.append(profile.strip())
+        if folder_id is not None:
+            desc_ids = self._get_folder_and_descendant_ids(folder_id)
+            placeholders = ",".join("?" for _ in desc_ids)
+            sql += f" AND n.folder_id IN ({placeholders})"
+            params.extend(desc_ids)
+
+        sql += " ORDER BY fts_rank ASC, n.id DESC LIMIT ?"
+        params.append(int(limit))
+        try:
+            cursor.execute(sql, tuple(params))
+            return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.OperationalError:
+            return []
+
+    def get_all_note_todos(
+        self,
+        include_completed: bool = False,
+        profile: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Estrae tutti i blocchi To-Do (- [ ] / - [x]) dalle note attive per la vista aggregata."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        sql = """
+            SELECT id, title, content_markdown, subject, topic, folder_id, profile
+            FROM study_notes
+            WHERE parent_note_id IS NULL
+              AND note_type != 'Flashcard'
+              AND COALESCE(trashed, 0) = 0
+              AND (content_markdown LIKE '%- [ ]%' OR content_markdown LIKE '%- [x]%'
+                   OR content_markdown LIKE '%- [X]%' OR content_markdown LIKE '%* [ ]%'
+                   OR content_markdown LIKE '%* [x]%')
+        """
+        params: List[Any] = []
+        if profile and profile.strip().lower() not in ("tutti", "all", ""):
+            sql += " AND profile = ?"
+            params.append(profile.strip())
+        sql += " ORDER BY id DESC"
+        cursor.execute(sql, tuple(params))
+
+        todo_re = re.compile(r"^(\s*)[-*]\s+\[([ xX])\]\s*(.*)$")
+        results: List[Dict[str, Any]] = []
+        for row in cursor.fetchall():
+            nid = int(row["id"])
+            ntitle = (row["title"] or "Senza titolo").strip()
+            subj = (row["subject"] or "Generale").strip()
+            content = row["content_markdown"] or ""
+            for idx, line in enumerate(content.splitlines()):
+                m = todo_re.match(line)
+                if not m:
+                    continue
+                checked = (m.group(2).lower() == "x")
+                if checked and not include_completed:
+                    continue
+                txt = m.group(3).strip()
+                if not txt:
+                    continue
+                indent_lvl = min(4, len(m.group(1).replace("\t", "  ")) // 2)
+                results.append({
+                    "note_id": nid,
+                    "note_title": ntitle,
+                    "subject": subj,
+                    "folder_id": row["folder_id"],
+                    "line_index": idx,
+                    "text": txt,
+                    "checked": checked,
+                    "indent": indent_lvl,
+                })
+        return results
+
+    def toggle_note_todo_line(self, note_id: int, line_index: int) -> Optional[bool]:
+        """Alterna lo stato [ ] <-> [x] sulla riga indicata nel Markdown della nota e aggiorna SQLite."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT content_markdown FROM study_notes WHERE id = ?", (int(note_id),))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        lines = (row["content_markdown"] or "").splitlines()
+        if line_index < 0 or line_index >= len(lines):
+            return None
+        m = re.match(r"^(\s*[-*]\s+\[)([ xX])(\]\s*.*)$", lines[line_index])
+        if not m:
+            return None
+        new_checked = (m.group(2).lower() != "x")
+        lines[line_index] = f"{m.group(1)}{'x' if new_checked else ' '}{m.group(3)}"
+        new_md = "\n".join(lines)
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        cursor.execute(
+            "UPDATE study_notes SET content_markdown = ?, updated_at = ? WHERE id = ?",
+            (new_md, now_utc, int(note_id)),
+        )
+        conn.commit()
+        return new_checked
+
+    def search_note_titles_for_wikilink(self, prefix: str = "", limit: int = 12) -> List[Dict[str, Any]]:
+        """Restituisce i titoli delle note per l'autocompletamento [[wikilink]] nell'editor."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        clean = (prefix or "").strip()
+        if clean:
+            cursor.execute(
+                """
+                SELECT id, title, subject, note_type
+                FROM study_notes
+                WHERE parent_note_id IS NULL
+                  AND note_type != 'Flashcard'
+                  AND COALESCE(trashed, 0) = 0
+                  AND title LIKE ?
+                ORDER BY CASE WHEN LOWER(title) LIKE LOWER(?) THEN 0 ELSE 1 END, id DESC
+                LIMIT ?
+                """,
+                (f"%{clean}%", f"{clean}%", int(limit)),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT id, title, subject, note_type
+                FROM study_notes
+                WHERE parent_note_id IS NULL
+                  AND note_type != 'Flashcard'
+                  AND COALESCE(trashed, 0) = 0
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+        return [dict(r) for r in cursor.fetchall()]
+
+    def get_note_backlinks(self, note_id: int, note_title: str = "") -> List[Dict[str, Any]]:
+        """Restituisce le note collegate a `note_id` tramite [[Wikilink]] espliciti o tabella `note_links`."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        results: Dict[int, Dict[str, Any]] = {}
+
+        # 1. Link espliciti/semantici in note_links (bidirezionali)
+        cursor.execute(
+            """
+            SELECT n.id, n.title, n.subject, l.reason
+            FROM note_links l
+            JOIN study_notes n ON (
+                (l.source_id = ? AND n.id = l.target_id)
+                OR (l.target_id = ? AND n.id = l.source_id)
+            )
+            WHERE n.id != ? AND COALESCE(n.trashed, 0) = 0 AND n.note_type != 'Flashcard'
+            """,
+            (int(note_id), int(note_id), int(note_id)),
+        )
+        for r in cursor.fetchall():
+            results[int(r["id"])] = {
+                "id": int(r["id"]),
+                "title": r["title"] or "Senza titolo",
+                "subject": r["subject"] or "Generale",
+                "reason": r["reason"] or "Collegata",
+            }
+
+        # 2. Backlink [[Titolo]] nel testo Markdown di altre note
+        clean_t = (note_title or "").strip()
+        if clean_t and len(clean_t) >= 2:
+            cursor.execute(
+                """
+                SELECT id, title, subject
+                FROM study_notes
+                WHERE id != ?
+                  AND parent_note_id IS NULL
+                  AND note_type != 'Flashcard'
+                  AND COALESCE(trashed, 0) = 0
+                  AND LOWER(content_markdown) LIKE LOWER(?)
+                ORDER BY id DESC
+                LIMIT 20
+                """,
+                (int(note_id), f"%[[{clean_t}]]%"),
+            )
+            for r in cursor.fetchall():
+                rid = int(r["id"])
+                if rid not in results:
+                    results[rid] = {
+                        "id": rid,
+                        "title": r["title"] or "Senza titolo",
+                        "subject": r["subject"] or "Generale",
+                        "reason": f"Cita [[{clean_t}]]",
+                    }
+
+        return list(results.values())
+
+    def review_flashcard_sm2(self, card_id: int, quality: int) -> Dict[str, Any]:
+        """
+        Aggiorna lo scheduling Spaced Repetition (algoritmo SM-2 stile Anki) per una flashcard.
+        quality: 1 = Ripeti, 3 = Difficile, 4 = Bene, 5 = Facile.
+        """
+        q = max(0, min(5, int(quality)))
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COALESCE(sr_ease, 2.5) AS ease, COALESCE(sr_interval, 0) AS iv, COALESCE(sr_repetitions, 0) AS reps "
+            "FROM study_notes WHERE id = ?",
+            (int(card_id),),
+        )
+        row = cursor.fetchone()
+        ease = float(row["ease"]) if row else 2.5
+        interval = int(row["iv"]) if row else 0
+        reps = int(row["reps"]) if row else 0
+
+        if q < 3:
+            reps = 0
+            interval = 1
+            ease = max(1.3, ease - 0.2)
+        else:
+            if reps == 0:
+                interval = 1 if q == 3 else (2 if q == 4 else 4)
+            elif reps == 1:
+                interval = 3 if q == 3 else (6 if q == 4 else 9)
+            else:
+                mult = 0.85 if q == 3 else (1.0 if q == 4 else 1.3)
+                interval = max(1, int(round(interval * ease * mult)))
+            reps += 1
+            ease = max(1.3, ease + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)))
+
+        next_dt = (datetime.now() + timedelta(days=interval)).strftime("%Y-%m-%d")
+        cursor.execute(
+            "UPDATE study_notes SET sr_ease = ?, sr_interval = ?, sr_repetitions = ?, sr_next_review = ? WHERE id = ?",
+            (round(ease, 3), int(interval), int(reps), next_dt, int(card_id)),
+        )
+        conn.commit()
+        return {
+            "card_id": int(card_id),
+            "ease": round(ease, 3),
+            "interval_days": int(interval),
+            "repetitions": int(reps),
+            "next_review": next_dt,
+        }
+
+    def get_due_flashcards_count(self, profile: Optional[str] = None) -> int:
+        """Restituisce il numero di flashcard in scadenza oggi (o mai ripassate)."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        sql = """
+            SELECT COUNT(*) FROM study_notes
+            WHERE note_type = 'Flashcard'
+              AND COALESCE(trashed, 0) = 0
+              AND (COALESCE(sr_next_review, '') = '' OR sr_next_review <= ?)
+        """
+        params: List[Any] = [today]
+        if profile and profile.strip().lower() not in ("tutti", "all", ""):
+            sql += " AND profile = ?"
+            params.append(profile.strip())
+        cursor.execute(sql, tuple(params))
+        row = cursor.fetchone()
+        return int(row[0] or 0) if row else 0
+
+    def checkpoint_and_close(self) -> None:
+        """Esegue un checkpoint WAL pulito e chiude la connessione del thread corrente."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            return
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+        self._local.conn = None
 
 
 db = DatabaseManager()

@@ -193,6 +193,7 @@ class SamsungNotesTreeWidget(QTreeWidget):
     changeFolderColorRequested = pyqtSignal(int, str)  # folder_id, color_hex
     deleteFolderRequested = pyqtSignal(int)        # folder_id
     toggleNoteStudiedRequested = pyqtSignal(int)   # note_id
+    toggleNoteFavoriteRequested = pyqtSignal(int)  # note_id
     openInNewTabRequested = pyqtSignal(object)     # node_data tuple
     openInSplitRequested = pyqtSignal(object)      # node_data tuple
     nodeLeftClicked = pyqtSignal(object)           # node_data tuple
@@ -316,7 +317,7 @@ class SamsungNotesTreeWidget(QTreeWidget):
             item = self.itemAt(event.pos())
             if dist < QApplication.startDragDistance() and item is not None and item is self._left_press_item:
                 data = item.data(0, ROLE_NODE_DATA)
-                if data and data[0] in ("note", "group_note", "group_board"):
+                if data and data[0] in ("note", "group_note", "group_board", "todos"):
                     self.nodeLeftClicked.emit(data)
             self._left_press_pos = None
             self._left_press_item = None
@@ -409,12 +410,15 @@ class SamsungNotesTreeWidget(QTreeWidget):
             act_tab = menu.addAction(get_icon("plus", size=14), "Apri in nuova scheda")
             act_split = menu.addAction(get_icon("split_h", size=14), "Affianca a destra (Split View)")
             menu.addSeparator()
+            act_fav = menu.addAction(get_icon("star", role="warning", size=14), "Aggiungi / Rimuovi dai Preferiti")
             act_st = menu.addAction(get_icon("check", role="success", size=14), "Segna / Rimuovi Studiata")
             chosen = menu.exec(global_pos)
             if chosen == act_tab:
                 self.openInNewTabRequested.emit(data)
             elif chosen == act_split:
                 self.openInSplitRequested.emit(data)
+            elif chosen == act_fav:
+                self.toggleNoteFavoriteRequested.emit(note_id)
             elif chosen == act_st:
                 self.toggleNoteStudiedRequested.emit(note_id)
         elif data[0] in ("group_note", "group_board"):

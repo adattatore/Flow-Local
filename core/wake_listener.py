@@ -121,15 +121,70 @@ class WhisWakeListener(QThread):
     def is_paused(self, value: bool):
         self.set_paused(value)
 
+    def _open_stream_locked(self) -> bool:
+        """Apre lo stream audio SoundDevice (da chiamare con self._lock acquisito)."""
+        if self._stream is not None:
+            try:
+                if not self._stream.active:
+                    self._stream.start()
+                return True
+            except Exception:
+                self._close_stream_locked()
+
+        block_size = int(self.sample_rate * 0.05)  # Frame da 50ms
+        try:
+            self._stream = sd.InputStream(
+                device=self.device_index,
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype="float32",
+                blocksize=block_size,
+                callback=self._audio_callback,
+            )
+            self._stream.start()
+            return True
+        except Exception:
+            try:
+                self.sample_rate = 48000
+                block_size = int(self.sample_rate * 0.05)
+                self._stream = sd.InputStream(
+                    device=self.device_index,
+                    samplerate=self.sample_rate,
+                    channels=1,
+                    dtype="float32",
+                    blocksize=block_size,
+                    callback=self._audio_callback,
+                )
+                self._stream.start()
+                return True
+            except Exception as e2:
+                print(f"[WhisWakeListener] Impossibile avviare InputStream audio: {e2}")
+                self._stream = None
+                return False
+
+    def _close_stream_locked(self) -> None:
+        """Chiude e rilascia completamente lo stream audio (spegne il microfono di sistema)."""
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+            except Exception:
+                pass
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+
     def set_paused(self, paused: bool):
         """
         Pone istantaneamente il listener in pausa o lo riattiva.
-        Rilascia lo stream audio durante la pausa per zero conflitti con Caps Lock.
+        Chiude completamente lo stream audio durante la pausa così Windows spegne il microfono di sistema.
         """
         with self._lock:
             self._is_paused = bool(paused)
             if self._is_paused:
                 if self.listener_state == STATE_WAITING_FOR_COMMAND:
+                    self.listener_state = STATE_IDLE
                     audio_ducker.unduck()
                 # Svuota immediatamente la coda audio residua
                 while not self._audio_queue.empty():
@@ -137,17 +192,10 @@ class WhisWakeListener(QThread):
                         self._audio_queue.get_nowait()
                     except queue.Empty:
                         break
-                try:
-                    if self._stream and self._stream.active:
-                        self._stream.stop()
-                except Exception:
-                    pass
+                self._close_stream_locked()
             else:
-                try:
-                    if self._stream and not self._stream.active:
-                        self._stream.start()
-                except Exception:
-                    pass
+                if self._running:
+                    self._open_stream_locked()
         self.state_changed.emit(not paused)
 
     def set_whisper_instance(self, whisper_instance: Any):
@@ -167,6 +215,8 @@ class WhisWakeListener(QThread):
             self.listener_state = STATE_WAITING_FOR_COMMAND
             self.waiting_command_start_time = time.time()
             self.waiting_command_timeout = timeout
+            if self._running:
+                self._open_stream_locked()
         audio_ducker.duck()
         if not self.isRunning():
             self.start()
@@ -177,13 +227,8 @@ class WhisWakeListener(QThread):
         """Interrompe il thread in modo pulito e chiude il dispositivo audio."""
         self._running = False
         audio_ducker.unduck()
-        try:
-            if self._stream:
-                self._stream.stop()
-                self._stream.close()
-                self._stream = None
-        except Exception:
-            pass
+        with self._lock:
+            self._close_stream_locked()
         self.wait(1200)
 
     def _audio_callback(self, indata: np.ndarray, frames: int, time_info: Any, status: Any):
@@ -200,36 +245,11 @@ class WhisWakeListener(QThread):
     def run(self):
         """Ciclo di vita principale del thread di monitoraggio."""
         self._running = True
-        block_size = int(self.sample_rate * 0.05)  # Frame da 50ms
-
-        try:
-            self._stream = sd.InputStream(
-                device=self.device_index,
-                samplerate=self.sample_rate,
-                channels=1,
-                dtype="float32",
-                blocksize=block_size,
-                callback=self._audio_callback,
-            )
-            self._stream.start()
-        except Exception as e:
-            # Fallback a samplerate 48000 se 16000 non e supportato nativamente
-            try:
-                self.sample_rate = 48000
-                block_size = int(self.sample_rate * 0.05)
-                self._stream = sd.InputStream(
-                    device=self.device_index,
-                    samplerate=self.sample_rate,
-                    channels=1,
-                    dtype="float32",
-                    blocksize=block_size,
-                    callback=self._audio_callback,
-                )
-                self._stream.start()
-            except Exception as e2:
-                print(f"[WhisWakeListener] Impossibile avviare InputStream audio: {e2}")
-                self._running = False
-                return
+        with self._lock:
+            if not self._is_paused:
+                if not self._open_stream_locked():
+                    self._running = False
+                    return
 
         ring_buffer = collections.deque(maxlen=PRE_BUFFER_CHUNKS)
         speech_chunks = []
@@ -308,13 +328,8 @@ class WhisWakeListener(QThread):
                             self._process_utterance(captured)
 
         # Cleanup alla chiusura
-        try:
-            if self._stream:
-                self._stream.stop()
-                self._stream.close()
-                self._stream = None
-        except Exception:
-            pass
+        with self._lock:
+            self._close_stream_locked()
 
     def _process_utterance(self, chunks: list):
         """Converte l'audio accumulato e gestisce la logica a 2 Fasi (stile Alexa)."""
@@ -418,44 +433,61 @@ class WhisWakeListener(QThread):
                 model_to_call = target.model
 
             if model_to_call:
-                whisper_prompt = "Whis."
+                whisper_prompt = "Whis, FlowLocal, FlowNotes."
                 try:
                     from core.ai_pipeline import DEFAULT_WHISPER_INITIAL_PROMPT
                     from database.db_manager import db
-                    db_prompt = db.get_whisper_initial_prompt(limit=40)
+                    db_prompt = db.get_whisper_initial_prompt(limit=15)
                     whisper_prompt = f"{DEFAULT_WHISPER_INITIAL_PROMPT} {db_prompt}".strip() if db_prompt else DEFAULT_WHISPER_INITIAL_PROMPT
                 except Exception:
                     pass
 
+                # Zero-padding finale (250ms) per non troncare la parola finale
+                pad = np.zeros(int(16000 * 0.25), dtype=np.float32)
+                audio_padded = np.concatenate([audio_16k, pad])
+
                 transcribe_kwargs = dict(
-                    beam_size=5,
+                    beam_size=2,
                     language="it",
                     temperature=0.0,
                     condition_on_previous_text=False,
+                    compression_ratio_threshold=2.2,
+                    log_prob_threshold=-1.0,
                     no_speech_threshold=0.6,
                     initial_prompt=whisper_prompt,
                 )
-                segments, info = model_to_call.transcribe(
-                    audio_16k,
-                    vad_filter=True,
-                    vad_parameters=dict(
-                        min_silence_duration_ms=500,
-                        speech_pad_ms=200,
-                    ),
-                    **transcribe_kwargs,
-                )
-                segments = list(segments)
-                if not segments:
-                    segments, _ = model_to_call.transcribe(
-                        audio_16k,
-                        vad_filter=False,
+
+                whisper_lock = getattr(target, "_whisper_lock", None)
+
+                def _run_whisper():
+                    segs, _ = model_to_call.transcribe(
+                        audio_padded,
+                        vad_filter=True,
+                        vad_parameters=dict(
+                            min_silence_duration_ms=500,
+                            speech_pad_ms=200,
+                        ),
                         **transcribe_kwargs,
                     )
-                    segments = list(segments)
+                    segs = list(segs)
+                    if not segs and float(np.percentile(np.abs(audio_16k), 98)) >= 0.015:
+                        segs, _ = model_to_call.transcribe(
+                            audio_padded,
+                            vad_filter=False,
+                            **transcribe_kwargs,
+                        )
+                        segs = list(segs)
+                    return segs
+
+                if whisper_lock is not None:
+                    with whisper_lock:
+                        segments = _run_whisper()
+                else:
+                    segments = _run_whisper()
 
                 parts = []
                 for seg in segments:
-                    if getattr(seg, "no_speech_prob", 0.0) < 0.60:
+                    if getattr(seg, "no_speech_prob", 0.0) < 0.60 and (getattr(seg, "avg_logprob", 0.0) or 0.0) >= -1.1:
                         t = seg.text.strip()
                         if t:
                             parts.append(t)
