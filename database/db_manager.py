@@ -33,12 +33,36 @@ class DatabaseManager:
             if parent_dir:
                 os.makedirs(parent_dir, exist_ok=True)
         self._local = threading.local()
+        self._write_lock = threading.RLock()
         self._init_db()
+
+    def _run_write_with_retry(self, fn, retries: int = 5):
+        """Serializza le scritture multithread e riprova in caso di lock transitorio SQLite."""
+        import time as _time
+        with self._write_lock:
+            last_err = None
+            for attempt in range(retries):
+                try:
+                    return fn()
+                except sqlite3.OperationalError as exc:
+                    msg = str(exc).lower()
+                    if "locked" in msg or "busy" in msg:
+                        last_err = exc
+                        try:
+                            self._get_connection().rollback()
+                        except Exception:
+                            pass
+                        _time.sleep(0.05 * (attempt + 1))
+                        continue
+                    raise
+            if last_err is not None:
+                raise last_err
 
     def _get_connection(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = sqlite3.connect(self.db_path, timeout=15.0)
             conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA busy_timeout = 15000;")
             conn.execute("PRAGMA journal_mode = WAL;")
             conn.execute("PRAGMA synchronous = NORMAL;")
             conn.execute("PRAGMA foreign_keys = ON;")
@@ -383,37 +407,58 @@ class DatabaseManager:
                     tokenize='unicode61 remove_diacritics 2'
                 );
             """)
+            # Ricrea i trigger senza COALESCE per mantenere 100% compatibilità con external-content FTS5 rebuild
+            cursor.execute("DROP TRIGGER IF EXISTS study_notes_ai;")
+            cursor.execute("DROP TRIGGER IF EXISTS study_notes_ad;")
+            cursor.execute("DROP TRIGGER IF EXISTS study_notes_au;")
             cursor.execute("""
-                CREATE TRIGGER IF NOT EXISTS study_notes_ai AFTER INSERT ON study_notes BEGIN
+                CREATE TRIGGER study_notes_ai AFTER INSERT ON study_notes BEGIN
                     INSERT INTO study_notes_fts(rowid, title, content_markdown, tags, subject, topic)
-                    VALUES (new.id, COALESCE(new.title,''), COALESCE(new.content_markdown,''), COALESCE(new.tags,''), COALESCE(new.subject,''), COALESCE(new.topic,''));
+                    VALUES (new.id, new.title, new.content_markdown, new.tags, new.subject, new.topic);
                 END;
             """)
             cursor.execute("""
-                CREATE TRIGGER IF NOT EXISTS study_notes_ad AFTER DELETE ON study_notes BEGIN
+                CREATE TRIGGER study_notes_ad AFTER DELETE ON study_notes BEGIN
                     INSERT INTO study_notes_fts(study_notes_fts, rowid, title, content_markdown, tags, subject, topic)
-                    VALUES('delete', old.id, COALESCE(old.title,''), COALESCE(old.content_markdown,''), COALESCE(old.tags,''), COALESCE(old.subject,''), COALESCE(old.topic,''));
+                    VALUES('delete', old.id, old.title, old.content_markdown, old.tags, old.subject, old.topic);
                 END;
             """)
             cursor.execute("""
-                CREATE TRIGGER IF NOT EXISTS study_notes_au AFTER UPDATE ON study_notes BEGIN
+                CREATE TRIGGER study_notes_au AFTER UPDATE ON study_notes BEGIN
                     INSERT INTO study_notes_fts(study_notes_fts, rowid, title, content_markdown, tags, subject, topic)
-                    VALUES('delete', old.id, COALESCE(old.title,''), COALESCE(old.content_markdown,''), COALESCE(old.tags,''), COALESCE(old.subject,''), COALESCE(old.topic,''));
+                    VALUES('delete', old.id, old.title, old.content_markdown, old.tags, old.subject, old.topic);
                     INSERT INTO study_notes_fts(rowid, title, content_markdown, tags, subject, topic)
-                    VALUES (new.id, COALESCE(new.title,''), COALESCE(new.content_markdown,''), COALESCE(new.tags,''), COALESCE(new.subject,''), COALESCE(new.topic,''));
+                    VALUES (new.id, new.title, new.content_markdown, new.tags, new.subject, new.topic);
                 END;
             """)
-            # Ricostruisci indice una volta se vuoto rispetto alle note esistenti
+            # Verifica integrità FTS5 e ricostruisce se disallineato o al primo upgrade dei trigger
+            needs_rebuild = False
             cursor.execute("SELECT COUNT(*) FROM study_notes")
             notes_cnt = int(cursor.fetchone()[0] or 0)
             if notes_cnt > 0:
-                cursor.execute("SELECT COUNT(*) FROM study_notes_fts")
-                fts_cnt = int(cursor.fetchone()[0] or 0)
-                if fts_cnt != notes_cnt:
+                try:
+                    cursor.execute("SELECT COUNT(*) FROM study_notes_fts")
+                    fts_cnt = int(cursor.fetchone()[0] or 0)
+                    if fts_cnt != notes_cnt:
+                        needs_rebuild = True
+                    else:
+                        cursor.execute("INSERT INTO study_notes_fts(study_notes_fts) VALUES('integrity-check');")
+                except sqlite3.DatabaseError:
+                    needs_rebuild = True
+                # Ricostruisci una volta dopo la migrazione dei trigger (versione 2)
+                cursor.execute("SELECT value FROM app_settings WHERE key = 'fts5_triggers_v2'")
+                v2_row = cursor.fetchone()
+                if not v2_row:
+                    needs_rebuild = True
+                if needs_rebuild:
                     cursor.execute("INSERT INTO study_notes_fts(study_notes_fts) VALUES('rebuild');")
+                cursor.execute(
+                    "INSERT INTO app_settings (key, value) VALUES ('fts5_triggers_v2', '1') "
+                    "ON CONFLICT(key) DO UPDATE SET value = '1'"
+                )
             conn.commit()
             self._fts5_enabled = True
-        except sqlite3.OperationalError:
+        except sqlite3.DatabaseError:
             self._fts5_enabled = False
 
     def _ensure_updated_defaults(self):
@@ -1091,30 +1136,49 @@ class DatabaseManager:
         le_utc = (last_edited_at_utc or updated_at or now_utc).strip()
         upd_utc = (updated_at or le_utc).strip()
 
-        if trashed is not None:
-            cursor.execute("""
-                UPDATE study_notes
-                SET title = ?, content_markdown = ?, profile = ?, subject = ?, topic = ?, note_type = ?,
-                    updated_at = ?, trashed = ?, last_edited_by_name = ?, last_edited_by_email = ?, last_edited_at_utc = ?
-                WHERE id = ?
-            """, (
-                title.strip(), content_markdown.strip(), profile.strip(), subject.strip(),
-                topic.strip(), note_type.strip(), upd_utc, int(bool(trashed)),
-                le_name, le_email, le_utc, note_id,
-            ))
-        else:
-            cursor.execute("""
-                UPDATE study_notes
-                SET title = ?, content_markdown = ?, profile = ?, subject = ?, topic = ?, note_type = ?,
-                    updated_at = ?, last_edited_by_name = ?, last_edited_by_email = ?, last_edited_at_utc = ?
-                WHERE id = ?
-            """, (
-                title.strip(), content_markdown.strip(), profile.strip(), subject.strip(),
-                topic.strip(), note_type.strip(), upd_utc,
-                le_name, le_email, le_utc, note_id,
-            ))
-        conn.commit()
-        return cursor.rowcount > 0
+        def _exec_update():
+            if trashed is not None:
+                cursor.execute("""
+                    UPDATE study_notes
+                    SET title = ?, content_markdown = ?, profile = ?, subject = ?, topic = ?, note_type = ?,
+                        updated_at = ?, trashed = ?, last_edited_by_name = ?, last_edited_by_email = ?, last_edited_at_utc = ?
+                    WHERE id = ?
+                """, (
+                    title.strip(), content_markdown.strip(), profile.strip(), subject.strip(),
+                    topic.strip(), note_type.strip(), upd_utc, int(bool(trashed)),
+                    le_name, le_email, le_utc, note_id,
+                ))
+            else:
+                cursor.execute("""
+                    UPDATE study_notes
+                    SET title = ?, content_markdown = ?, profile = ?, subject = ?, topic = ?, note_type = ?,
+                        updated_at = ?, last_edited_by_name = ?, last_edited_by_email = ?, last_edited_at_utc = ?
+                    WHERE id = ?
+                """, (
+                    title.strip(), content_markdown.strip(), profile.strip(), subject.strip(),
+                    topic.strip(), note_type.strip(), upd_utc,
+                    le_name, le_email, le_utc, note_id,
+                ))
+
+        def _write():
+            try:
+                _exec_update()
+                conn.commit()
+            except sqlite3.DatabaseError as exc:
+                if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                    raise
+                # Auto-riparazione trasparente se l'indice FTS5 external-content era desincronizzato
+                conn.rollback()
+                try:
+                    cursor.execute("INSERT INTO study_notes_fts(study_notes_fts) VALUES('rebuild');")
+                    conn.commit()
+                except Exception:
+                    pass
+                _exec_update()
+                conn.commit()
+            return cursor.rowcount > 0
+
+        return bool(self._run_write_with_retry(_write))
 
     def get_all_study_notes(self, note_type: Optional[str] = None) -> List[Dict[str, Any]]:
         conn = self._get_connection()
@@ -1722,14 +1786,16 @@ class DatabaseManager:
 
     # --- CRONOLOGIA TRASCRIZIONI ---
     def add_transcription(self, raw_text: str, final_text: str, target_app: str = "", style_used: str = "Naturale", whisper_ms: int = 0, qwen_ms: int = 0, duration_s: float = 0.0):
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        word_count = len(final_text.split())
-        cursor.execute("""
-            INSERT INTO transcriptions (raw_text, final_text, target_app, style_used, word_count, whisper_ms, qwen_ms, duration_seconds)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (raw_text, final_text, target_app, style_used, word_count, whisper_ms, qwen_ms, duration_s))
-        conn.commit()
+        def _op():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            word_count = len(final_text.split())
+            cursor.execute("""
+                INSERT INTO transcriptions (raw_text, final_text, target_app, style_used, word_count, whisper_ms, qwen_ms, duration_seconds)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (raw_text, final_text, target_app, style_used, word_count, whisper_ms, qwen_ms, duration_s))
+            conn.commit()
+        self._run_write_with_retry(_op)
 
     def get_recent_transcriptions(self, limit: int = 50) -> List[Dict[str, Any]]:
         conn = self._get_connection()
@@ -1895,14 +1961,16 @@ class DatabaseManager:
 
     def set_setting(self, key: str, value: str):
         """Imposta o aggiorna un parametro di configurazione nel DB."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO app_settings (key, value, updated_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-        """, (key, str(value)))
-        conn.commit()
+        def _op():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO app_settings (key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            """, (key, str(value)))
+            conn.commit()
+        self._run_write_with_retry(_op)
 
     # --- FLOWTIME: CALENDARIO LOCALE & COLLEGAMENTI TEMPORALI ---
     def add_calendar_event(

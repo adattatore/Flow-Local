@@ -3305,9 +3305,16 @@ class ScientificNoteEditor(QTextEdit):
         else:
             txt_fmt.setFontStrikeOut(False)
             txt_fmt.clearForeground()
+        cursor.setBlockCharFormat(txt_fmt)
         cursor.setCharFormat(txt_fmt)
         if text:
             cursor.insertText(text, txt_fmt)
+        elif not checked and cursor.block().text():
+            # Se il blocco appena creato contiene testo splittato da un to-do barrato, ripulisce lo strikeout
+            clean_c = QTextCursor(cursor.block())
+            clean_c.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            clean_c.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+            clean_c.setCharFormat(txt_fmt)
 
     def _insert_code_frame_at_cursor(
         self,
@@ -4549,14 +4556,27 @@ class ScientificNoteEditor(QTextEdit):
             if checked:
                 txt_fmt.setFontStrikeOut(True)
                 txt_fmt.setForeground(QColor("#64748B" if self._dark_mode else "#9CA3AF"))
+                c.setBlockCharFormat(txt_fmt)
                 c.mergeCharFormat(txt_fmt)
             else:
                 txt_fmt.setFontStrikeOut(False)
                 txt_fmt.clearForeground()
+                c.setBlockCharFormat(txt_fmt)
                 c.setCharFormat(txt_fmt)
             c.endEditBlock()
         finally:
             self._internal_update = False
+
+        # Sincronizza il currentCharFormat se il cursore attivo è su questo blocco
+        if self.textCursor().block() == block:
+            cur_fmt = QTextCharFormat()
+            if checked:
+                cur_fmt.setFontStrikeOut(True)
+                cur_fmt.setForeground(QColor("#64748B" if self._dark_mode else "#9CA3AF"))
+            else:
+                cur_fmt.setFontStrikeOut(False)
+                cur_fmt.clearForeground()
+            self.setCurrentCharFormat(cur_fmt)
 
         self.viewport().update()
         self._on_internal_text_changed()
@@ -5026,21 +5046,29 @@ class ScientificNoteEditor(QTextEdit):
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (mods & Qt.KeyboardModifier.ShiftModifier):
             if b_kind == "todo":
                 b_txt = block.text().strip()
+                clean_fmt = QTextCharFormat()
+                clean_fmt.setFontStrikeOut(False)
+                clean_fmt.clearForeground()
                 if b_txt == "":
-                    # Esci dalla lista To-Do con formato testo pulito
+                    # Esci dalla lista To-Do con formato testo pulito (nessun residuo strikeout)
                     cursor.beginEditBlock()
                     cursor.setBlockFormat(QTextBlockFormat())
-                    cursor.setCharFormat(QTextCharFormat())
+                    cursor.setBlockCharFormat(clean_fmt)
+                    cursor.setCharFormat(clean_fmt)
                     block.setUserData(None)
                     cursor.endEditBlock()
                     self.setTextCursor(cursor)
+                    self.setCurrentCharFormat(clean_fmt)
                     self.viewport().update()
                     return
                 else:
                     cur_lvl = int(block.blockFormat().property(PROP_TODO_INDENT) or 0)
+                    cursor.beginEditBlock()
                     cursor.insertBlock()
                     self._apply_todo_block_at_cursor(cursor, "", checked=False, indent_level=cur_lvl)
+                    cursor.endEditBlock()
                     self.setTextCursor(cursor)
+                    self.setCurrentCharFormat(clean_fmt)
                     self.viewport().update()
                     return
             elif b_kind in ("quote", "callout") and block.text().strip() == "":
@@ -5083,6 +5111,10 @@ class ScientificNoteEditor(QTextEdit):
                 cursor.removeSelectedText()
                 self._apply_todo_block_at_cursor(cursor, "", checked=False)
                 self.setTextCursor(cursor)
+                clean_fmt = QTextCharFormat()
+                clean_fmt.setFontStrikeOut(False)
+                clean_fmt.clearForeground()
+                self.setCurrentCharFormat(clean_fmt)
                 return
 
         # 6. Apertura Slash Command Popup su '/'
@@ -5114,6 +5146,16 @@ class ScientificNoteEditor(QTextEdit):
                     self._position_wikilink_popup()
                     self.wikilink_popup.show()
             return
+
+        # Guardia anti-strikethrough residuo: evita che digitare su un To-Do non spuntato o testo normale
+        # erediti il barrato/grigio da una riga To-Do completata precedente.
+        if event.text() and event.text().isprintable():
+            is_checked_todo = (b_kind == "todo") and bool(block.blockFormat().property(PROP_TODO_CHECKED))
+            if not is_checked_todo and self.currentCharFormat().fontStrikeOut():
+                clean_cf = QTextCharFormat(self.currentCharFormat())
+                clean_cf.setFontStrikeOut(False)
+                clean_cf.clearForeground()
+                self.setCurrentCharFormat(clean_cf)
 
         super().keyPressEvent(event)
 

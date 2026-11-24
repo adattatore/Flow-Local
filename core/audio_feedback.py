@@ -20,6 +20,7 @@ from typing import Optional, Callable, List
 
 import numpy as np
 import winsound
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
 import edge_tts
 import pyttsx3

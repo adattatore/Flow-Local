@@ -549,6 +549,22 @@ class GlobalCommandPalette(QDialog):
                 payload={"action": "toggle_reading"},
             ),
             PaletteEntry(
+                kind="action",
+                title="Novità e Suggerimenti",
+                subtitle="Changelog, bug fix recenti e funzioni nascoste di FlowLocal",
+                badge="Guida",
+                icon_text="💡",
+                payload={"action": "open_whats_new"},
+            ),
+            PaletteEntry(
+                kind="action",
+                title="Diagnostica di Sistema & Log",
+                subtitle="Stato Whisper, Ollama/Gemini, Google Sync ed export log",
+                badge="Sistema",
+                icon_text="🩺",
+                payload={"action": "open_diagnostics"},
+            ),
+            PaletteEntry(
                 kind="nav",
                 title="Vai a FlowType",
                 subtitle="Dettatura vocale, cronologia e statistiche",

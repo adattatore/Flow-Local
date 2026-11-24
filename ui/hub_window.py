@@ -80,6 +80,9 @@ from ui.notes_tree import (
     make_vector_folder_icon,
 )
 from ui.command_palette import GlobalCommandPalette
+from ui.toast_manager import ToastManager, DiagnosticsDialog
+from ui.whats_new import WhatsNewDialog, has_unread_whats_new, should_auto_show_whats_new
+from core.logging_config import APP_VERSION
 from core.cloud_sync import cloud_sync
 from core.whis_agent import WhisAgent, WhisStreamWorker
 from core.audio_feedback import (
@@ -171,6 +174,7 @@ class FlowLocalHub(QMainWindow):
     _ollamaProbeSignal = pyqtSignal(bool)
     _cloudSyncDoneSignal = pyqtSignal(dict)
     _avatarLoadedSignal = pyqtSignal(bytes)
+    _calendarAuthDoneSignal = pyqtSignal(bool, str)
 
     def __init__(self, on_device_changed: Optional[Callable] = None, engine=None):
         super().__init__()
@@ -178,10 +182,13 @@ class FlowLocalHub(QMainWindow):
         self._account_avatar_pixmap: Optional[QPixmap] = None
         self._account_avatar_url_loaded: str = ""
         self._cloud_sync_running: bool = False
+        self._startup_checks_done: bool = False
+        self._toast_manager = ToastManager(self)
         self._aiRuntimeSignal.connect(self._on_ai_runtime_changed, Qt.ConnectionType.QueuedConnection)
         self._ollamaProbeSignal.connect(self._on_ollama_probe_finished, Qt.ConnectionType.QueuedConnection)
         self._cloudSyncDoneSignal.connect(self._on_cloud_sync_done, Qt.ConnectionType.QueuedConnection)
         self._avatarLoadedSignal.connect(self._on_avatar_loaded, Qt.ConnectionType.QueuedConnection)
+        self._calendarAuthDoneSignal.connect(self._on_calendar_auth_finished, Qt.ConnectionType.QueuedConnection)
         add_runtime_engine_listener(lambda lbl: self._aiRuntimeSignal.emit(lbl))
         # API pubblica mantenuta per compatibilità con main.py / pipeline audio
         self.on_device_changed = on_device_changed
@@ -316,6 +323,37 @@ class FlowLocalHub(QMainWindow):
         super().showEvent(event)
         self._apply_windows_titlebar_theme(self._current_theme)
         self._refresh_current_page()
+        self._refresh_system_status_pill()
+        if hasattr(self, "_toast_manager"):
+            self._toast_manager.reposition()
+        if not self._startup_checks_done:
+            self._startup_checks_done = True
+            QTimer.singleShot(700, self._run_startup_health_checks)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_toast_manager"):
+            self._toast_manager.reposition()
+
+    def show_toast(
+        self,
+        message: str,
+        title: str = "",
+        level: str = "info",
+        duration_ms: int = 5200,
+        action_label: str = "",
+        on_action: Optional[Callable[[], None]] = None,
+    ):
+        """Mostra una notifica toast non bloccante in basso a destra nell'Hub."""
+        if hasattr(self, "_toast_manager") and self._toast_manager is not None:
+            self._toast_manager.show_toast(
+                message=message,
+                title=title,
+                level=level,
+                duration_ms=duration_ms,
+                action_label=action_label,
+                on_action=on_action,
+            )
 
     def _active_is_dark(self) -> bool:
         return _is_dark_theme(getattr(self, "_current_theme", "obsidian"))
@@ -437,6 +475,15 @@ class FlowLocalHub(QMainWindow):
         title.setObjectName("AppTitle")
         title.setStyleSheet("font-size: 15px; font-weight: 700;")
         left_box.addWidget(title)
+
+        self.system_status_pill = QPushButton("● Pronto")
+        self.system_status_pill.setObjectName("FilterPill")
+        self.system_status_pill.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.system_status_pill.setToolTip("Stato motori AI e sincronizzazione — Clicca per aprire la diagnostica")
+        self.system_status_pill.clicked.connect(self._open_diagnostics_dialog)
+        left_box.addWidget(self.system_status_pill)
+        self._refresh_system_status_pill()
+
         layout.addWidget(left_host)
 
         layout.addStretch(1)
@@ -525,6 +572,16 @@ class FlowLocalHub(QMainWindow):
         self.account_badge_btn.clicked.connect(self._on_account_badge_clicked)
         right_row.addWidget(self.account_badge_btn)
         self._refresh_account_badge()
+
+        self.whats_new_btn = ThemedPushButton("")
+        self.whats_new_btn.setObjectName("SettingsGearBtn")
+        self.whats_new_btn.setIcon(get_icon("lightbulb", theme_key=self._current_theme, role="subtitle", size=15))
+        self.whats_new_btn.setIconSize(QSize(15, 15))
+        self.whats_new_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.whats_new_btn.setToolTip("Novità, bug fix e suggerimenti nascosti")
+        self.whats_new_btn.clicked.connect(self._open_whats_new_dialog)
+        right_row.addWidget(self.whats_new_btn)
+        self._refresh_whats_new_badge()
 
         self.settings_btn = ThemedPushButton("")
         self.settings_btn.setObjectName("SettingsGearBtn")
@@ -898,6 +955,7 @@ class FlowLocalHub(QMainWindow):
             ("top_whis_btn", "sparkles", "text", 14),
             ("pomo_top_pill", "clock", "accent", 13),
             ("reading_mode_btn", "book", "subtitle", 13),
+            ("whats_new_btn", "lightbulb", "subtitle", 15),
             ("settings_btn", "settings", "subtitle", 15),
             ("import_slide_btn", "download", "text", 14),
             ("sbobina_btn", "mic", "text", 14),
@@ -918,6 +976,8 @@ class FlowLocalHub(QMainWindow):
             if w is not None:
                 w.setIcon(get_icon(icon_name, theme_key=tkey, role=role, size=size))
                 w.setIconSize(QSize(size, size))
+        self._refresh_system_status_pill()
+        self._refresh_whats_new_badge()
 
     def _on_nav_clicked(self, page_idx: int):
         self.pages.setCurrentIndex(page_idx)
@@ -1537,12 +1597,13 @@ class FlowLocalHub(QMainWindow):
 
         def _auth_thread():
             ok, msg = calendar_manager.authenticate(interactive=True)
-            QTimer.singleShot(0, lambda: self._on_calendar_auth_finished(ok, msg))
+            self._calendarAuthDoneSignal.emit(bool(ok), str(msg or ""))
 
         threading.Thread(target=_auth_thread, daemon=True, name="GoogleCalendarAuthThread").start()
 
     def _on_calendar_auth_finished(self, ok: bool, msg: str):
         self._update_calendar_status_ui()
+        self._refresh_system_status_pill()
         if hasattr(self, "ft_calendar"):
             self._refresh_flowtime_page()
         if hasattr(self, "pomo_ring"):
@@ -1554,9 +1615,18 @@ class FlowLocalHub(QMainWindow):
                 p.get("muted") or "#94A3B8",
             )
         if ok:
-            QMessageBox.information(self, "Google Calendar", "✅ Google Calendar connesso e sincronizzato con FlowTime!\nWhis continuerà a rispondere istantaneamente dal database locale.")
+            self.show_toast(
+                "Google Calendar connesso e sincronizzato con FlowTime.",
+                title="Google Calendar",
+                level="success",
+            )
         else:
-            QMessageBox.warning(self, "Google Calendar", f"⚠️ Impossibile completare l'autenticazione:\n{msg}")
+            self.show_toast(
+                f"Impossibile completare l'autenticazione: {msg}",
+                title="Google Calendar",
+                level="warning",
+                duration_ms=8000,
+            )
 
     def set_wake_listener(self, listener):
         """Collega il listener hands-free e sincronizza lo stato dello switch UI."""
@@ -3510,12 +3580,19 @@ class FlowLocalHub(QMainWindow):
     def _open_all_todos_dialog(self):
         """Apre la vista aggregata di tutti i To-Do presenti nelle note locali."""
         pal = self._active_palette()
+        dlg_bg = pal.get("dialog_bg") or pal.get("root_bg") or "#0B0E16"
+        text_col = pal.get("text") or "#E2E8F0"
+        title_col = pal.get("title") or text_col
+        sub_col = pal.get("subtitle") or "#94A3B8"
+        card_bg = pal.get("card_bg") or "rgba(255, 255, 255, 0.03)"
+        card_border = pal.get("card_border") or "rgba(255, 255, 255, 0.08)"
+
         dlg = QDialog(self)
         dlg.setWindowTitle("Tutti i To-Do delle Note")
         dlg.resize(740, 560)
         dlg.setStyleSheet(
-            f"QDialog {{ background-color: {pal['bg']}; color: {pal['text']}; }}"
-            f"QLabel {{ color: {pal['text']}; }}"
+            f"QDialog {{ background-color: {dlg_bg}; color: {text_col}; }}"
+            f"QLabel {{ color: {text_col}; }}"
         )
 
         root = QVBoxLayout(dlg)
@@ -3525,11 +3602,11 @@ class FlowLocalHub(QMainWindow):
         hdr = QHBoxLayout()
         hdr.setSpacing(8)
         title_lbl = QLabel("✅ Tutti i To-Do delle Note")
-        title_lbl.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {pal['title']};")
+        title_lbl.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {title_col};")
         hdr.addWidget(title_lbl)
         hdr.addStretch(1)
         count_lbl = QLabel("")
-        count_lbl.setStyleSheet(f"font-size: 12px; color: {pal['subtitle']};")
+        count_lbl.setStyleSheet(f"font-size: 12px; color: {sub_col};")
         hdr.addWidget(count_lbl)
         root.addLayout(hdr)
 
@@ -3585,7 +3662,7 @@ class FlowLocalHub(QMainWindow):
             if not items:
                 empty_lbl = QLabel("Nessun To-Do trovato con i filtri attuali.")
                 empty_lbl.setWordWrap(True)
-                empty_lbl.setStyleSheet(f"color: {pal['subtitle']}; font-size: 13px; padding: 24px;")
+                empty_lbl.setStyleSheet(f"color: {sub_col}; font-size: 13px; padding: 24px;")
                 empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 cards_lay.insertWidget(0, empty_lbl)
                 return
@@ -3594,7 +3671,7 @@ class FlowLocalHub(QMainWindow):
                 card = QFrame()
                 card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
                 card.setStyleSheet(
-                    f"QFrame {{ background-color: {pal['card_bg']}; border: 1px solid {pal['card_border']}; "
+                    f"QFrame {{ background-color: {card_bg}; border: 1px solid {card_border}; "
                     f"border-radius: 10px; }}"
                 )
                 c_lay = QHBoxLayout(card)
@@ -3624,17 +3701,17 @@ class FlowLocalHub(QMainWindow):
                 task_lbl.setWordWrap(True)
                 if td.get("checked"):
                     task_lbl.setStyleSheet(
-                        f"color: {pal['subtitle']}; font-size: 13px; text-decoration: line-through; border: none;"
+                        f"color: {sub_col}; font-size: 13px; text-decoration: line-through; border: none;"
                     )
                 else:
                     task_lbl.setStyleSheet(
-                        f"color: {pal['text']}; font-size: 13px; font-weight: 500; border: none;"
+                        f"color: {text_col}; font-size: 13px; font-weight: 500; border: none;"
                     )
                 txt_col.addWidget(task_lbl)
 
                 meta_lbl = QLabel(f"📄 {td.get('note_title')}  ·  📁 {td.get('folder_name') or td.get('subject') or 'Generale'}")
                 meta_lbl.setWordWrap(True)
-                meta_lbl.setStyleSheet(f"color: {pal['subtitle']}; font-size: 11px; border: none;")
+                meta_lbl.setStyleSheet(f"color: {sub_col}; font-size: 11px; border: none;")
                 txt_col.addWidget(meta_lbl)
                 c_lay.addLayout(txt_col, 1)
 
@@ -3674,6 +3751,8 @@ class FlowLocalHub(QMainWindow):
             "new_note": self._cp_new_note,
             "new_sbobina": self._cp_new_sbobina,
             "toggle_reading": self._cp_toggle_reading,
+            "open_whats_new": self._open_whats_new_dialog,
+            "open_diagnostics": self._open_diagnostics_dialog,
             "set_theme": self._set_theme,
             "navigate": self._on_nav_clicked,
         }
@@ -5813,6 +5892,195 @@ class FlowLocalHub(QMainWindow):
         dlg = HubSettingsDialog(self, initial_tab=int(initial_tab) if isinstance(initial_tab, int) else 0)
         dlg.exec()
         self._refresh_ai_onboarding_and_badge()
+        self._refresh_system_status_pill()
+
+    def _refresh_whats_new_badge(self):
+        if not hasattr(self, "whats_new_btn"):
+            return
+        unread = has_unread_whats_new()
+        if unread:
+            self.whats_new_btn.setToolTip(f"Novità v{APP_VERSION} disponibili! Clicca per leggere novità, fix e tips")
+            self.whats_new_btn.setIcon(get_icon("lightbulb", theme_key=self._current_theme, color="#38BDF8", size=15))
+            self.whats_new_btn.setStyleSheet(
+                "QPushButton { border: 1px solid rgba(56, 189, 248, 0.55); border-radius: 8px; }"
+            )
+        else:
+            self.whats_new_btn.setToolTip("Novità, bug fix e suggerimenti nascosti")
+            self.whats_new_btn.setIcon(get_icon("lightbulb", theme_key=self._current_theme, role="subtitle", size=15))
+            self.whats_new_btn.setStyleSheet("")
+
+    def _open_whats_new_dialog(self, initial_filter: str = "all"):
+        dlg = WhatsNewDialog(
+            parent=self,
+            theme_key=self._current_theme,
+            reading_mode=self._reading_mode,
+            initial_filter=initial_filter if isinstance(initial_filter, str) else "all",
+        )
+        dlg.exec()
+        self._refresh_whats_new_badge()
+
+    def _collect_system_health(self):
+        """Raccoglie stato live dei sottosistemi per Status Pill e DiagnosticsDialog."""
+        items = []
+        extra = {"Tema attivo": self._current_theme, "Modalità lettura": str(self._reading_mode)}
+        has_warning = False
+
+        # 1. Motore Acustico / GPU
+        gpu_txt = "CUDA GPU attiva" if GPU_AVAILABLE else "Modalità CPU (fallback)"
+        whisper_ok = self.engine is not None
+        items.append({
+            "label": "Motore Acustico (Faster-Whisper)",
+            "detail": f"{gpu_txt} · Push-to-Talk: Shift Destro / F8",
+            "status": "GPU" if GPU_AVAILABLE else "CPU",
+            "level": "success" if whisper_ok else "warning",
+        })
+        extra["Hardware"] = gpu_txt
+
+        # 2. Motore LLM (Ollama / Gemini)
+        gemini_key = bool((db.get_setting("gemini_api_key", "") or "").strip())
+        ollama_ok = bool(self._ollama_detected) if self._ollama_detected is not None else False
+        runtime_lbl = get_active_runtime_engine() or ("Ollama locale" if ollama_ok else ("Gemini Cloud" if gemini_key else "Non configurato"))
+        llm_ok = ollama_ok or gemini_key
+        if not llm_ok:
+            has_warning = True
+        items.append({
+            "label": "Motore AI (Raffinamento & Studio)",
+            "detail": f"Attivo: {runtime_lbl} · Ollama: {'Online' if ollama_ok else 'Offline'} · Gemini API: {'Configurata' if gemini_key else 'Assente'}",
+            "status": "Pronto" if llm_ok else "Da configurare",
+            "level": "success" if llm_ok else "warning",
+        })
+        extra["Motore AI"] = runtime_lbl
+
+        # 3. Google Calendar & Cloud Sync
+        cal_expired = False
+        cal_connected = False
+        try:
+            from core.calendar_sync import calendar_manager
+            cal_expired = calendar_manager.is_auth_expired()
+            cal_connected = calendar_manager.has_token_file()
+        except Exception:
+            pass
+
+        if cal_expired:
+            has_warning = True
+            items.append({
+                "label": "Google Calendar & Sync",
+                "detail": "Sessione OAuth scaduta o revocata (invalid_grant). Riconnetti l'account per riprendere la sincronizzazione.",
+                "status": "Scaduto",
+                "level": "warning",
+                "action": "reconnect_google",
+            })
+            extra["Google Calendar"] = "Token scaduto (invalid_grant)"
+        elif cal_connected:
+            items.append({
+                "label": "Google Calendar & Sync",
+                "detail": "Account Google connesso e sincronizzazione abilitata.",
+                "status": "Connesso",
+                "level": "success",
+            })
+            extra["Google Calendar"] = "Connesso"
+        else:
+            items.append({
+                "label": "Google Calendar & Sync",
+                "detail": "Nessun account Google connesso (opzionale). Puoi collegarlo in Impostazioni → Google & Gruppi.",
+                "status": "Non collegato",
+                "level": "info",
+            })
+            extra["Google Calendar"] = "Non collegato"
+
+        # 4. Database SQLite WAL
+        try:
+            note_count = len(db.get_notes_by_hierarchy())
+            items.append({
+                "label": "Database Locale (SQLite WAL)",
+                "detail": f"Connessione attiva · {note_count} note archiviate in FlowNotes.",
+                "status": "OK",
+                "level": "success",
+            })
+            extra["Note archiviate"] = str(note_count)
+        except Exception as exc:
+            has_warning = True
+            items.append({
+                "label": "Database Locale (SQLite WAL)",
+                "detail": f"Errore lettura database: {exc}",
+                "status": "Errore",
+                "level": "error",
+            })
+
+        return items, extra, has_warning
+
+    def _refresh_system_status_pill(self):
+        if not hasattr(self, "system_status_pill"):
+            return
+        _, _, has_warning = self._collect_system_health()
+        pal = self._active_palette()
+        if has_warning:
+            dot_col = "#F59E0B"
+            label = "● Avviso"
+            tip = "Uno o più servizi richiedono attenzione — Clicca per aprire la diagnostica"
+        else:
+            dot_col = "#10B981"
+            label = "● GPU" if GPU_AVAILABLE else "● Pronto"
+            tip = "Tutti i sistemi operativi — Clicca per aprire la diagnostica e i log"
+        self.system_status_pill.setText(label)
+        self.system_status_pill.setToolTip(tip)
+        self.system_status_pill.setStyleSheet(
+            f"QPushButton {{"
+            f"  background-color: {pal['pill_bg']};"
+            f"  color: {dot_col};"
+            f"  border: 1px solid {pal['pill_border']};"
+            f"  border-radius: 12px;"
+            f"  padding: 0 9px;"
+            f"  font-size: 11px;"
+            f"  font-weight: 700;"
+            f"  min-height: 24px;"
+            f"}}"
+            f"QPushButton:hover {{ background-color: {pal['pill_hover_bg']}; border-color: {dot_col}; }}"
+        )
+
+    def _open_diagnostics_dialog(self):
+        items, extra, _ = self._collect_system_health()
+        dlg = DiagnosticsDialog(
+            parent=self,
+            status_items=items,
+            diagnostics_extra=extra,
+            on_open_google_settings=lambda: self._on_open_settings_clicked(initial_tab=4),
+            theme_key=self._current_theme,
+            reading_mode=self._reading_mode,
+        )
+        dlg.exec()
+        self._refresh_system_status_pill()
+
+    def _run_startup_health_checks(self):
+        """Esegue controlli discreti all'apertura dell'Hub e mostra toast azionabili se necessario."""
+        self._refresh_system_status_pill()
+        self._refresh_whats_new_badge()
+
+        # 1. Verifica scadenza token Google Calendar (evita errori silenti solo in console)
+        try:
+            from core.calendar_sync import calendar_manager
+            if calendar_manager.is_auth_expired():
+                self.show_toast(
+                    "La sessione di Google Calendar è scaduta o revocata. Riconnetti l'account per sincronizzare gli eventi.",
+                    title="Sessione Google scaduta",
+                    level="warning",
+                    duration_ms=9000,
+                    action_label="Riconnetti",
+                    on_action=lambda: self._on_open_settings_clicked(initial_tab=4),
+                )
+        except Exception:
+            pass
+
+        # 2. Notifica discreta in caso di nuova versione con novità non lette
+        if should_auto_show_whats_new():
+            self.show_toast(
+                "Scopri le ultime novità, i bug fix risolti e le funzioni nascoste di questa versione.",
+                title=f"Novità in FlowLocal v{APP_VERSION}",
+                level="info",
+                duration_ms=8000,
+                action_label="Apri Novità",
+                on_action=self._open_whats_new_dialog,
+            )
 
     def _open_note_from_flowtime(self, note_id: int):
         """Apre direttamente in FlowNotes la nota cliccata da FlowTime."""

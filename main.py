@@ -11,6 +11,9 @@ import os
 import sys
 import ctypes
 
+# Sopprime il banner "Hello from the pygame community" all'avvio
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+
 if len(sys.argv) >= 3 and sys.argv[1] == "--exec-python":
     import runpy
     import traceback
@@ -26,6 +29,9 @@ if len(sys.argv) >= 3 and sys.argv[1] == "--exec-python":
         sys.exit(1)
 
 from core.paths import get_resource_path
+from core.logging_config import setup_logging
+
+setup_logging()
 
 # Compatibilità PyAV >= 13/14 con Faster-Whisper:
 # Le versioni recenti di PyAV hanno rimosso il parametro metadata_errors da av.open()

@@ -2,6 +2,7 @@
 
 from datetime import datetime, date as dt_date, timedelta
 from typing import Callable, Dict, List, Optional, Any
+import logging
 import math
 import os
 import random
@@ -9,6 +10,85 @@ import re
 import tempfile
 import threading
 import time
+
+_themes_logger = logging.getLogger("FlowLocal.Themes")
+
+REQUIRED_PALETTE_KEYS = (
+    "text",
+    "title",
+    "subtitle",
+    "muted",
+    "root_bg",
+    "sidebar_bg",
+    "card_bg",
+    "card_border",
+    "input_bg",
+    "input_border",
+    "input_text",
+    "btn_bg",
+    "btn_border",
+    "btn_text",
+    "dialog_bg",
+    "divider",
+)
+
+_PALETTE_ALIASES = {
+    "bg": ("dialog_bg", "root_bg"),
+    "background": ("root_bg", "dialog_bg"),
+    "fg": ("text", "title"),
+    "foreground": ("text", "title"),
+    "border": ("card_border", "divider"),
+    "surface": ("card_bg", "surface_soft"),
+    "accent_text": ("badge_text", "accent"),
+}
+
+
+class SafePalette(dict):
+    """Dizionario palette retrocompatibile che previene KeyError a runtime tramite alias e fallback."""
+
+    def __init__(self, *args, theme_name: str = "obsidian", **kwargs):
+        super().__init__(*args, **kwargs)
+        self._theme_name = theme_name
+
+    def __missing__(self, key: str) -> str:
+        for alias in _PALETTE_ALIASES.get(key, ()):
+            val = dict.get(self, alias)
+            if val is not None:
+                return val
+        fallback = _THEME_PALETTES["obsidian"].get(key)
+        if fallback is not None:
+            _themes_logger.warning(
+                "Chiave palette '%s' mancante nel tema '%s': uso fallback obsidian.",
+                key,
+                self._theme_name,
+            )
+            return fallback
+        _themes_logger.warning(
+            "Chiave palette sconosciuta '%s' nel tema '%s': uso fallback neutro.",
+            key,
+            self._theme_name,
+        )
+        return dict.get(self, "text", "#E2E8F0")
+
+
+def validate_all_themes() -> List[str]:
+    """Verifica che tutti i temi abbiano le chiavi richieste e generino QSS valido."""
+    errors: List[str] = []
+    for theme_key, raw in _THEME_PALETTES.items():
+        for req in REQUIRED_PALETTE_KEYS:
+            if req not in raw or not str(raw[req]).strip():
+                errors.append(f"Tema '{theme_key}': chiave obbligatoria mancante '{req}'")
+        for reading in (False, True):
+            try:
+                pal = _resolve_palette(theme_key, reading_mode=reading)
+                if not isinstance(pal, SafePalette):
+                    errors.append(f"Tema '{theme_key}' (reading={reading}): palette non SafePalette")
+                qss = get_hub_qss(theme_key, reading_mode=reading)
+                if not qss or "{" not in qss:
+                    errors.append(f"Tema '{theme_key}' (reading={reading}): QSS vuoto o non valido")
+            except Exception as exc:
+                errors.append(f"Tema '{theme_key}' (reading={reading}): eccezione {exc!r}")
+    return errors
 
 from PyQt6.QtCore import (
     Qt, QTimer, QThread, pyqtSignal, QPoint, QPointF, QRect, QRectF, QLineF,
@@ -2074,7 +2154,8 @@ def _resolve_palette(
             if border_key in base:
                 base[border_key] = _dim_hex_colors_in_qss(str(base[border_key]), alpha=0.50)
 
-    return base
+    base.setdefault("bg", base.get("dialog_bg") or base.get("root_bg") or "#0B0E16")
+    return SafePalette(base, theme_name=theme)
 
 
 def _get_chevron_icon_path(color: str) -> str:

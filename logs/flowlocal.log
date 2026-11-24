@@ -1,0 +1,21 @@
+2026-11-24 18:47:45 [INFO] FlowLocal: FlowLocal v3.3.0 avviato su Windows (11, Python 3.12.13)
+2026-11-24 18:47:49 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
+2026-11-24 18:47:50 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"
+2026-11-24 18:48:26 [INFO] google_auth_oauthlib.flow: Please visit this URL to authorize this application: https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=532605028528-mjdiig2f0k6vbfbqeb5a163391u87313.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost%3A60910%2F&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&state=GYj78wbaTir7INuQjZlnNd9aeEFPYu&code_challenge=ky3FzPPWm8PsxiSFL6mcPDGzAvI0XTQhCNbTYNUcb8Y&code_challenge_method=S256&access_type=offline
+2026-11-24 18:48:26 [INFO] google_auth_oauthlib.flow: Please visit this URL to authorize this application: https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=532605028528-mjdiig2f0k6vbfbqeb5a163391u87313.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost%3A60912%2F&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&state=ohMXWA2YAdmXVJ7KNmuU3zsUDVnBPa&code_challenge=4qLRXVkgNKI0ciSA9ayjZP2uqo6-rK42qfxJkmPRxQQ&code_challenge_method=S256&access_type=offline
+2026-11-24 18:48:27 [INFO] google_auth_oauthlib.flow: Please visit this URL to authorize this application: https://accounts.google.com/o/oauth2/auth?response_type=code&client_id=532605028528-mjdiig2f0k6vbfbqeb5a163391u87313.apps.googleusercontent.com&redirect_uri=http%3A%2F%2Flocalhost%3A60914%2F&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcalendar&state=XsOaDp2XGNjTYskm6x90OBauHWus51&code_challenge=oOxhPhruZflnfqnYiOgSTEDqYznS-XHOIwNfc2Hs-d0&code_challenge_method=S256&access_type=offline
+2026-11-24 18:48:38 [INFO] google_auth_oauthlib.flow: "GET /?state=XsOaDp2XGNjTYskm6x90OBauHWus51&iss=https://accounts.google.com&code=4/0AUn6Hd8MryPT5M4fSfbVl5FHbObUgFL14RZbxae2KVn_YkXkoCIdBG789bMj9L1BoGU1jA&scope=https://www.googleapis.com/auth/calendar HTTP/1.1" 200 65
+2026-11-24 18:54:50 [INFO] FlowLocal: FlowLocal v3.3.0 avviato su Windows (11, Python 3.12.13)
+2026-11-24 18:54:52 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
+2026-11-24 18:54:53 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"
+2026-11-24 18:55:29 [INFO] faster_whisper: Processing audio with duration 00:10.500
+2026-11-24 18:55:30 [INFO] faster_whisper: VAD filter removed 00:01.972 of audio
+2026-11-24 18:55:40 [INFO] faster_whisper: Processing audio with duration 00:10.000
+2026-11-24 18:55:40 [INFO] faster_whisper: VAD filter removed 00:01.120 of audio
+2026-11-24 18:55:45 [INFO] faster_whisper: Processing audio with duration 00:05.950
+2026-11-24 18:55:45 [INFO] faster_whisper: VAD filter removed 00:02.270 of audio
+2026-11-24 18:55:56 [INFO] faster_whisper: Processing audio with duration 00:11.800
+2026-11-24 18:55:56 [INFO] faster_whisper: VAD filter removed 00:02.440 of audio
+2026-11-24 19:10:42 [INFO] FlowLocal: FlowLocal v3.3.0 avviato su Windows (11, Python 3.12.13)
+2026-11-24 19:10:45 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
+2026-11-24 19:10:46 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"

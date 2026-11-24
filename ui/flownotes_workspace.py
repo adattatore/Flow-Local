@@ -1848,13 +1848,23 @@ class EditorPane(QWidget):
 
         if self._autosave_thread_cls is None:
             return
+        # Non distruggere mai un thread di salvataggio ancora in esecuzione: ripianifica brevemente
+        if self._autosave_thread is not None and self._autosave_thread.isRunning():
+            self._autosave_timer.start(250)
+            return
         was_new = (tab.note_id is None)
-        self._autosave_thread = self._autosave_thread_cls(tab.note_id, title, content, prof, subj, top, ntype)
-        self._autosave_thread.saved.connect(
+        worker = self._autosave_thread_cls(tab.note_id, title, content, prof, subj, top, ntype)
+        self._autosave_thread = worker
+        worker.saved.connect(
             lambda sid, t, c, s, tp, nt: self._on_autosave_finished(tab, was_new, sid, t, c)
         )
-        self._autosave_thread.error.connect(lambda _err: self.set_autosave_badge(False, "Errore salvataggio"))
-        self._autosave_thread.start()
+        worker.error.connect(self._on_autosave_error)
+        worker.start()
+
+    def _on_autosave_error(self, err_msg: str):
+        import logging
+        logging.getLogger("FlowLocal.AutoSave").error("Errore salvataggio nota: %s", err_msg)
+        self.set_autosave_badge(False, "Errore salvataggio")
 
     def _on_autosave_finished(self, tab: TabContext, was_new: bool, saved_id: int, title: str, content: str):
         import time
