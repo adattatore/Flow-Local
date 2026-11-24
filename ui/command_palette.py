@@ -565,6 +565,14 @@ class GlobalCommandPalette(QDialog):
                 payload={"action": "open_diagnostics"},
             ),
             PaletteEntry(
+                kind="action",
+                title="Configurazione Guidata (Onboarding)",
+                subtitle="Scegli profilo d'uso, tema Signature e ripassa le scorciatoie",
+                badge="Guida",
+                icon_text="🚀",
+                payload={"action": "open_onboarding"},
+            ),
+            PaletteEntry(
                 kind="nav",
                 title="Vai a FlowType",
                 subtitle="Dettatura vocale, cronologia e statistiche",

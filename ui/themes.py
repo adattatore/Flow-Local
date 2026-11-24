@@ -143,6 +143,26 @@ _DARK_THEME_KEYS = {
     "cyber_synthwave",
 }
 
+CORE_SIGNATURE_THEMES = (
+    ("Obsidian", "obsidian", "Scuro minimale ad alto contrasto (Consigliato)"),
+    ("Chiaro", "light", "Chiarezza editoriale per ambienti luminosi"),
+    ("Dark Orb", "dark_orb", "Scuro obsidian con riflessi aurora"),
+    ("Orb", "orb", "Chiaro luminoso con accenti aurora"),
+)
+
+CREATIVE_THEMES = (
+    ("Ghibli Spring", "ghibli_spring", "Floreale pastello rilassante"),
+    ("Pixel Chill", "pixel_chill", "Arcade 16-bit lo-fi"),
+    ("Crimson Katana", "katana", "Dark fantasy affilato metallico"),
+    ("Tactical HUD", "tactical_hud", "Visore tattico notturno"),
+    ("Industrial Mecha", "industrial_mecha", "Hangar robotico heavy-duty"),
+    ("Amber CRT", "amber_crt", "Terminale fosforo ambra anni '80"),
+    ("Starfield Alabaster", "starfield_alabaster", "NASA-punk ceramica e ottone"),
+    ("Cyber Synthwave", "cyber_synthwave", "Outrun neon ciano e magenta"),
+)
+
+CORE_SIGNATURE_THEME_KEYS = {k for _, k, _ in CORE_SIGNATURE_THEMES}
+
 
 def _is_dark_theme(theme_key: str) -> bool:
     return theme_key in _DARK_THEME_KEYS

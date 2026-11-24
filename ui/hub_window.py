@@ -82,6 +82,7 @@ from ui.notes_tree import (
 from ui.command_palette import GlobalCommandPalette
 from ui.toast_manager import ToastManager, DiagnosticsDialog
 from ui.whats_new import WhatsNewDialog, has_unread_whats_new, should_auto_show_whats_new
+from ui.onboarding_wizard import OnboardingWizardDialog, should_show_onboarding
 from core.logging_config import APP_VERSION
 from core.cloud_sync import cloud_sync
 from core.whis_agent import WhisAgent, WhisStreamWorker
@@ -3660,11 +3661,14 @@ class FlowLocalHub(QMainWindow):
             count_lbl.setText(f"{open_cnt} aperti · {len(items)} mostrati")
 
             if not items:
-                empty_lbl = QLabel("Nessun To-Do trovato con i filtri attuali.")
-                empty_lbl.setWordWrap(True)
-                empty_lbl.setStyleSheet(f"color: {sub_col}; font-size: 13px; padding: 24px;")
-                empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                cards_lay.insertWidget(0, empty_lbl)
+                empty_w = _make_empty_state(
+                    "check_square",
+                    "Nessun To-Do con i filtri attuali",
+                    "Scrivi [] seguito da spazio in qualsiasi nota per creare una checklist interattiva.",
+                    shortcut_hint="[] + Spazio",
+                    theme_key=self._current_theme,
+                )
+                cards_lay.insertWidget(0, empty_w)
                 return
 
             for td in items:
@@ -3753,6 +3757,7 @@ class FlowLocalHub(QMainWindow):
             "toggle_reading": self._cp_toggle_reading,
             "open_whats_new": self._open_whats_new_dialog,
             "open_diagnostics": self._open_diagnostics_dialog,
+            "open_onboarding": self._open_onboarding_wizard,
             "set_theme": self._set_theme,
             "navigate": self._on_nav_clicked,
         }
@@ -5919,6 +5924,18 @@ class FlowLocalHub(QMainWindow):
         dlg.exec()
         self._refresh_whats_new_badge()
 
+    def _open_onboarding_wizard(self):
+        dlg = OnboardingWizardDialog(
+            parent=self,
+            theme_key=self._current_theme,
+            reading_mode=self._reading_mode,
+            on_theme_selected=self._set_theme,
+            on_open_settings=lambda tab_idx: self._on_open_settings_clicked(initial_tab=tab_idx),
+            ollama_detected=bool(self._ollama_detected),
+        )
+        dlg.exec()
+        self._refresh_system_status_pill()
+
     def _collect_system_health(self):
         """Raccoglie stato live dei sottosistemi per Status Pill e DiagnosticsDialog."""
         items = []
@@ -6071,8 +6088,10 @@ class FlowLocalHub(QMainWindow):
         except Exception:
             pass
 
-        # 2. Notifica discreta in caso di nuova versione con novità non lette
-        if should_auto_show_whats_new():
+        # 2. Onboarding al primo avvio assoluto oppure notifica discreta novità versione
+        if should_show_onboarding():
+            QTimer.singleShot(250, self._open_onboarding_wizard)
+        elif should_auto_show_whats_new():
             self.show_toast(
                 "Scopri le ultime novità, i bug fix risolti e le funzioni nascoste di questa versione.",
                 title=f"Novità in FlowLocal v{APP_VERSION}",
@@ -7275,8 +7294,12 @@ class FlowLocalHub(QMainWindow):
             rows = []
 
         if not rows:
-            empty = _make_label("Nessuna sessione Focus completata negli ultimi 7 giorni.", "Muted")
-            empty.setWordWrap(True)
+            empty = _make_empty_state(
+                "focus",
+                "Nessuna sessione Focus negli ultimi 7 giorni",
+                "Avvia un ciclo Pomodoro per monitorare automaticamente le tue ore di studio per materia.",
+                theme_key=self._current_theme,
+            )
             self.pomo_weekly_vbox.addWidget(empty)
             self.pomo_weekly_vbox.addStretch(1)
             return

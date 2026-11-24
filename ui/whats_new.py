@@ -46,6 +46,28 @@ WHATS_NEW_ITEMS: List[WhatsNewItem] = [
     WhatsNewItem(
         category="feature",
         version="3.3.0",
+        title="Temi Signature (Consigliati) vs Temi Creativi",
+        description=(
+            "In Impostazioni → Aspetto, i 4 temi principali (Obsidian, Chiaro, Dark Orb, Orb) sono ora "
+            "in evidenza come Temi Signature ottimizzati, mentre gli 8 temi creativi/retro vivono in una "
+            "sezione collassabile dedicata per una dashboard più pulita."
+        ),
+        badge="Nuovo",
+    ),
+    WhatsNewItem(
+        category="feature",
+        version="3.3.0",
+        title="Configurazione Guidata in 3 step (Onboarding)",
+        description=(
+            "Un percorso rapido di 60 secondi per scegliere profilo d'uso, tema Signature, scorciatoie vocali "
+            "e stato dei motori AI. Riapribile in qualsiasi momento da Impostazioni o tramite Ctrl+K."
+        ),
+        shortcut="Ctrl+K → Onboarding",
+        badge="Nuovo",
+    ),
+    WhatsNewItem(
+        category="feature",
+        version="3.3.0",
         title="Sezione Novità e Suggerimenti integrata",
         description=(
             "Un unico spazio sempre accessibile dalla barra in alto (o tramite Ctrl+K) per seguire "

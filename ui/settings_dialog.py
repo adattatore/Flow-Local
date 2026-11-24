@@ -421,13 +421,15 @@ class HubSettingsDialog(QDialog):
 
         layout.addWidget(_make_label("Aspetto & Testo", "PageTitle"))
 
-        # 1. Sezione Temi (3 colonne, larghezza sufficiente per Starfield Alabaster / Industrial Mecha)
+        # 1. Sezione Temi: Core Signature (Consigliati) vs Temi Creativi (Sperimentali)
+        from ui.themes import CORE_SIGNATURE_THEMES, CREATIVE_THEMES, CORE_SIGNATURE_THEME_KEYS
+
         theme_sec = QVBoxLayout()
         theme_sec.setSpacing(10)
-        theme_sec.addWidget(_make_label("Tema Interfaccia", "CardTitle"))
+        theme_sec.addWidget(_make_label("Temi Signature (Consigliati)", "CardTitle"))
         theme_sec.addWidget(
             _make_label(
-                "Scegli lo stile visivo della dashboard.",
+                "Temi principali ottimizzati per leggibilità, contrasto e coerenza su tutte le viste.",
                 "PageSubtitle",
                 wrap=True,
             )
@@ -435,32 +437,75 @@ class HubSettingsDialog(QDialog):
 
         self._theme_grp = QButtonGroup(self)
         self._theme_grp.setExclusive(True)
-        themes = [
-            ("Obsidian", "obsidian"),
-            ("Chiaro", "light"),
-            ("Orb", "orb"),
-            ("Dark Orb", "dark_orb"),
-            ("Ghibli Spring", "ghibli_spring"),
-            ("Pixel Chill", "pixel_chill"),
-            ("Crimson Katana", "katana"),
-            ("Tactical HUD", "tactical_hud"),
-            ("Industrial Mecha", "industrial_mecha"),
-            ("Amber CRT", "amber_crt"),
-            ("Starfield Alabaster", "starfield_alabaster"),
-            ("Cyber Synthwave", "cyber_synthwave"),
-        ]
-        theme_grid = QGridLayout()
-        theme_grid.setSpacing(8)
-        for idx, (t_label, t_key) in enumerate(themes):
+        btn_id = 0
+
+        core_grid = QGridLayout()
+        core_grid.setSpacing(8)
+        for idx, (t_label, t_key, t_desc) in enumerate(CORE_SIGNATURE_THEMES):
             btn = ThemePreviewButton(t_label, t_key)
             btn.setChecked(self.hub._current_theme == t_key)
+            btn.setToolTip(t_desc)
+            btn.setMinimumWidth(210)
+            btn.setMinimumHeight(36)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            btn.clicked.connect(lambda _c=False, k=t_key: self._on_theme_pill_clicked(k))
+            self._theme_grp.addButton(btn, btn_id)
+            btn_id += 1
+            core_grid.addWidget(btn, idx // 2, idx % 2)
+        theme_sec.addLayout(core_grid)
+
+        # Sezione Temi Creativi / Sperimentali (aperta di default se l'utente usa già un tema creativo)
+        using_creative = self.hub._current_theme not in CORE_SIGNATURE_THEME_KEYS
+        creative_toggle = QPushButton(
+            "▼  Temi Creativi & Sperimentali (8)" if using_creative else "▶  Temi Creativi & Sperimentali (8)"
+        )
+        creative_toggle.setObjectName("FilterPill")
+        creative_toggle.setCheckable(True)
+        creative_toggle.setChecked(using_creative)
+        creative_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        creative_toggle.setMinimumHeight(30)
+        theme_sec.addWidget(creative_toggle)
+
+        creative_host = QWidget()
+        creative_host.setVisible(using_creative)
+        creative_grid = QGridLayout(creative_host)
+        creative_grid.setContentsMargins(0, 4, 0, 0)
+        creative_grid.setSpacing(8)
+        for idx, (t_label, t_key, t_desc) in enumerate(CREATIVE_THEMES):
+            btn = ThemePreviewButton(t_label, t_key)
+            btn.setChecked(self.hub._current_theme == t_key)
+            btn.setToolTip(f"{t_desc} (Tema creativo)")
             btn.setMinimumWidth(185)
             btn.setMinimumHeight(34)
             btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.clicked.connect(lambda _c=False, k=t_key: self._on_theme_pill_clicked(k))
-            self._theme_grp.addButton(btn, idx)
-            theme_grid.addWidget(btn, idx // 3, idx % 3)
-        theme_sec.addLayout(theme_grid)
+            self._theme_grp.addButton(btn, btn_id)
+            btn_id += 1
+            creative_grid.addWidget(btn, idx // 3, idx % 3)
+
+        def _toggle_creative(checked: bool):
+            creative_host.setVisible(checked)
+            creative_toggle.setText(
+                "▼  Temi Creativi & Sperimentali (8)" if checked else "▶  Temi Creativi & Sperimentali (8)"
+            )
+
+        creative_toggle.toggled.connect(_toggle_creative)
+        theme_sec.addWidget(creative_host)
+
+        # Pulsante rapido per riaprire la Configurazione Guidata (Onboarding)
+        if hasattr(self.hub, "_open_onboarding_wizard"):
+            ob_row = QHBoxLayout()
+            ob_row.setContentsMargins(0, 4, 0, 0)
+            ob_btn = QPushButton(" Avvia Configurazione Guidata (Onboarding)")
+            ob_btn.setObjectName("FilterPill")
+            ob_btn.setIcon(get_icon("sparkles", theme_key=self.hub._current_theme, role="accent", size=14))
+            ob_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            ob_btn.setMinimumHeight(32)
+            ob_btn.clicked.connect(lambda: (self.accept(), self.hub._open_onboarding_wizard()))
+            ob_row.addWidget(ob_btn)
+            ob_row.addStretch(1)
+            theme_sec.addLayout(ob_row)
+
         layout.addLayout(theme_sec)
 
         layout.addWidget(_make_divider())
