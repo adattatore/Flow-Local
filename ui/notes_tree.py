@@ -203,6 +203,11 @@ class SamsungNotesTreeWidget(QTreeWidget):
     nodeLeftClicked = pyqtSignal(object)           # node_data tuple
     nodeMiddleClicked = pyqtSignal(object)         # node_data tuple
     nodeDoubleClicked = pyqtSignal(object)         # node_data tuple
+    toggleGroupNoteMaintenanceRequested = pyqtSignal(int, dict)  # group_id, note_item
+    deleteGroupNoteRequested = pyqtSignal(int, dict)             # group_id, note_item
+    addNoteToFavoritesRequested = pyqtSignal(int)                # note_id
+    restoreNoteToFolderRequested = pyqtSignal(int, object)       # note_id, target_folder_id (int | None)
+    groupNoteMovedToSubjectRequested = pyqtSignal(int, dict, str)  # group_id, note_item, target_subject
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -337,7 +342,7 @@ class SamsungNotesTreeWidget(QTreeWidget):
         md = super().mimeData(items)
         if items:
             data = items[0].data(0, ROLE_NODE_DATA)
-            if data and data[0] in ("note", "group_note", "group_board"):
+            if data and data[0] in ("note", "trashed_note", "group_note", "group_board"):
                 try:
                     md.setData("application/x-flownotes-node", json.dumps(list(data)).encode("utf-8"))
                 except Exception:
@@ -448,7 +453,7 @@ class SamsungNotesTreeWidget(QTreeWidget):
                 self.restoreNoteRequested.emit(note_id)
             elif chosen == act_perm_del:
                 self.permanentDeleteNoteRequested.emit(note_id)
-        elif data[0] in ("group_note", "group_board"):
+        elif data[0] == "group_board":
             act_tab = menu.addAction(get_icon("plus", size=14), "Apri in nuova scheda")
             act_split = menu.addAction(get_icon("split_h", size=14), "Affianca a destra (Split View)")
             chosen = menu.exec(global_pos)
@@ -456,44 +461,113 @@ class SamsungNotesTreeWidget(QTreeWidget):
                 self.openInNewTabRequested.emit(data)
             elif chosen == act_split:
                 self.openInSplitRequested.emit(data)
+        elif data[0] == "group_note":
+            gid = int(data[1])
+            item_dict = dict(data[2]) if len(data) > 2 and isinstance(data[2], dict) else {}
+            is_maint = (item_dict.get("status") == "maintenance")
+            act_tab = menu.addAction(get_icon("plus", size=14), "Apri in nuova scheda")
+            act_split = menu.addAction(get_icon("split_h", size=14), "Affianca a destra (Split View)")
+            menu.addSeparator()
+            act_maint = menu.addAction(
+                get_icon("warning" if not is_maint else "check", role="warning" if not is_maint else "success", size=14),
+                "Rimuovi stato manutenzione" if is_maint else "Metti in manutenzione",
+            )
+            act_del = menu.addAction(get_icon("trash", role="danger", size=14), "Elimina dal gruppo")
+            chosen = menu.exec(global_pos)
+            if chosen == act_tab:
+                self.openInNewTabRequested.emit(data)
+            elif chosen == act_split:
+                self.openInSplitRequested.emit(data)
+            elif chosen == act_maint:
+                self.toggleGroupNoteMaintenanceRequested.emit(gid, item_dict)
+            elif chosen == act_del:
+                self.deleteGroupNoteRequested.emit(gid, item_dict)
+
+    @staticmethod
+    def _resolve_semantic_target(target_item: Optional[QTreeWidgetItem]) -> Optional[tuple]:
+        cur = target_item
+        while cur is not None:
+            t_data = cur.data(0, ROLE_NODE_DATA)
+            if t_data and t_data[0] in ("folder", "favorites", "trash_root", "all", "group_subject"):
+                return tuple(t_data)
+            cur = cur.parent()
+        return None
 
     def dropEvent(self, event):
-        """Gestisce Drag & Drop di note e sottocartelle mantenendo integrità su SQLite."""
+        """Gestisce Drag & Drop di note, cestino, preferiti, materie gruppo e sottocartelle."""
+        drag_data = None
+        if event.mimeData() and event.mimeData().hasFormat("application/x-flownotes-node"):
+            try:
+                drag_data = tuple(json.loads(bytes(event.mimeData().data("application/x-flownotes-node")).decode("utf-8")))
+            except Exception:
+                drag_data = None
         dragged = self.currentItem()
-        if dragged is None:
-            event.ignore()
-            return
-        drag_data = dragged.data(0, ROLE_NODE_DATA)
+        if not drag_data and dragged is not None:
+            drag_data = dragged.data(0, ROLE_NODE_DATA)
         if not drag_data:
             event.ignore()
             return
 
-        target_item = self.itemAt(event.position().toPoint())
-        target_data = target_item.data(0, ROLE_NODE_DATA) if target_item is not None else None
+        pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        target_item = self.itemAt(pos)
+        sem_target = self._resolve_semantic_target(target_item)
 
-        # Non permettere di spostare dentro 'Tutte le note' o 'Recenti'
         if drag_data[0] == "note":
             note_id = int(drag_data[1])
-            target_folder_id: Optional[int] = None
-            if target_data is not None:
-                if target_data[0] == "folder":
-                    target_folder_id = int(target_data[1])
-                elif target_data[0] == "note" and target_item.parent() is not None:
-                    p_data = target_item.parent().data(0, ROLE_NODE_DATA)
-                    if p_data and p_data[0] == "folder":
-                        target_folder_id = int(p_data[1])
-            if target_folder_id is not None:
-                event.accept()
-                self.noteMovedToFolder.emit(note_id, target_folder_id)
-                return
+            if sem_target is not None:
+                if sem_target[0] == "favorites":
+                    event.accept()
+                    self.addNoteToFavoritesRequested.emit(note_id)
+                    return
+                if sem_target[0] == "trash_root":
+                    event.accept()
+                    self.trashNoteRequested.emit(note_id)
+                    return
+                if sem_target[0] == "folder":
+                    event.accept()
+                    self.noteMovedToFolder.emit(note_id, int(sem_target[1]))
+                    return
             event.ignore()
             return
 
-        if drag_data[0] == "folder":
+        if drag_data[0] == "trashed_note":
+            note_id = int(drag_data[1])
+            if sem_target is not None:
+                if sem_target[0] == "folder":
+                    event.accept()
+                    self.restoreNoteToFolderRequested.emit(note_id, int(sem_target[1]))
+                    return
+                if sem_target[0] == "all":
+                    event.accept()
+                    self.restoreNoteToFolderRequested.emit(note_id, None)
+                    return
+                if sem_target[0] == "favorites":
+                    event.accept()
+                    self.restoreNoteToFolderRequested.emit(note_id, None)
+                    self.addNoteToFavoritesRequested.emit(note_id)
+                    return
+            event.ignore()
+            return
+
+        if drag_data[0] == "group_note":
+            gid = int(drag_data[1])
+            item_dict = dict(drag_data[2]) if len(drag_data) > 2 and isinstance(drag_data[2], dict) else {}
+            if sem_target is not None and sem_target[0] == "group_subject":
+                target_gid = int(sem_target[1])
+                target_subj = str(sem_target[2])
+                if target_gid == gid and target_subj != (item_dict.get("subject") or ""):
+                    event.accept()
+                    self.groupNoteMovedToSubjectRequested.emit(gid, item_dict, target_subj)
+                    return
+            event.ignore()
+            return
+
+        if drag_data[0] == "folder" and dragged is not None:
             folder_id = int(drag_data[1])
             if bool(dragged.data(0, ROLE_LOCKED_FOLDER)):
                 event.ignore()
                 return
+            target_data = target_item.data(0, ROLE_NODE_DATA) if target_item is not None else None
             new_parent_id: Optional[int] = None
             if target_data is not None:
                 if target_data[0] == "folder":

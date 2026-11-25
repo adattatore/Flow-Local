@@ -65,6 +65,10 @@ DEFAULT_GROUP_PERMISSIONS: Dict[str, bool] = {
     "users_can_manage_bots": False,
 }
 
+NOTE_STATUS_PUBLISHED = "published"
+NOTE_STATUS_MAINTENANCE = "maintenance"
+VALID_NOTE_STATUSES = (NOTE_STATUS_PUBLISHED, NOTE_STATUS_MAINTENANCE)
+
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
@@ -911,6 +915,11 @@ class FlowGroupsManager:
                     "last_edited_by_name": ident["name"],
                     "last_edited_by_email": ident["email"],
                     "last_edited_at_utc": now_iso,
+                    "status": existing_manifest_meta.get("status") or NOTE_STATUS_PUBLISHED,
+                    "maintenance_by_name": existing_manifest_meta.get("maintenance_by_name") or "",
+                    "maintenance_by_email": existing_manifest_meta.get("maintenance_by_email") or "",
+                    "maintenance_at_utc": existing_manifest_meta.get("maintenance_at_utc") or "",
+                    "maintenance_reason": existing_manifest_meta.get("maintenance_reason") or "",
                 }
                 with open(target_file, "w", encoding="utf-8") as f:
                     f.write(build_md_with_frontmatter(clean_body, final_meta))
@@ -983,6 +992,11 @@ class FlowGroupsManager:
                     "last_edited_by_name": ident["name"],
                     "last_edited_by_email": ident["email"],
                     "last_edited_at_utc": now_iso,
+                    "status": existing_manifest_meta.get("status") or NOTE_STATUS_PUBLISHED,
+                    "maintenance_by_name": existing_manifest_meta.get("maintenance_by_name") or "",
+                    "maintenance_by_email": existing_manifest_meta.get("maintenance_by_email") or "",
+                    "maintenance_at_utc": existing_manifest_meta.get("maintenance_at_utc") or "",
+                    "maintenance_reason": existing_manifest_meta.get("maintenance_reason") or "",
                 }
                 self._upsert_drive_text(service, md_name, subj_id, build_md_with_frontmatter(clean_body, final_meta))
 
@@ -1149,6 +1163,230 @@ class FlowGroupsManager:
             if cur_name and cb_name and cur_name == cb_name:
                 return True
         return False
+
+    def can_set_maintenance(
+        self,
+        group_rec: Dict[str, Any],
+        manifest: Optional[Dict[str, Any]] = None,
+        author: str = "",
+    ) -> bool:
+        mf = manifest if manifest is not None else self.read_group_manifest(group_rec)
+        if self.is_admin(group_rec, mf, author=author):
+            return True
+        perms = mf.get("permissions") if isinstance(mf.get("permissions"), dict) else DEFAULT_GROUP_PERMISSIONS
+        return bool(perms.get("users_can_set_maintenance", True))
+
+    def set_note_status(
+        self,
+        group_rec: Dict[str, Any],
+        rel_path: str,
+        status: str,
+        reason: str = "",
+        author: str = "",
+    ) -> Dict[str, Any]:
+        st = (status or NOTE_STATUS_PUBLISHED).strip().lower()
+        if st not in VALID_NOTE_STATUSES:
+            raise ValueError(f"Stato nota non valido: {status}")
+        clean_rel = (rel_path or "").strip()
+        if not clean_rel:
+            raise ValueError("Percorso nota mancante.")
+
+        manifest = self.read_group_manifest(group_rec)
+        if not self.can_set_maintenance(group_rec, manifest, author=author):
+            raise PermissionError("Non hai il permesso di cambiare lo stato di manutenzione in questo gruppo.")
+
+        ident = self._current_author_identity(author)
+        notes_meta = manifest.get("notes_meta") if isinstance(manifest.get("notes_meta"), dict) else {}
+        meta = dict(notes_meta.get(clean_rel) or {})
+        meta["status"] = st
+        if st == NOTE_STATUS_MAINTENANCE:
+            meta["maintenance_by_name"] = ident["name"]
+            meta["maintenance_by_email"] = ident["email"]
+            meta["maintenance_at_utc"] = _utc_iso()
+            meta["maintenance_reason"] = (reason or "").strip()
+        else:
+            meta["maintenance_by_name"] = ""
+            meta["maintenance_by_email"] = ""
+            meta["maintenance_at_utc"] = ""
+            meta["maintenance_reason"] = ""
+        notes_meta[clean_rel] = meta
+        manifest["notes_meta"] = notes_meta
+        manifest["updated_at_utc"] = _utc_iso()
+        self._save_group_manifest(group_rec, manifest, interactive=True)
+        return dict(meta)
+
+    def delete_group_note(
+        self,
+        group_rec: Dict[str, Any],
+        subject: str,
+        filename: str,
+        author: str = "",
+    ) -> bool:
+        subj_dir = sanitize_filename(subject or "Generale")
+        raw_fn = (filename or "").strip()
+        safe_fn = raw_fn if raw_fn.endswith(".md") else f"{raw_fn}.md"
+        rel_key = f"{subj_dir}/{safe_fn}"
+        alt_key = f"{(subject or 'Generale').strip()}/{safe_fn}"
+
+        manifest = self.read_group_manifest(group_rec)
+        notes_meta = manifest.get("notes_meta") if isinstance(manifest.get("notes_meta"), dict) else {}
+        note_meta = dict(notes_meta.get(rel_key) or notes_meta.get(alt_key) or {})
+
+        lpath = (group_rec.get("local_fallback_path") or "").strip()
+        if lpath and not note_meta.get("created_by_name"):
+            local_md = os.path.join(lpath, subj_dir, safe_fn)
+            if os.path.exists(local_md):
+                try:
+                    with open(local_md, "r", encoding="utf-8") as lf:
+                        fm, _ = parse_md_frontmatter(lf.read(1200))
+                    note_meta.update({k: v for k, v in fm.items() if v})
+                except Exception:
+                    pass
+
+        if not self.can_delete_note(group_rec, note_meta=note_meta, manifest=manifest, author=author):
+            raise PermissionError("Non hai il permesso di eliminare questa nota dal gruppo.")
+
+        if lpath:
+            target_md = os.path.join(lpath, subj_dir, safe_fn)
+            target_lock = os.path.join(lpath, subj_dir, f"{safe_fn}.lock")
+            for p_del in (target_md, target_lock):
+                if os.path.exists(p_del):
+                    os.remove(p_del)
+        else:
+            fid = (group_rec.get("drive_folder_id") or "").strip()
+            service = self.get_drive_service(interactive=True)
+            if not service or not fid:
+                raise RuntimeError("Google Drive non connesso.")
+            subj_item = self._find_drive_item(service, subj_dir, parent_id=fid, mime_type=_DRIVE_FOLDER_MIME)
+            if subj_item:
+                for fn_del in (safe_fn, f"{safe_fn}.lock"):
+                    item_del = self._find_drive_item(service, fn_del, parent_id=subj_item["id"])
+                    if item_del:
+                        self._delete_drive_item(service, item_del["id"])
+
+        notes_meta.pop(rel_key, None)
+        notes_meta.pop(alt_key, None)
+        manifest["notes_meta"] = notes_meta
+        manifest["updated_at_utc"] = _utc_iso()
+        self._save_group_manifest(group_rec, manifest, interactive=True)
+        return True
+
+    def move_group_note_subject(
+        self,
+        group_rec: Dict[str, Any],
+        subject: str,
+        filename: str,
+        target_subject: str,
+        author: str = "",
+    ) -> Dict[str, Any]:
+        """Sposta una nota di gruppo in un'altra materia/cartella preservando autore e stato manutenzione."""
+        src_subj = sanitize_filename(subject or "Generale")
+        dst_subj = sanitize_filename(target_subject or "Generale")
+        raw_fn = (filename or "").strip()
+        safe_fn = raw_fn if raw_fn.endswith(".md") else f"{raw_fn}.md"
+        src_rel = f"{src_subj}/{safe_fn}"
+        alt_src_rel = f"{(subject or 'Generale').strip()}/{safe_fn}"
+        if src_subj == dst_subj:
+            return {
+                "old_rel_path": src_rel,
+                "new_rel_path": src_rel,
+                "subject": dst_subj,
+                "filename": safe_fn,
+            }
+
+        manifest = self.read_group_manifest(group_rec)
+        notes_meta = manifest.get("notes_meta") if isinstance(manifest.get("notes_meta"), dict) else {}
+        prev_entry = dict(notes_meta.get(src_rel) or notes_meta.get(alt_src_rel) or {})
+
+        lpath = (group_rec.get("local_fallback_path") or "").strip()
+        note_item: Dict[str, Any] = {
+            "subject": src_subj,
+            "filename": safe_fn,
+            "title": os.path.splitext(safe_fn)[0].replace("_", " "),
+            "local_path": "",
+            "file_id": "",
+        }
+        if lpath:
+            src_md = os.path.join(lpath, src_subj, safe_fn)
+            if not os.path.exists(src_md) and (subject or "").strip() != src_subj:
+                alt_md = os.path.join(lpath, (subject or "Generale").strip(), safe_fn)
+                if os.path.exists(alt_md):
+                    src_md = alt_md
+            if not os.path.exists(src_md):
+                raise FileNotFoundError(f"Nota sorgente non trovata: {src_rel}")
+            note_item["local_path"] = src_md
+        else:
+            fid = (group_rec.get("drive_folder_id") or "").strip()
+            service = self.get_drive_service(interactive=True)
+            if not service or not fid:
+                raise RuntimeError("Google Drive non connesso.")
+            subj_item = self._find_drive_item(service, src_subj, parent_id=fid, mime_type=_DRIVE_FOLDER_MIME)
+            if not subj_item:
+                raise FileNotFoundError(f"Cartella sorgente non trovata su Drive: {src_subj}")
+            md_item = self._find_drive_item(service, safe_fn, parent_id=subj_item["id"])
+            if not md_item:
+                raise FileNotFoundError(f"Nota sorgente non trovata su Drive: {src_rel}")
+            note_item["file_id"] = md_item["id"]
+
+        title, body = self.download_note(group_rec, note_item)
+        created_meta = {
+            "created_by_name": note_item.get("created_by_name") or prev_entry.get("created_by_name") or "",
+            "created_by_email": note_item.get("created_by_email") or prev_entry.get("created_by_email") or "",
+            "created_by_avatar": note_item.get("created_by_avatar") or prev_entry.get("created_by_avatar") or "",
+        }
+        stem = os.path.splitext(safe_fn)[0]
+        pub_res = self.publish_note(
+            group_rec,
+            subject=dst_subj,
+            title=stem,
+            markdown_content=body,
+            author=author,
+            release_lock=True,
+            created_by_meta=created_meta,
+        )
+        dst_rel = f"{pub_res['subject']}/{pub_res['filename']}"
+
+        # Rileggi manifest aggiornato da publish_note, preserva eventuale stato manutenzione e rimuovi sorgente
+        fresh_manifest = self.read_group_manifest(group_rec)
+        fresh_meta = fresh_manifest.get("notes_meta") if isinstance(fresh_manifest.get("notes_meta"), dict) else {}
+        if prev_entry.get("status"):
+            dst_entry = dict(fresh_meta.get(dst_rel) or {})
+            dst_entry["status"] = prev_entry.get("status") or NOTE_STATUS_PUBLISHED
+            for mk in ("maintenance_by_name", "maintenance_by_email", "maintenance_at_utc", "maintenance_reason"):
+                if prev_entry.get(mk):
+                    dst_entry[mk] = prev_entry[mk]
+            fresh_meta[dst_rel] = dst_entry
+
+        if lpath:
+            for p_del in (
+                os.path.join(lpath, src_subj, safe_fn),
+                os.path.join(lpath, src_subj, f"{safe_fn}.lock"),
+            ):
+                if os.path.exists(p_del):
+                    os.remove(p_del)
+        else:
+            fid = (group_rec.get("drive_folder_id") or "").strip()
+            service = self.get_drive_service(interactive=True)
+            if service and fid:
+                subj_item = self._find_drive_item(service, src_subj, parent_id=fid, mime_type=_DRIVE_FOLDER_MIME)
+                if subj_item:
+                    for fn_del in (safe_fn, f"{safe_fn}.lock"):
+                        item_del = self._find_drive_item(service, fn_del, parent_id=subj_item["id"])
+                        if item_del:
+                            self._delete_drive_item(service, item_del["id"])
+
+        fresh_meta.pop(src_rel, None)
+        fresh_meta.pop(alt_src_rel, None)
+        fresh_manifest["notes_meta"] = fresh_meta
+        fresh_manifest["updated_at_utc"] = _utc_iso()
+        self._save_group_manifest(group_rec, fresh_manifest, interactive=True)
+        return {
+            "old_rel_path": src_rel,
+            "new_rel_path": dst_rel,
+            "subject": pub_res["subject"],
+            "filename": pub_res["filename"],
+            "title": title,
+        }
 
     def update_group_color(
         self,
@@ -1455,6 +1693,11 @@ class FlowGroupsManager:
             for k in _AUTHOR_META_KEYS:
                 if m.get(k) and not n.get(k):
                     n[k] = m[k]
+            n["status"] = m.get("status") or NOTE_STATUS_PUBLISHED
+            n["maintenance_by_name"] = m.get("maintenance_by_name") or ""
+            n["maintenance_at_utc"] = m.get("maintenance_at_utc") or ""
+            n["maintenance_reason"] = m.get("maintenance_reason") or ""
+            n["can_delete"] = self.can_delete_note(group_rec, note_meta=n, manifest=manifest, author=current_author)
         subj_set = set(manifest.get("subjects") or [])
         for n in notes:
             if n.get("subject"):
@@ -1488,6 +1731,7 @@ class FlowGroupsManager:
             "permissions": dict(manifest.get("permissions") or DEFAULT_GROUP_PERMISSIONS),
             "current_user_role": cur_role,
             "is_admin": (cur_role == "admin"),
+            "can_set_maintenance": self.can_set_maintenance(group_rec, manifest=manifest, author=current_author),
             "subjects": sorted(subj_set) or ["Generale"],
             "notes": notes,
             "active_locks": active_locks,

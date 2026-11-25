@@ -131,7 +131,13 @@ from core.gemini_client import (
     get_active_runtime_engine,
     is_ollama_available,
 )
-from core.flow_groups import flow_groups
+from core.flow_groups import (
+    NOTE_STATUS_MAINTENANCE,
+    NOTE_STATUS_PUBLISHED,
+    flow_groups,
+    normalize_hex_color,
+    normalize_role,
+)
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from ui.flownotes_workspace import (
@@ -219,6 +225,37 @@ class _GroupBoardLoadWorker(QThread):
             )
 
 
+class _GroupMutationWorker(QThread):
+    """Worker asincrono per eseguire mutazioni FlowGroups (colore, ruoli, permessi, stato, delete, publish) senza bloccare la UI."""
+
+    succeeded = pyqtSignal(str, int, object)  # action_name, group_id, result
+    failed = pyqtSignal(str, int, str)        # action_name, group_id, err_msg
+
+    def __init__(
+        self,
+        action_name: str,
+        group_id: int,
+        fn: Callable[[Any], Any],
+        parent: Optional[QWidget] = None,
+    ):
+        super().__init__(parent)
+        self._action_name = action_name
+        self._group_id = int(group_id)
+        self._fn = fn
+
+    def run(self):
+        try:
+            from core.flow_groups import FlowGroupsManager, flow_groups as _fg_singleton
+            mgr = FlowGroupsManager(
+                credentials_path=_fg_singleton.credentials_path,
+                token_path=_fg_singleton.token_path,
+            )
+            res = self._fn(mgr)
+            self.succeeded.emit(self._action_name, self._group_id, res)
+        except Exception as exc:
+            self.failed.emit(self._action_name, self._group_id, str(exc))
+
+
 class FlowLocalHub(QMainWindow):
     note_added = pyqtSignal()
     flowtime_sync_done = pyqtSignal(bool, str)
@@ -268,6 +305,7 @@ class FlowLocalHub(QMainWindow):
         self._nk_group_board_cache: Dict[int, Dict[str, Any]] = {}
         self._nk_group_load_req_id: int = 0
         self._nk_group_load_workers: List[_GroupBoardLoadWorker] = []
+        self._nk_group_mutation_workers: List[_GroupMutationWorker] = []
         self._nk_loading_group_ids: set = set()
 
         self.setWindowTitle("FlowLocal Hub")
@@ -2088,6 +2126,11 @@ class FlowLocalHub(QMainWindow):
         self.nk_tree.restoreNoteRequested.connect(self._on_nk_restore_note)
         self.nk_tree.permanentDeleteNoteRequested.connect(self._on_nk_permanent_delete_note)
         self.nk_tree.emptyTrashRequested.connect(self._on_nk_empty_trash)
+        self.nk_tree.toggleGroupNoteMaintenanceRequested.connect(self._on_nk_toggle_group_note_maintenance)
+        self.nk_tree.deleteGroupNoteRequested.connect(self._on_nk_delete_group_note)
+        self.nk_tree.addNoteToFavoritesRequested.connect(self._on_nk_add_note_to_favorites)
+        self.nk_tree.restoreNoteToFolderRequested.connect(self._on_nk_restore_note_to_folder)
+        self.nk_tree.groupNoteMovedToSubjectRequested.connect(self._on_nk_move_group_note_subject)
         self.nk_tree.nodeLeftClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=False))
         self.nk_tree.nodeMiddleClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
         self.nk_tree.nodeDoubleClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
@@ -2197,9 +2240,11 @@ class FlowLocalHub(QMainWindow):
 
         # Strip unificata di azioni rapide (dockata nella riga Breadcrumb sotto la Tab Bar)
         self.nk_actions_strip = QWidget(col3)
+        self.nk_actions_strip.setFixedHeight(32)
         strip_lay = QHBoxLayout(self.nk_actions_strip)
         strip_lay.setContentsMargins(0, 0, 0, 0)
         strip_lay.setSpacing(4)
+        strip_lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         self.nk_studio_btn = _make_button(" Vista Studio")
         self.nk_studio_btn.setObjectName("NKToolbarPill")
@@ -2344,6 +2389,12 @@ class FlowLocalHub(QMainWindow):
             pane.changeGroupColorRequested.connect(self._on_nk_change_group_color_from_board)
             pane.changeMemberRoleRequested.connect(self._on_nk_change_member_role)
             pane.updateGroupPermissionsRequested.connect(self._on_nk_update_group_permissions)
+            pane.noteStatusChangeRequested.connect(self._on_nk_note_status_change)
+            pane.publishLocalToSpecificGroupRequested.connect(self._on_nk_publish_local_to_specific_group)
+            pane.deleteNoteFromSwitchRequested.connect(self._on_nk_delete_note_from_switch)
+            pane.deleteGroupNoteFromBoardRequested.connect(
+                lambda _p, gid, item: self._on_nk_delete_group_note(gid, item)
+            )
             pane.breadcrumb.rootClicked.connect(self._on_nk_breadcrumb_root_clicked)
             pane.breadcrumb.subjectClicked.connect(self._on_nk_breadcrumb_subject_clicked)
 
@@ -2401,6 +2452,7 @@ class FlowLocalHub(QMainWindow):
             lambda gid: self._open_group_board_in_pane(self._active_nk_pane(), gid, in_new_tab=True)
         )
         self.nk_group_rail.removeGroupRequested.connect(self._on_nk_remove_group)
+        self.nk_group_rail.nodeDroppedOnWorkspace.connect(self._on_nk_node_dropped_on_rail)
         nk_container_layout.addWidget(self.nk_group_rail, 0)
 
         main_vbox.addWidget(nk_container, 1)
@@ -2484,6 +2536,7 @@ class FlowLocalHub(QMainWindow):
                 pane.breadcrumb.toolbar_slot.addWidget(self.nk_actions_strip)
                 self.nk_actions_strip.show()
         self._sync_toolbar_from_active_pane()
+        self._sync_workspace_highlight_from_tab(pane.active_tab())
 
     def _on_nk_breadcrumb_root_clicked(self):
         active_gid = getattr(self, "_nk_active_workspace_group_id", None)
@@ -2513,6 +2566,26 @@ class FlowLocalHub(QMainWindow):
                     self._on_nk_tree_item_clicked(item, 0)
                     break
 
+    def _sync_workspace_highlight_from_tab(self, tab: Optional[TabContext]):
+        """Sincronizza automaticamente gruppo attivo su rail, switcher e sidebar al cambio scheda/pannello."""
+        if tab is None or getattr(self, "_restoring_nk_session", False):
+            return
+        if tab.workspace_type in ("group", "board") and tab.group_id is not None:
+            target_gid: Optional[int] = int(tab.group_id)
+        else:
+            target_gid = None
+
+        cur_gid = getattr(self, "_nk_active_workspace_group_id", None)
+        cur_gid_norm = int(cur_gid) if cur_gid is not None else None
+        if cur_gid_norm != target_gid:
+            self._nk_active_workspace_group_id = target_gid
+            self._refresh_notekeeper(auto_fetch=True)
+        elif hasattr(self, "nk_group_rail") and self.nk_group_rail.active_group_id() != target_gid:
+            groups = db.get_flow_groups()
+            self.nk_group_rail.set_state(groups, target_gid)
+            if hasattr(self, "nk_workspace_switcher"):
+                self.nk_workspace_switcher.set_state(groups, target_gid)
+
     def _on_nk_active_tab_changed(self, tab: Optional[TabContext]):
         if tab is not None and tab.workspace_type == "local":
             self._nk_selected_note_id = tab.note_id
@@ -2524,6 +2597,7 @@ class FlowLocalHub(QMainWindow):
         if not getattr(self, "_restoring_nk_session", False):
             self.save_workspace_session_state()
         self._sync_toolbar_from_active_pane()
+        self._sync_workspace_highlight_from_tab(tab)
 
     def save_workspace_session_state(self):
         """Salva le schede locali aperte (left/right pane) e lo stato Split View per ripristino all'avvio."""
@@ -2760,6 +2834,7 @@ class FlowLocalHub(QMainWindow):
             self.nk_group_rail.set_state(all_g, self._nk_active_workspace_group_id)
         if hasattr(self, "nk_workspace_switcher"):
             self.nk_workspace_switcher.set_state(all_g, self._nk_active_workspace_group_id)
+        self._sync_breadcrumb_groups(all_g)
 
         sq = self.nk_search_input.text().strip() if hasattr(self, "nk_search_input") else ""
         if self._nk_active_workspace_group_id == gid and fresh_g is not None:
@@ -2842,6 +2917,70 @@ class FlowLocalHub(QMainWindow):
                 return g
         return None
 
+    def _sync_breadcrumb_groups(self, groups: Optional[List[Dict[str, Any]]] = None):
+        g_list = groups if groups is not None else db.get_flow_groups()
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is not None and hasattr(pane, "breadcrumb"):
+                pane.breadcrumb.set_groups(g_list)
+
+    def _run_group_mutation(
+        self,
+        action_name: str,
+        group_id: int,
+        fn: Callable[[Any], Any],
+        on_success: Optional[Callable[[Any], None]] = None,
+        on_error: Optional[Callable[[str], None]] = None,
+    ):
+        worker = _GroupMutationWorker(action_name, group_id, fn, parent=self)
+        self._nk_group_mutation_workers.append(worker)
+        if on_success is not None:
+            worker.succeeded.connect(lambda _act, _gid, res, cb=on_success: cb(res))
+        if on_error is not None:
+            worker.failed.connect(lambda _act, _gid, err, cb=on_error: cb(err))
+        worker.finished.connect(lambda w=worker: self._cleanup_group_mutation_worker(w))
+        worker.start()
+
+    def _cleanup_group_mutation_worker(self, worker: _GroupMutationWorker):
+        if worker in self._nk_group_mutation_workers:
+            self._nk_group_mutation_workers.remove(worker)
+        worker.deleteLater()
+
+    def _sync_all_group_chrome_fast(self, group_id: int, color: Optional[str] = None, role: Optional[str] = None):
+        gid = int(group_id)
+        cached = self._nk_group_board_cache.get(gid)
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is None:
+                continue
+            pane.refresh_group_metadata(gid, color=color, role=role)
+            tab = pane.active_tab()
+            if tab and tab.workspace_type == "board" and tab.group_id and int(tab.group_id) == gid and cached is not None:
+                pane.board_widget.populate(cached)
+        groups = db.get_flow_groups()
+        if hasattr(self, "nk_workspace_switcher"):
+            self.nk_workspace_switcher.set_state(groups, self._nk_active_workspace_group_id)
+        if hasattr(self, "nk_group_rail"):
+            self.nk_group_rail.set_state(groups, self._nk_active_workspace_group_id)
+        self._sync_breadcrumb_groups(groups)
+
+    def _re_sync_group_after_error(self, group_id: int, err_msg: str, title: str = "FlowGroups"):
+        gid = int(group_id)
+        self._nk_group_board_cache.pop(gid, None)
+        if hasattr(self, "show_toast"):
+            self.show_toast(f"{title}: {err_msg}", level="warning")
+        else:
+            QMessageBox.warning(self, title, err_msg)
+        fresh_g = self._get_flow_group_by_id(gid)
+        if fresh_g is not None:
+            open_pane = None
+            for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+                if pane is None:
+                    continue
+                t = pane.active_tab()
+                if t and t.workspace_type == "board" and t.group_id and int(t.group_id) == gid:
+                    open_pane = pane
+                    break
+            self._request_group_board_async(fresh_g, open_board_pane=open_pane, in_new_tab=False, force=True)
+
     def _refresh_open_group_tabs_and_boards(self, group_id: int, color: Optional[str] = None, role: Optional[str] = None):
         gid = int(group_id)
         self._nk_group_board_cache.pop(gid, None)
@@ -2859,45 +2998,141 @@ class FlowLocalHub(QMainWindow):
             self.nk_workspace_switcher.set_state(groups, self._nk_active_workspace_group_id)
         if hasattr(self, "nk_group_rail"):
             self.nk_group_rail.set_state(groups, self._nk_active_workspace_group_id)
+        self._sync_breadcrumb_groups(groups)
         if fresh_g is not None and (open_board_pane is not None or self._nk_active_workspace_group_id == gid):
             self._request_group_board_async(fresh_g, open_board_pane=open_board_pane, in_new_tab=False, force=True)
 
     def _on_nk_change_group_color(self, group_id: int, color_hex: str):
-        g = self._get_flow_group_by_id(int(group_id))
+        gid = int(group_id)
+        g = self._get_flow_group_by_id(gid)
         if not g:
             return
-        try:
-            new_col = flow_groups.update_group_color(g, color_hex, author=self._nk_author_name())
-        except Exception as exc:
-            QMessageBox.warning(self, "FlowGroups", str(exc))
+        cached = self._nk_group_board_cache.get(gid)
+        is_adm = bool(cached.get("is_admin")) if cached is not None else (normalize_role(g.get("role")) == "admin")
+        if not is_adm:
+            QMessageBox.warning(self, "FlowGroups", "Solo un Amministratore può cambiare il colore del gruppo.")
             return
-        self._refresh_open_group_tabs_and_boards(int(group_id), color=new_col)
+        clean_col = normalize_hex_color(color_hex)
+        author = self._nk_author_name()
+
+        # Aggiornamento ottimistico immediato (0 ms su UI e SQLite)
+        db.update_flow_group_color(gid, clean_col)
+        if cached is not None:
+            cached["color"] = clean_col
+        self._sync_all_group_chrome_fast(gid, color=clean_col)
+
+        self._run_group_mutation(
+            "change_color",
+            gid,
+            lambda mgr, grp=dict(g), col=clean_col, auth=author: mgr.update_group_color(grp, col, author=auth),
+            on_error=lambda err, target_gid=gid: self._re_sync_group_after_error(target_gid, err, "FlowGroups — Colore"),
+        )
 
     def _on_nk_change_group_color_from_board(self, _pane: EditorPane, group_id: int, color_hex: str):
         self._on_nk_change_group_color(int(group_id), color_hex)
 
     def _on_nk_change_member_role(self, _pane: EditorPane, group_id: int, member_id: str, new_role: str):
-        g = self._get_flow_group_by_id(int(group_id))
+        gid = int(group_id)
+        g = self._get_flow_group_by_id(gid)
         if not g:
             return
-        try:
-            flow_groups.set_member_role(g, member_id, new_role, author=self._nk_author_name())
-        except Exception as exc:
-            QMessageBox.warning(self, "FlowGroups — Ruoli", str(exc))
+        cached = self._nk_group_board_cache.get(gid)
+        is_adm = bool(cached.get("is_admin")) if cached is not None else (normalize_role(g.get("role")) == "admin")
+        if not is_adm:
+            QMessageBox.warning(self, "FlowGroups — Ruoli", "Solo un Amministratore può modificare i ruoli dei membri.")
             return
-        fresh_g = self._get_flow_group_by_id(int(group_id))
-        resolved_role = (fresh_g or {}).get("role")
-        self._refresh_open_group_tabs_and_boards(int(group_id), role=resolved_role)
+
+        target_role = normalize_role(new_role)
+        target_key = (member_id or "").strip().lower()
+        author = self._nk_author_name()
+        resolved_self_role: Optional[str] = None
+
+        if cached is not None and isinstance(cached.get("members_detailed"), list):
+            members = cached["members_detailed"]
+            found_m = None
+            for m in members:
+                if isinstance(m, dict) and target_key in ((m.get("email") or "").strip().lower(), (m.get("name") or "").strip().lower()):
+                    found_m = m
+                    break
+            if found_m is not None:
+                if normalize_role(found_m.get("role")) == "admin" and target_role != "admin":
+                    admin_count = sum(1 for m in members if isinstance(m, dict) and normalize_role(m.get("role")) == "admin")
+                    if admin_count <= 1:
+                        QMessageBox.warning(self, "FlowGroups — Ruoli", "Il gruppo deve avere almeno un Amministratore.")
+                        return
+                found_m["role"] = target_role
+                ident = flow_groups._current_author_identity(author)
+                self_keys = {k for k in (ident["email"].lower(), ident["name"].lower()) if k}
+                if target_key in self_keys:
+                    resolved_self_role = target_role
+                    db.update_flow_group_role(gid, target_role)
+                    cached["current_user_role"] = target_role
+                    cached["is_admin"] = (target_role == "admin")
+        self._sync_all_group_chrome_fast(gid, role=resolved_self_role)
+
+        def _sync_role_after_save(_res):
+            fresh = self._get_flow_group_by_id(gid)
+            self._sync_all_group_chrome_fast(gid, role=(fresh or {}).get("role"))
+
+        self._run_group_mutation(
+            "set_member_role",
+            gid,
+            lambda mgr, grp=dict(g), mid=member_id, nr=target_role, auth=author: mgr.set_member_role(grp, mid, nr, author=auth),
+            on_success=_sync_role_after_save,
+            on_error=lambda err, target_gid=gid: self._re_sync_group_after_error(target_gid, err, "FlowGroups — Ruoli"),
+        )
 
     def _on_nk_update_group_permissions(self, _pane: EditorPane, group_id: int, permissions: dict):
-        g = self._get_flow_group_by_id(int(group_id))
+        gid = int(group_id)
+        g = self._get_flow_group_by_id(gid)
         if not g:
             return
-        try:
-            flow_groups.update_group_permissions(g, permissions, author=self._nk_author_name())
-        except Exception as exc:
-            QMessageBox.warning(self, "FlowGroups — Permessi", str(exc))
-        self._refresh_open_group_tabs_and_boards(int(group_id))
+        cached = self._nk_group_board_cache.get(gid)
+        is_adm = bool(cached.get("is_admin")) if cached is not None else (normalize_role(g.get("role")) == "admin")
+        if not is_adm:
+            QMessageBox.warning(self, "FlowGroups — Permessi", "Solo un Amministratore può modificare i permessi del gruppo.")
+            return
+        author = self._nk_author_name()
+        clean_perms = dict(permissions or {})
+
+        # Aggiornamento ottimistico su cache, schede aperte e bacheca (nessun blocco UI)
+        if cached is not None:
+            cached["permissions"] = clean_perms
+            can_maint = True if cached.get("is_admin") else bool(clean_perms.get("users_can_set_maintenance", True))
+            cached["can_set_maintenance"] = can_maint
+            ident = flow_groups._current_author_identity(author)
+            cur_email = (ident.get("email") or "").strip().lower()
+            cur_name = (ident.get("name") or "").strip().lower()
+            for n in cached.get("notes") or []:
+                if cached.get("is_admin") or clean_perms.get("users_can_delete_any"):
+                    n["can_delete"] = True
+                elif clean_perms.get("users_can_delete_own"):
+                    cb_e = (n.get("created_by_email") or "").strip().lower()
+                    cb_n = (n.get("created_by_name") or "").strip().lower()
+                    n["can_delete"] = bool((cur_email and cb_e and cur_email == cb_e) or (cur_name and cb_n and cur_name == cb_n))
+                else:
+                    n["can_delete"] = False
+            for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+                if pane is None:
+                    continue
+                for t in pane.tabs:
+                    if t.workspace_type == "group" and t.group_id and int(t.group_id) == gid:
+                        t.can_set_maintenance = can_maint
+                        match_n = next((x for x in (cached.get("notes") or []) if x.get("rel_path") == t.rel_path), None)
+                        if match_n is not None:
+                            t.can_delete_in_group = bool(match_n.get("can_delete"))
+                cur_t = pane.active_tab()
+                if cur_t and cur_t.workspace_type == "group" and cur_t.group_id and int(cur_t.group_id) == gid:
+                    pane.breadcrumb.update_from_tab(cur_t)
+                    pane._render_tab(cur_t)
+        self._sync_all_group_chrome_fast(gid)
+
+        self._run_group_mutation(
+            "update_permissions",
+            gid,
+            lambda mgr, grp=dict(g), perms=clean_perms, auth=author: mgr.update_group_permissions(grp, perms, author=auth),
+            on_error=lambda err, target_gid=gid: self._re_sync_group_after_error(target_gid, err, "FlowGroups — Permessi"),
+        )
 
     def _on_nk_open_group_note_from_board(self, pane: EditorPane, item: dict):
         tab = pane.active_tab()
@@ -2920,9 +3155,20 @@ class FlowLocalHub(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "FlowGroups", f"Impossibile aprire la nota del gruppo:\n{exc}")
             return
+        gid = int(group_rec["id"])
+        cached = self._nk_group_board_cache.get(gid) or {}
+        is_adm = bool(cached.get("is_admin")) if cached else (normalize_role(group_rec.get("role")) == "admin")
+        perms = cached.get("permissions") or {}
+        can_maint = bool(cached.get("can_set_maintenance", is_adm or perms.get("users_can_set_maintenance", True)))
+        can_del = bool(item.get("can_delete")) if "can_delete" in item else bool(
+            is_adm or flow_groups.can_delete_note(group_rec, note_meta=item, author=self._nk_author_name())
+        )
+        note_status = (item.get("status") or NOTE_STATUS_PUBLISHED).strip().lower()
+        maint_by = (item.get("maintenance_by_name") or "").strip()
+
         ctx = TabContext(
             workspace_type="group",
-            group_id=int(group_rec["id"]),
+            group_id=gid,
             group_rec=group_rec,
             subject=item.get("subject") or "Generale",
             title=title,
@@ -2932,6 +3178,10 @@ class FlowLocalHub(QMainWindow):
             is_dirty=False,
             is_locked_by_me=bool(item.get("locked_by_me")),
             lock_info=item.get("lock_info"),
+            note_status=note_status,
+            maintenance_by=maint_by,
+            can_delete_in_group=can_del,
+            can_set_maintenance=can_maint,
             created_by_name=item.get("created_by_name") or "",
             created_by_email=item.get("created_by_email") or "",
             created_by_avatar=item.get("created_by_avatar") or "",
@@ -3174,6 +3424,50 @@ class FlowLocalHub(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, "Copia nel Quaderno", str(exc))
 
+    def _publish_local_tab_to_group(self, pane: EditorPane, g: Dict[str, Any]):
+        tab = pane.active_tab()
+        if not tab or tab.workspace_type != "local":
+            return
+        pane._capture_current_tab_state()
+        gid = int(g["id"])
+        gname = g.get("group_name") or "Gruppo"
+        subj = tab.subject or "Generale"
+        title = tab.title or "Appunto"
+        md = tab.content_markdown or ""
+        author = self._nk_author_name()
+        pane.set_autosave_badge(False, f"Pubblicazione in {gname}...")
+
+        def _after_pub(res):
+            self._nk_group_board_cache.pop(gid, None)
+            pane.set_autosave_badge(True, f"✓ Pubblicata in {gname} ({res['subject']})")
+            if hasattr(self, "show_toast"):
+                self.show_toast(f"Nota '{title}' pubblicata nel gruppo {gname}.", level="success")
+            fresh_g = self._get_flow_group_by_id(gid)
+            if fresh_g is not None and (self._nk_active_workspace_group_id == gid or any(
+                p is not None and p.active_tab() and p.active_tab().workspace_type == "board" and p.active_tab().group_id == gid
+                for p in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None))
+            )):
+                self._request_group_board_async(fresh_g, open_board_pane=None, in_new_tab=False, force=True)
+
+        def _on_err(err):
+            pane.set_autosave_badge(True)
+            QMessageBox.warning(self, "Errore Pubblicazione", err)
+
+        self._run_group_mutation(
+            "publish_local",
+            gid,
+            lambda mgr, grp=dict(g), s=subj, t=title, c=md, a=author: mgr.publish_note(
+                grp, subject=s, title=t, markdown_content=c, author=a, release_lock=True
+            ),
+            on_success=_after_pub,
+            on_error=_on_err,
+        )
+
+    def _on_nk_publish_local_to_specific_group(self, pane: EditorPane, group_id: int):
+        g = self._get_flow_group_by_id(int(group_id))
+        if g:
+            self._publish_local_tab_to_group(pane, g)
+
     def _on_nk_publish_local_to_group(self, pane: EditorPane):
         tab = pane.active_tab()
         if not tab or tab.workspace_type != "local":
@@ -3199,24 +3493,209 @@ class FlowLocalHub(QMainWindow):
                 f"{prefix} {g.get('group_name')}",
             )
             act.setData(g)
-        chosen = menu.exec(pane.breadcrumb.btn_publish_local.mapToGlobal(QPoint(0, pane.breadcrumb.btn_publish_local.height())))
+        anchor = pane.breadcrumb.status_switch_btn if pane.breadcrumb.status_switch_btn.isVisible() else pane.breadcrumb.btn_publish_local
+        chosen = menu.exec(anchor.mapToGlobal(QPoint(0, anchor.height())))
         if not chosen:
             return
-        g = chosen.data()
-        try:
-            res = flow_groups.publish_note(
-                g,
-                subject=tab.subject or "Generale",
-                title=tab.title or "Appunto",
-                markdown_content=tab.content_markdown or "",
-                author=self._nk_author_name(),
-                release_lock=True,
+        self._publish_local_tab_to_group(pane, chosen.data())
+
+    def _apply_group_note_status_optimistic(
+        self,
+        group_id: int,
+        rel_path: str,
+        new_status: str,
+        by_name: str = "",
+    ):
+        gid = int(group_id)
+        cached = self._nk_group_board_cache.get(gid)
+        if cached is not None:
+            for n in cached.get("notes") or []:
+                if (n.get("rel_path") or "") == rel_path:
+                    n["status"] = new_status
+                    n["maintenance_by_name"] = by_name if new_status == NOTE_STATUS_MAINTENANCE else ""
+            if self._nk_active_workspace_group_id == gid:
+                fresh_g = self._get_flow_group_by_id(gid)
+                sq = self.nk_search_input.text().strip() if hasattr(self, "nk_search_input") else ""
+                if fresh_g is not None:
+                    self._refresh_group_tree(fresh_g, self._active_palette(), sq, board_data=cached, auto_fetch=False)
+
+        for p_item in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if p_item is None:
+                continue
+            for t in p_item.tabs:
+                if t.workspace_type == "group" and t.group_id and int(t.group_id) == gid and t.rel_path == rel_path:
+                    t.note_status = new_status
+                    t.maintenance_by = by_name if new_status == NOTE_STATUS_MAINTENANCE else ""
+                    if t.group_note_item is not None:
+                        t.group_note_item["status"] = new_status
+                        t.group_note_item["maintenance_by_name"] = t.maintenance_by
+            cur_t = p_item.active_tab()
+            if cur_t and cur_t.workspace_type == "group" and cur_t.group_id and int(cur_t.group_id) == gid and cur_t.rel_path == rel_path:
+                p_item._render_tab(cur_t)
+            elif cur_t and cur_t.workspace_type == "board" and cur_t.group_id and int(cur_t.group_id) == gid and cached is not None:
+                p_item.board_widget.populate(cached)
+
+    def _on_nk_note_status_change(self, pane: EditorPane, target_status: str):
+        tab = pane.active_tab()
+        if not tab or tab.workspace_type != "group" or not tab.group_id or not tab.group_rec:
+            return
+        gid = int(tab.group_id)
+        g = self._get_flow_group_by_id(gid) or dict(tab.group_rec)
+        author = self._nk_author_name()
+
+        if target_status == "make_private":
+            if not tab.can_delete_in_group:
+                QMessageBox.warning(self, "FlowGroups", "Non hai il permesso di rimuovere questa nota dal gruppo.")
+                return
+            ans = QMessageBox.question(
+                self,
+                "Rendi Nota Privata",
+                f"Spostare '{tab.title}' nel tuo Quaderno Locale (privato) ed eliminarla dal gruppo?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            pane.set_autosave_badge(True, f"✓ Pubblicata in {g.get('group_name')} ({res['subject']})")
-            if self._nk_active_workspace_group_id == int(g["id"]):
-                self._refresh_notekeeper()
-        except Exception as exc:
-            QMessageBox.warning(self, "Errore Pubblicazione", str(exc))
+            if ans != QMessageBox.StandardButton.Yes:
+                return
+            pane._capture_current_tab_state()
+            nid = db.add_study_note(
+                title=tab.title or "Nota Privata",
+                content_markdown=tab.content_markdown or "",
+                note_type=tab.note_type or "appunto",
+                profile=author,
+                subject=tab.subject or "Generale",
+                topic=tab.topic or "Generale",
+            )
+            rel_path = tab.rel_path
+            item = dict(tab.group_note_item or {"subject": tab.subject, "filename": f"{tab.title}.md", "rel_path": rel_path})
+            self._remove_group_note_optimistic(gid, rel_path)
+            self._load_note_into_nk_editor(nid, pane=pane, in_new_tab=False)
+            self._run_group_mutation(
+                "make_private_delete",
+                gid,
+                lambda mgr, grp=dict(g), s=item.get("subject") or tab.subject, fn=item.get("filename") or f"{tab.title}.md", a=author: mgr.delete_group_note(grp, s, fn, author=a),
+                on_error=lambda err, target_gid=gid: self._re_sync_group_after_error(target_gid, err, "FlowGroups — Rendi Privata"),
+            )
+            return
+
+        if target_status not in (NOTE_STATUS_PUBLISHED, NOTE_STATUS_MAINTENANCE):
+            return
+        if not tab.can_set_maintenance:
+            QMessageBox.warning(self, "FlowGroups", "Non hai il permesso di cambiare lo stato di manutenzione in questo gruppo.")
+            return
+
+        rel_path = tab.rel_path
+        self._apply_group_note_status_optimistic(gid, rel_path, target_status, by_name=author)
+        self._run_group_mutation(
+            "set_note_status",
+            gid,
+            lambda mgr, grp=dict(g), rp=rel_path, st=target_status, a=author: mgr.set_note_status(grp, rp, st, author=a),
+            on_error=lambda err, target_gid=gid: self._re_sync_group_after_error(target_gid, err, "FlowGroups — Stato Nota"),
+        )
+
+    def _on_nk_toggle_group_note_maintenance(self, group_id: int, note_item: dict):
+        gid = int(group_id)
+        g = self._get_flow_group_by_id(gid)
+        if not g:
+            return
+        cached = self._nk_group_board_cache.get(gid)
+        can_maint = bool(cached.get("can_set_maintenance", True)) if cached is not None else flow_groups.can_set_maintenance(g, author=self._nk_author_name())
+        if not can_maint:
+            QMessageBox.warning(self, "FlowGroups", "Non hai il permesso di modificare lo stato di manutenzione in questo gruppo.")
+            return
+        cur_st = (note_item.get("status") or NOTE_STATUS_PUBLISHED).strip().lower()
+        next_st = NOTE_STATUS_PUBLISHED if cur_st == NOTE_STATUS_MAINTENANCE else NOTE_STATUS_MAINTENANCE
+        rel_path = note_item.get("rel_path") or f"{note_item.get('subject') or 'Generale'}/{note_item.get('filename') or ''}"
+        author = self._nk_author_name()
+        self._apply_group_note_status_optimistic(gid, rel_path, next_st, by_name=author)
+        self._run_group_mutation(
+            "toggle_maintenance",
+            gid,
+            lambda mgr, grp=dict(g), rp=rel_path, st=next_st, a=author: mgr.set_note_status(grp, rp, st, author=a),
+            on_error=lambda err, target_gid=gid: self._re_sync_group_after_error(target_gid, err, "FlowGroups — Manutenzione"),
+        )
+
+    def _remove_group_note_optimistic(self, group_id: int, rel_path: str):
+        gid = int(group_id)
+        cached = self._nk_group_board_cache.get(gid)
+        if cached is not None:
+            cached["notes"] = [n for n in (cached.get("notes") or []) if (n.get("rel_path") or "") != rel_path]
+            cached["active_locks"] = [n for n in (cached.get("active_locks") or []) if (n.get("rel_path") or "") != rel_path]
+            if self._nk_active_workspace_group_id == gid:
+                fresh_g = self._get_flow_group_by_id(gid)
+                sq = self.nk_search_input.text().strip() if hasattr(self, "nk_search_input") else ""
+                if fresh_g is not None:
+                    self._refresh_group_tree(fresh_g, self._active_palette(), sq, board_data=cached, auto_fetch=False)
+        for p_item in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if p_item is None:
+                continue
+            p_item.close_tabs_for_group_note(gid, rel_path)
+            cur_t = p_item.active_tab()
+            if cur_t and cur_t.workspace_type == "board" and cur_t.group_id and int(cur_t.group_id) == gid and cached is not None:
+                p_item.board_widget.populate(cached)
+
+    def _on_nk_delete_note_from_switch(self, pane: EditorPane):
+        tab = pane.active_tab()
+        if not tab:
+            return
+        if tab.workspace_type == "local":
+            if tab.note_id is not None:
+                self._on_nk_trash_note(int(tab.note_id))
+            else:
+                pane.close_tab(pane.current_tab_index)
+            return
+        if tab.workspace_type == "group" and tab.group_id:
+            item = dict(
+                tab.group_note_item
+                or {
+                    "subject": tab.subject,
+                    "filename": f"{tab.title}.md",
+                    "rel_path": tab.rel_path,
+                    "title": tab.title,
+                    "can_delete": tab.can_delete_in_group,
+                }
+            )
+            self._on_nk_delete_group_note(int(tab.group_id), item)
+
+    def _on_nk_delete_group_note(self, group_id: int, note_item: dict):
+        gid = int(group_id)
+        g = self._get_flow_group_by_id(gid)
+        if not g:
+            return
+        author = self._nk_author_name()
+        cached = self._nk_group_board_cache.get(gid)
+        can_del = bool(note_item.get("can_delete")) if "can_delete" in note_item else bool(
+            (cached and cached.get("is_admin")) or flow_groups.can_delete_note(g, note_meta=note_item, author=author)
+        )
+        if not can_del:
+            QMessageBox.warning(
+                self,
+                "Permesso negato",
+                "Non hai il permesso di eliminare questa nota dal gruppo (verifica i permessi impostati dall'Amministratore).",
+            )
+            return
+
+        title = note_item.get("title") or "Nota Gruppo"
+        ans = QMessageBox.question(
+            self,
+            "Elimina Nota dal Gruppo",
+            f"Eliminare definitivamente '{title}' dal gruppo?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ans != QMessageBox.StandardButton.Yes:
+            return
+
+        subj = note_item.get("subject") or "Generale"
+        fn = note_item.get("filename") or f"{title}.md"
+        rel_path = note_item.get("rel_path") or f"{subj}/{fn}"
+        self._remove_group_note_optimistic(gid, rel_path)
+        self._run_group_mutation(
+            "delete_group_note",
+            gid,
+            lambda mgr, grp=dict(g), s=subj, f=fn, a=author: mgr.delete_group_note(grp, s, f, author=a),
+            on_success=lambda _res, t=title: self.show_toast(f"Nota '{t}' eliminata dal gruppo.", level="info") if hasattr(self, "show_toast") else None,
+            on_error=lambda err, target_gid=gid: self._re_sync_group_after_error(target_gid, err, "FlowGroups — Eliminazione"),
+        )
 
     def _on_nk_search_changed(self):
         self._refresh_notekeeper()
@@ -3320,6 +3799,7 @@ class FlowLocalHub(QMainWindow):
             self.nk_workspace_switcher.set_state(groups, active_gid)
         if hasattr(self, "nk_group_rail"):
             self.nk_group_rail.set_state(groups, active_gid)
+        self._sync_breadcrumb_groups(groups)
 
         p = self._active_palette()
         if hasattr(self.nk_tree, "set_theme_palette"):
@@ -3358,7 +3838,7 @@ class FlowLocalHub(QMainWindow):
         f_top.setWeight(QFont.Weight.DemiBold)
         all_item.setFont(0, f_top)
         all_item.setForeground(0, QBrush(QColor(p["title"])))
-        all_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        all_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDropEnabled)
         self.nk_tree.addTopLevelItem(all_item)
 
         # 1b. Sezione rapida: Preferiti
@@ -3372,7 +3852,7 @@ class FlowLocalHub(QMainWindow):
         fav_item.setIcon(0, get_icon("star_fill" if fav_notes else "star", theme_key=self._current_theme, role="warning", size=15))
         fav_item.setFont(0, f_top)
         fav_item.setForeground(0, QBrush(QColor(p["title"])))
-        fav_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        fav_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDropEnabled)
         for n in fav_notes:
             fav_item.addChild(self._make_note_leaf_item(n, p, max_len=30))
         self.nk_tree.addTopLevelItem(fav_item)
@@ -3488,7 +3968,7 @@ class FlowLocalHub(QMainWindow):
         )
         trash_item.setFont(0, f_top)
         trash_item.setForeground(0, QBrush(QColor(p["title"] if trashed_notes else p["subtitle"])))
-        trash_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        trash_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDropEnabled)
         for tn in trashed_notes:
             clean_t = strip_markdown_syntax((tn.get("title") or "Senza titolo").replace("Nota: ", "").strip()) or "Senza titolo"
             t_leaf = QTreeWidgetItem([f"🗑 {clean_t[:30]}"])
@@ -3497,7 +3977,7 @@ class FlowLocalHub(QMainWindow):
             t_leaf.setData(0, ROLE_IS_FOLDER, False)
             t_leaf.setToolTip(0, f"{clean_t} (nel Cestino)")
             t_leaf.setForeground(0, QBrush(QColor(p["subtitle"])))
-            t_leaf.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            t_leaf.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled)
             trash_item.addChild(t_leaf)
         self.nk_tree.addTopLevelItem(trash_item)
         if sq and trashed_notes:
@@ -3567,7 +4047,7 @@ class FlowLocalHub(QMainWindow):
             f_item.setIcon(0, make_vector_folder_icon(p.get("accent", "#6366F1"), 16))
             f_item.setFont(0, f_top)
             f_item.setForeground(0, QBrush(QColor(p["title"])))
-            f_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            f_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDropEnabled)
 
             for item in s_notes:
                 leaf = QTreeWidgetItem([(item.get("title") or "Nota")[:32]])
@@ -3578,7 +4058,12 @@ class FlowLocalHub(QMainWindow):
                 leaf.setForeground(0, QBrush(QColor(p["text"])))
 
                 lock_d = item.get("lock_info")
-                if lock_d:
+                is_maint = (item.get("status") == NOTE_STATUS_MAINTENANCE)
+                if is_maint:
+                    leaf.setData(0, ROLE_STATUS_ICON, get_icon("warning", theme_key=self._current_theme, role="warning", size=14))
+                    m_by = item.get("maintenance_by_name") or ""
+                    leaf.setToolTip(0, f"[In manutenzione{(' · ' + m_by) if m_by else ''}] {item.get('title')} ({subj})")
+                elif lock_d:
                     auth = lock_d.get("author") or item.get("lock_author") or "Studente"
                     utc_ts = lock_d.get("locked_at_utc") or ""
                     if item.get("locked_by_other"):
@@ -3833,6 +4318,305 @@ class FlowLocalHub(QMainWindow):
         if tab is None or tab.workspace_type != "local" or tab.note_id is None:
             return
         self._on_nk_toggle_favorite(int(tab.note_id))
+
+    def _on_nk_add_note_to_favorites(self, note_id: int):
+        nid = int(note_id)
+        note = db.get_study_note_by_id(nid)
+        if not note:
+            return
+        db.set_note_favorite(nid, True)
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is None:
+                continue
+            for t in pane.tabs:
+                if t.workspace_type == "local" and t.note_id == nid:
+                    t.is_favorite = True
+        self._sync_toolbar_from_active_pane()
+        self._refresh_notekeeper()
+        title_lbl = (note.get("title") or "Nota").strip()
+        if hasattr(self, "show_toast"):
+            self.show_toast(f"'{title_lbl}' aggiunta ai Preferiti.", title="Preferiti", level="success")
+
+    def _on_nk_restore_note_to_folder(self, note_id: int, target_folder_id: Optional[int]):
+        nid = int(note_id)
+        note = db.get_study_note_by_id(nid)
+        if not note:
+            return
+        db.restore_study_note(nid)
+        if target_folder_id is not None:
+            db.move_note_to_folder(nid, int(target_folder_id))
+        updated_note = db.get_study_note_by_id(nid) or note
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is None:
+                continue
+            for idx, tab in enumerate(pane.tabs):
+                if tab.workspace_type == "local" and tab.note_id is not None and int(tab.note_id) == nid:
+                    tab.is_trashed = False
+                    tab.subject = updated_note.get("subject") or tab.subject
+                    pane.tab_bar_widget.update_tab_title(idx, tab)
+                    if idx == pane.current_tab_index:
+                        pane._render_tab(tab)
+        self._refresh_notekeeper()
+        self._sync_toolbar_from_active_pane()
+        self.save_workspace_session_state()
+        title_lbl = (note.get("title") or "Nota").strip()
+        if hasattr(self, "show_toast"):
+            self.show_toast(f"'{title_lbl}' ripristinata dal Cestino.", title="Nota ripristinata", level="success")
+
+    def _on_nk_move_group_note_subject(self, group_id: int, note_item: dict, target_subject: str):
+        gid = int(group_id)
+        g = self._get_flow_group_by_id(gid)
+        if not g:
+            return
+        src_subj = note_item.get("subject") or "Generale"
+        dst_subj = (target_subject or "Generale").strip()
+        if src_subj == dst_subj:
+            return
+        title = note_item.get("title") or "Nota Gruppo"
+        fn = note_item.get("filename") or f"{title}.md"
+        old_rel = note_item.get("rel_path") or f"{src_subj}/{fn}"
+        new_rel = f"{dst_subj}/{fn}"
+        author = self._nk_author_name()
+
+        # Aggiornamento ottimistico su cache, tab aperte, albero e bacheca
+        cached = self._nk_group_board_cache.get(gid)
+        if cached is not None:
+            for n in cached.get("notes") or []:
+                if (n.get("rel_path") or "") == old_rel:
+                    n["subject"] = dst_subj
+                    n["rel_path"] = new_rel
+            if self._nk_active_workspace_group_id == gid:
+                sq = self.nk_search_input.text().strip() if hasattr(self, "nk_search_input") else ""
+                self._refresh_group_tree(g, self._active_palette(), sq, board_data=cached, auto_fetch=False)
+
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is None:
+                continue
+            for t in pane.tabs:
+                if t.workspace_type == "group" and t.group_id and int(t.group_id) == gid and t.rel_path == old_rel:
+                    t.subject = dst_subj
+                    t.rel_path = new_rel
+                    if t.group_note_item is not None:
+                        t.group_note_item["subject"] = dst_subj
+                        t.group_note_item["rel_path"] = new_rel
+            cur_t = pane.active_tab()
+            if cur_t and cur_t.workspace_type == "group" and cur_t.group_id and int(cur_t.group_id) == gid:
+                pane.breadcrumb.update_from_tab(cur_t)
+                pane._render_tab(cur_t)
+            elif cur_t and cur_t.workspace_type == "board" and cur_t.group_id and int(cur_t.group_id) == gid and cached is not None:
+                pane.board_widget.populate(cached)
+
+        def _after_move(_res):
+            if hasattr(self, "show_toast"):
+                self.show_toast(f"'{title}' spostata in '{dst_subj}'.", title="FlowGroups", level="success")
+
+        self._run_group_mutation(
+            "move_group_subject",
+            gid,
+            lambda mgr, grp=dict(g), s=src_subj, f=fn, d=dst_subj, a=author: mgr.move_group_note_subject(grp, s, f, d, author=a),
+            on_success=_after_move,
+            on_error=lambda err, target_gid=gid: self._re_sync_group_after_error(target_gid, err, "FlowGroups — Spostamento"),
+        )
+
+    def _on_nk_node_dropped_on_rail(self, target_group_id: Optional[int], payload: dict):
+        if not isinstance(payload, dict):
+            return
+        author = self._nk_author_name()
+        src_kind = ""
+        title = "Nota"
+        subject = "Generale"
+        markdown = ""
+        src_gid: Optional[int] = None
+        src_g: Optional[Dict[str, Any]] = None
+        note_item: Dict[str, Any] = {}
+        has_inline_content = False
+
+        if payload.get("kind") == "tab":
+            info = payload.get("data") or {}
+            src_pane = self.nk_pane_left if info.get("source_pane_id") == "left" else self.nk_pane_right
+            idx = int(info.get("tab_idx", -1))
+            if not (0 <= idx < len(src_pane.tabs)):
+                return
+            tab = src_pane.tabs[idx]
+            if idx == src_pane.current_tab_index:
+                src_pane._capture_current_tab_state()
+            if tab.workspace_type == "board":
+                return
+            if tab.workspace_type == "local":
+                src_kind = "local"
+                title = tab.title or "Appunto"
+                subject = tab.subject or "Generale"
+                markdown = tab.content_markdown or ""
+                has_inline_content = True
+            elif tab.workspace_type == "group" and tab.group_id is not None:
+                src_kind = "group"
+                src_gid = int(tab.group_id)
+                src_g = self._get_flow_group_by_id(src_gid) or tab.group_rec
+                title = tab.title or "Nota Gruppo"
+                subject = tab.subject or "Generale"
+                markdown = tab.content_markdown or ""
+                note_item = dict(
+                    tab.group_note_item
+                    or {
+                        "subject": subject,
+                        "filename": f"{title}.md",
+                        "rel_path": tab.rel_path,
+                        "title": title,
+                        "can_delete": tab.can_delete_in_group,
+                    }
+                )
+                has_inline_content = True
+        elif payload.get("kind") == "node":
+            data = payload.get("data") or []
+            if not data:
+                return
+            if data[0] == "note":
+                note = db.get_study_note_by_id(int(data[1]))
+                if not note:
+                    return
+                src_kind = "local"
+                title = note.get("title") or "Appunto"
+                subject = note.get("subject") or "Generale"
+                markdown = note.get("content_markdown") or ""
+                has_inline_content = True
+            elif data[0] == "group_note":
+                src_gid = int(data[1])
+                note_item = dict(data[2]) if len(data) > 2 and isinstance(data[2], dict) else {}
+                src_g = self._get_flow_group_by_id(src_gid)
+                if not src_g:
+                    return
+                src_kind = "group"
+                title = note_item.get("title") or "Nota Gruppo"
+                subject = note_item.get("subject") or "Generale"
+                has_inline_content = False
+
+        if not src_kind:
+            return
+
+        # Caso 1: Nota Locale -> Gruppo target
+        if src_kind == "local":
+            if target_group_id is None:
+                return
+            dst_gid = int(target_group_id)
+            dst_g = self._get_flow_group_by_id(dst_gid)
+            if not dst_g:
+                return
+            dst_name = dst_g.get("group_name") or "Gruppo"
+
+            def _after_pub(res):
+                self._nk_group_board_cache.pop(dst_gid, None)
+                if hasattr(self, "show_toast"):
+                    self.show_toast(f"'{title}' pubblicata in {dst_name} ({res['subject']}).", title="FlowGroups", level="success")
+                fresh_dst = self._get_flow_group_by_id(dst_gid)
+                if fresh_dst is not None and self._nk_active_workspace_group_id == dst_gid:
+                    self._request_group_board_async(fresh_dst, open_board_pane=None, in_new_tab=False, force=True)
+
+            self._run_group_mutation(
+                "drop_publish_local",
+                dst_gid,
+                lambda mgr, grp=dict(dst_g), s=subject, t=title, c=markdown, a=author: mgr.publish_note(
+                    grp, subject=s, title=t, markdown_content=c, author=a, release_lock=True
+                ),
+                on_success=_after_pub,
+                on_error=lambda err: QMessageBox.warning(self, "Pubblicazione Gruppo", err),
+            )
+            return
+
+        # Caso 2: Nota Gruppo -> Quaderno Locale
+        if src_kind == "group" and target_group_id is None:
+            def _save_local(dl_title: str, dl_md: str):
+                db.add_study_note(
+                    title=dl_title or title,
+                    content_markdown=dl_md or "",
+                    note_type="appunto",
+                    profile=author,
+                    subject=subject or "Generale",
+                    topic="FlowGroup",
+                )
+                if self._nk_active_workspace_group_id is None:
+                    self._refresh_notekeeper()
+                if hasattr(self, "show_toast"):
+                    self.show_toast(f"'{dl_title or title}' copiata nel Quaderno Locale.", title="Quaderno Locale", level="success")
+
+            if has_inline_content:
+                _save_local(title, markdown)
+            elif src_g is not None:
+                self._run_group_mutation(
+                    "drop_copy_to_local",
+                    int(src_gid or 0),
+                    lambda mgr, grp=dict(src_g), it=dict(note_item): mgr.download_note(grp, it),
+                    on_success=lambda res: _save_local(res[0], res[1]),
+                    on_error=lambda err: QMessageBox.warning(self, "Copia nel Quaderno", err),
+                )
+            return
+
+        # Caso 3: Nota Gruppo A -> Gruppo B
+        if src_kind == "group" and target_group_id is not None and src_gid is not None and src_g is not None:
+            dst_gid = int(target_group_id)
+            if dst_gid == src_gid:
+                return
+            dst_g = self._get_flow_group_by_id(dst_gid)
+            if not dst_g:
+                return
+            dst_name = dst_g.get("group_name") or "Gruppo"
+            src_name = src_g.get("group_name") or "Gruppo"
+            cached_src = self._nk_group_board_cache.get(src_gid)
+            can_del = bool(note_item.get("can_delete")) if "can_delete" in note_item else bool(
+                (cached_src and cached_src.get("is_admin")) or flow_groups.can_delete_note(src_g, note_meta=note_item, author=author)
+            )
+            do_move = False
+            if can_del:
+                ans = QMessageBox.question(
+                    self,
+                    "Sposta o Copia Nota tra Gruppi",
+                    f"Vuoi spostare '{title}' da '{src_name}' a '{dst_name}'?\n\n"
+                    "Sì = Sposta (rimuove dal gruppo originale)\nNo = Copia soltanto",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.No,
+                )
+                if ans == QMessageBox.StandardButton.Cancel:
+                    return
+                do_move = (ans == QMessageBox.StandardButton.Yes)
+
+            fn = note_item.get("filename") or f"{title}.md"
+            rel_path = note_item.get("rel_path") or f"{subject}/{fn}"
+            if do_move:
+                self._remove_group_note_optimistic(src_gid, rel_path)
+
+            def _transfer(mgr):
+                dl_title = title
+                dl_md = markdown
+                if not has_inline_content:
+                    dl_title, dl_md = mgr.download_note(dict(src_g), dict(note_item))
+                pub_res = mgr.publish_note(
+                    dict(dst_g),
+                    subject=subject,
+                    title=dl_title or title,
+                    markdown_content=dl_md,
+                    author=author,
+                    release_lock=True,
+                )
+                if do_move:
+                    mgr.delete_group_note(dict(src_g), subject, fn, author=author)
+                return pub_res
+
+            def _after_transfer(_res):
+                self._nk_group_board_cache.pop(dst_gid, None)
+                if self._nk_active_workspace_group_id == dst_gid:
+                    fresh_dst = self._get_flow_group_by_id(dst_gid)
+                    if fresh_dst is not None:
+                        self._request_group_board_async(fresh_dst, open_board_pane=None, in_new_tab=False, force=True)
+                verb = "spostata" if do_move else "copiata"
+                if hasattr(self, "show_toast"):
+                    self.show_toast(f"'{title}' {verb} in {dst_name}.", title="FlowGroups", level="success")
+
+            self._run_group_mutation(
+                "drop_transfer_group",
+                dst_gid,
+                _transfer,
+                on_success=_after_transfer,
+                on_error=lambda err, s_gid=src_gid: self._re_sync_group_after_error(s_gid, err, "Trasferimento Gruppo"),
+            )
 
     def _on_nk_trash_note(self, note_id: int):
         nid = int(note_id)

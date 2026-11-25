@@ -43,6 +43,8 @@ from PyQt6.QtWidgets import (
 from core.flow_groups import (
     DEFAULT_GROUP_COLOR,
     GROUP_COLOR_PALETTE,
+    NOTE_STATUS_MAINTENANCE,
+    NOTE_STATUS_PUBLISHED,
     flow_groups,
     normalize_hex_color,
     normalize_role,
@@ -123,6 +125,10 @@ class TabContext:
     is_new_empty: bool = False
     is_favorite: bool = False
     is_trashed: bool = False
+    note_status: str = "private"  # 'private' | 'published' | 'maintenance'
+    maintenance_by: str = ""
+    can_delete_in_group: bool = False
+    can_set_maintenance: bool = True
     auto_title_done: bool = False
     created_by_name: str = ""
     created_by_email: str = ""
@@ -498,6 +504,73 @@ class WorkspaceSwitcherButton(QPushButton):
         menu.exec(self.mapToGlobal(QPoint(0, self.height() + 4)))
 
 
+class _RailDropButton(QPushButton):
+    """Pulsante del rail Discord che accetta il drop di note dall'albero o dalle schede aperte."""
+
+    payloadDropped = pyqtSignal(object, object)  # target_group_id (int | None), payload dict
+
+    def __init__(self, text: str = "", target_group_id: Optional[int] = None, parent: Optional[QWidget] = None):
+        super().__init__(text, parent)
+        self.target_group_id = target_group_id
+        self._normal_qss = ""
+        self._drop_hover_qss = ""
+        self.setAcceptDrops(True)
+
+    def set_drop_styles(self, normal_qss: str, drop_hover_qss: str):
+        self._normal_qss = normal_qss
+        self._drop_hover_qss = drop_hover_qss
+        self.setStyleSheet(normal_qss)
+
+    @staticmethod
+    def _extract_payload(mime) -> Optional[Dict[str, Any]]:
+        if mime is None:
+            return None
+        if mime.hasFormat("application/x-flownotes-node"):
+            try:
+                data = json.loads(bytes(mime.data("application/x-flownotes-node")).decode("utf-8"))
+                if isinstance(data, list) and data and data[0] in ("note", "group_note"):
+                    return {"kind": "node", "data": data}
+            except Exception:
+                pass
+        if mime.hasFormat("application/x-flownotes-tab"):
+            try:
+                info = json.loads(bytes(mime.data("application/x-flownotes-tab")).decode("utf-8"))
+                if isinstance(info, dict) and info.get("source_pane_id"):
+                    return {"kind": "tab", "data": info}
+            except Exception:
+                pass
+        return None
+
+    def dragEnterEvent(self, event):
+        if self._extract_payload(event.mimeData()) is not None:
+            if self._drop_hover_qss:
+                self.setStyleSheet(self._drop_hover_qss)
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if self._extract_payload(event.mimeData()) is not None:
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dragLeaveEvent(self, event):
+        if self._normal_qss:
+            self.setStyleSheet(self._normal_qss)
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        if self._normal_qss:
+            self.setStyleSheet(self._normal_qss)
+        payload = self._extract_payload(event.mimeData())
+        if payload is not None:
+            self.payloadDropped.emit(self.target_group_id, payload)
+            event.acceptProposedAction()
+            return
+        super().dropEvent(event)
+
+
 class GroupDiscordRail(QFrame):
     """Barra verticale stile Discord sul lato destro di FlowNotes per cambiare rapidamente gruppo."""
 
@@ -506,6 +579,10 @@ class GroupDiscordRail(QFrame):
     changeGroupColorRequested = pyqtSignal(int, str)
     openGroupBoardRequested = pyqtSignal(int)
     removeGroupRequested = pyqtSignal(int)
+    nodeDroppedOnWorkspace = pyqtSignal(object, object)  # target_group_id (int | None), payload dict
+
+    _ACTIVE_SIZE = 46
+    _INACTIVE_SIZE = 36
 
     def __init__(self, theme_key: str = "obsidian", is_dark: bool = True, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -514,35 +591,40 @@ class GroupDiscordRail(QFrame):
         self._palette: Dict[str, str] = {}
         self._groups: List[Dict[str, Any]] = []
         self._active_group_id: Optional[int] = None
+        self._last_render_sig: Optional[tuple] = None
 
         self.setObjectName("NKGroupDiscordRail")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedWidth(56)
+        self.setFixedWidth(64)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 10, 0, 10)
         root.setSpacing(8)
         root.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
-        # Bottone Quaderno Locale
+        # Bottone Quaderno Locale (centrato con pillola laterale)
         loc_row = QWidget(self)
+        loc_row.setFixedWidth(62)
         loc_lay = QHBoxLayout(loc_row)
-        loc_lay.setContentsMargins(5, 0, 0, 0)
-        loc_lay.setSpacing(4)
-        self.local_btn = QPushButton(loc_row)
+        loc_lay.setContentsMargins(2, 0, 2, 0)
+        loc_lay.setSpacing(2)
+        loc_lay.addStretch(1)
+        self.local_btn = _RailDropButton("", target_group_id=None, parent=loc_row)
         self.local_btn.setObjectName("NKRailLocalBtn")
-        self.local_btn.setFixedSize(40, 40)
+        self.local_btn.setFixedSize(self._ACTIVE_SIZE, self._ACTIVE_SIZE)
         self.local_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.local_btn.setToolTip("Il mio Quaderno (Locale)")
+        self.local_btn.setToolTip("Il mio Quaderno (Locale)\nTrascina qui una nota di gruppo per copiarla nel Quaderno")
         self.local_btn.clicked.connect(lambda: self.workspaceSelected.emit(None))
+        self.local_btn.payloadDropped.connect(self.nodeDroppedOnWorkspace.emit)
         loc_lay.addWidget(self.local_btn)
+        loc_lay.addStretch(1)
         self.local_pill = QFrame(loc_row)
-        self.local_pill.setFixedSize(3, 24)
+        self.local_pill.setFixedSize(4, 28)
         loc_lay.addWidget(self.local_pill)
-        root.addWidget(loc_row)
+        root.addWidget(loc_row, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self._top_sep = QFrame(self)
-        self._top_sep.setFixedSize(28, 1)
+        self._top_sep.setFixedSize(32, 1)
         root.addWidget(self._top_sep, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self.groups_scroll = QScrollArea(self)
@@ -563,35 +645,52 @@ class GroupDiscordRail(QFrame):
 
         # Bottone "+" posizionato subito sotto all'elenco gruppi (stile Discord)
         self._add_row = QWidget(self.groups_inner)
+        self._add_row.setFixedWidth(62)
         self._add_row.setStyleSheet("background: transparent;")
         add_lay = QHBoxLayout(self._add_row)
-        add_lay.setContentsMargins(5, 0, 0, 0)
-        add_lay.setSpacing(4)
+        add_lay.setContentsMargins(2, 0, 2, 0)
+        add_lay.setSpacing(2)
+        add_lay.addStretch(1)
         self.add_btn = QPushButton(self._add_row)
         self.add_btn.setObjectName("NKRailAddBtn")
-        self.add_btn.setFixedSize(40, 40)
+        self.add_btn.setFixedSize(self._INACTIVE_SIZE, self._INACTIVE_SIZE)
         self.add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_btn.setToolTip("Crea o Unisciti a un Gruppo...")
         self.add_btn.clicked.connect(self.joinOrCreateRequested.emit)
         add_lay.addWidget(self.add_btn)
+        add_lay.addStretch(1)
         add_spacer = QWidget(self._add_row)
-        add_spacer.setFixedSize(3, 24)
+        add_spacer.setFixedSize(4, 24)
         add_spacer.setStyleSheet("background: transparent;")
         add_lay.addWidget(add_spacer)
 
         self._apply_rail_chrome()
+
+    def active_group_id(self) -> Optional[int]:
+        return self._active_group_id
 
     def set_theme(self, theme_key: str, palette: Dict[str, str], is_dark: Optional[bool] = None):
         self._theme_key = theme_key
         self._palette = dict(palette or {})
         if is_dark is not None:
             self._is_dark = bool(is_dark)
+        self._last_render_sig = None
         self._apply_rail_chrome()
         self._rebuild_items()
 
     def set_state(self, groups: List[Dict[str, Any]], active_group_id: Optional[int]):
         self._groups = list(groups or [])
-        self._active_group_id = active_group_id
+        self._active_group_id = int(active_group_id) if active_group_id is not None else None
+        sig = (
+            self._active_group_id,
+            tuple(
+                (int(g["id"]), str(g.get("group_name") or ""), _group_color(g), normalize_role(g.get("role")))
+                for g in self._groups
+            ),
+        )
+        if sig == self._last_render_sig:
+            return
+        self._last_render_sig = sig
         self._rebuild_items()
 
     def _apply_rail_chrome(self):
@@ -606,11 +705,14 @@ class GroupDiscordRail(QFrame):
             f"QFrame#NKGroupDiscordRail {{ background-color: {bg}; border-left: 1px solid {bd}; }}"
         )
         self._top_sep.setStyleSheet(f"background-color: {bd}; border: none;")
-        self.add_btn.setIcon(get_icon("plus", theme_key=self._theme_key, role="accent", size=16))
+        sz = self._INACTIVE_SIZE
+        rad = sz // 2
+        self.add_btn.setIcon(get_icon("plus", theme_key=self._theme_key, role="accent", size=15))
         self.add_btn.setStyleSheet(
             f"QPushButton#NKRailAddBtn {{ background-color: {card_bg}; border: 1px solid {bd}; "
-            "border-radius: 20px; min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; padding: 0px; }"
-            f"QPushButton#NKRailAddBtn:hover {{ background-color: {hover}; border-color: {accent}; border-radius: 14px; }}"
+            f"border-radius: {rad}px; min-width: {sz}px; max-width: {sz}px; "
+            f"min-height: {sz}px; max-height: {sz}px; padding: 0px; }}"
+            f"QPushButton#NKRailAddBtn:hover {{ background-color: {hover}; border-color: {accent}; border-radius: 13px; }}"
         )
 
     def _rebuild_items(self):
@@ -621,27 +723,38 @@ class GroupDiscordRail(QFrame):
         fg = p.get("title") or ("#F8FAFC" if self._is_dark else "#0F172A")
         ring_col = "#FFFFFF" if self._is_dark else "#0F172A"
 
-        # Update Quaderno Locale button
+        # Update Quaderno Locale button (46x46 attivo, 36x36 inattivo)
         is_loc_active = (self._active_group_id is None)
+        loc_sz = self._ACTIVE_SIZE if is_loc_active else self._INACTIVE_SIZE
+        self.local_btn.setFixedSize(loc_sz, loc_sz)
         self.local_btn.setIcon(
-            get_icon("notes", theme_key=self._theme_key, role="accent" if is_loc_active else "subtitle", size=17)
+            get_icon("notes", theme_key=self._theme_key, role="accent" if is_loc_active else "subtitle", size=19 if is_loc_active else 15)
+        )
+        loc_drop_qss = (
+            f"QPushButton#NKRailLocalBtn {{ background-color: {_hex_to_rgba(accent, 0.36)}; "
+            f"border: 2px dashed {accent}; border-radius: 14px; "
+            f"min-width: {loc_sz}px; max-width: {loc_sz}px; min-height: {loc_sz}px; max-height: {loc_sz}px; padding: 0px; }}"
         )
         if is_loc_active:
-            self.local_btn.setStyleSheet(
-                f"QPushButton#NKRailLocalBtn {{ background-color: {_hex_to_rgba(accent, 0.22)}; "
-                f"border: 2px solid {accent}; border-radius: 13px; "
-                "min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; padding: 0px; }"
+            loc_qss = (
+                f"QPushButton#NKRailLocalBtn {{ background-color: {_hex_to_rgba(accent, 0.24)}; "
+                f"border: 2px solid {accent}; border-radius: 14px; "
+                f"min-width: {loc_sz}px; max-width: {loc_sz}px; min-height: {loc_sz}px; max-height: {loc_sz}px; padding: 0px; }}"
             )
-            self.local_pill.setStyleSheet(f"background-color: {accent}; border: none; border-radius: 1px;")
+            self.local_pill.setFixedSize(4, 28)
+            self.local_pill.setStyleSheet(f"background-color: {accent}; border: none; border-radius: 2px;")
             self.local_pill.show()
         else:
-            self.local_btn.setStyleSheet(
+            loc_rad = loc_sz // 2
+            loc_qss = (
                 f"QPushButton#NKRailLocalBtn {{ background-color: {card_bg}; "
-                f"border: 1px solid {bd}; border-radius: 20px; "
-                "min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; padding: 0px; }"
-                f"QPushButton#NKRailLocalBtn:hover {{ border-color: {accent}; border-radius: 14px; }}"
+                f"border: 1px solid {bd}; border-radius: {loc_rad}px; "
+                f"min-width: {loc_sz}px; max-width: {loc_sz}px; min-height: {loc_sz}px; max-height: {loc_sz}px; padding: 0px; }}"
+                f"QPushButton#NKRailLocalBtn:hover {{ border-color: {accent}; border-radius: 13px; }}"
             )
+            self.local_pill.setFixedSize(4, 8)
             self.local_pill.setStyleSheet("background-color: transparent; border: none;")
+        self.local_btn.set_drop_styles(loc_qss, loc_drop_qss)
 
         # Stacca _add_row prima di svuotare le righe gruppi così non viene distrutto
         self.groups_vbox.removeWidget(self._add_row)
@@ -659,46 +772,62 @@ class GroupDiscordRail(QFrame):
             role_lbl = "Amministratore" if role_norm == "admin" else "Utente"
             src_lbl = "Cartella Locale" if (g.get("local_fallback_path") or "").strip() else "Google Drive"
             is_active = (self._active_group_id is not None and int(self._active_group_id) == gid)
+            btn_sz = self._ACTIVE_SIZE if is_active else self._INACTIVE_SIZE
+            btn_rad = 14 if is_active else (btn_sz // 2)
 
             row = QWidget(self.groups_inner)
+            row.setFixedWidth(62)
             row.setStyleSheet("background: transparent;")
             rl = QHBoxLayout(row)
-            rl.setContentsMargins(5, 0, 0, 0)
-            rl.setSpacing(4)
+            rl.setContentsMargins(2, 0, 2, 0)
+            rl.setSpacing(2)
+            rl.addStretch(1)
 
-            btn = QPushButton(_group_initials(gname), row)
+            btn = _RailDropButton(_group_initials(gname), target_group_id=gid, parent=row)
             btn.setObjectName("NKRailGroupBtn")
             btn.setProperty("group_id", gid)
-            btn.setFixedSize(40, 40)
+            btn.setFixedSize(btn_sz, btn_sz)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setToolTip(f"{gname}\nRuolo: {role_lbl}\nSorgente: {src_lbl}")
+            btn.setToolTip(
+                f"{gname}\nRuolo: {role_lbl}\nSorgente: {src_lbl}\n"
+                "Trascina qui una nota per pubblicarla o spostarla in questo gruppo"
+            )
+            drop_qss = (
+                f"QPushButton#NKRailGroupBtn {{ background-color: {gcol}; color: #FFFFFF; "
+                f"border: 2px dashed {ring_col}; border-radius: 14px; "
+                f"font-size: 13.5px; font-weight: 800; min-width: {btn_sz}px; max-width: {btn_sz}px; "
+                f"min-height: {btn_sz}px; max-height: {btn_sz}px; padding: 0px; }}"
+            )
             if is_active:
-                btn.setStyleSheet(
+                normal_qss = (
                     f"QPushButton#NKRailGroupBtn {{ background-color: {gcol}; color: #FFFFFF; "
-                    f"border: 2px solid {ring_col}; border-radius: 13px; "
-                    "font-size: 13px; font-weight: 700; min-width: 40px; max-width: 40px; "
-                    "min-height: 40px; max-height: 40px; padding: 0px; }"
+                    f"border: 2px solid {ring_col}; border-radius: {btn_rad}px; "
+                    f"font-size: 14px; font-weight: 800; min-width: {btn_sz}px; max-width: {btn_sz}px; "
+                    f"min-height: {btn_sz}px; max-height: {btn_sz}px; padding: 0px; }}"
                 )
             else:
-                btn.setStyleSheet(
+                normal_qss = (
                     f"QPushButton#NKRailGroupBtn {{ background-color: {_hex_to_rgba(gcol, 0.24)}; color: {fg}; "
-                    f"border: 2px solid {gcol}; border-radius: 20px; "
-                    "font-size: 12.5px; font-weight: 700; min-width: 40px; max-width: 40px; "
-                    "min-height: 40px; max-height: 40px; padding: 0px; }"
+                    f"border: 2px solid {gcol}; border-radius: {btn_rad}px; "
+                    f"font-size: 11.5px; font-weight: 700; min-width: {btn_sz}px; max-width: {btn_sz}px; "
+                    f"min-height: {btn_sz}px; max-height: {btn_sz}px; padding: 0px; }}"
                     f"QPushButton#NKRailGroupBtn:hover {{ background-color: {gcol}; color: #FFFFFF; "
-                    "border-radius: 14px; }"
+                    "border-radius: 12px; }"
                 )
+            btn.set_drop_styles(normal_qss, drop_qss)
             btn.clicked.connect(lambda _chk=False, target_id=gid: self.workspaceSelected.emit(target_id))
+            btn.payloadDropped.connect(self.nodeDroppedOnWorkspace.emit)
             btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             btn.customContextMenuRequested.connect(
                 lambda pos, target_g=dict(g), src_btn=btn: self._open_group_context_menu(target_g, src_btn.mapToGlobal(pos))
             )
             rl.addWidget(btn)
+            rl.addStretch(1)
 
             pill = QFrame(row)
-            pill.setFixedSize(3, 24 if is_active else 8)
+            pill.setFixedSize(4, 28 if is_active else 8)
             if is_active:
-                pill.setStyleSheet(f"background-color: {gcol}; border: none; border-radius: 1px;")
+                pill.setStyleSheet(f"background-color: {gcol}; border: none; border-radius: 2px;")
             else:
                 pill.setStyleSheet(f"background-color: {_hex_to_rgba(gcol, 0.45)}; border: none; border-radius: 1px;")
             rl.addWidget(pill)
@@ -989,12 +1118,15 @@ class Win11TabBar(QWidget):
 
 
 class BreadcrumbBar(QWidget):
-    """Barra unificata: Breadcrumb cliccabile a sinistra + azioni Gruppo/Editor a destra."""
+    """Barra unificata: Breadcrumb cliccabile a sinistra + Switch stato & azioni Editor a destra."""
 
     acquireLockRequested = pyqtSignal()
     publishGroupRequested = pyqtSignal()
     copyToLocalRequested = pyqtSignal()
     publishLocalToGroupRequested = pyqtSignal()
+    publishLocalToSpecificGroupRequested = pyqtSignal(int)
+    noteStatusChangeRequested = pyqtSignal(str)  # 'published' | 'maintenance' | 'make_private'
+    deleteNoteFromSwitchRequested = pyqtSignal()
     rootClicked = pyqtSignal()
     subjectClicked = pyqtSignal(str)
 
@@ -1004,55 +1136,69 @@ class BreadcrumbBar(QWidget):
         self._is_dark = is_dark
         self._palette: Dict[str, str] = {}
         self._current_subject: str = "Generale"
+        self._groups: List[Dict[str, Any]] = []
+        self._current_tab: Optional[TabContext] = None
         self.setObjectName("NKBreadcrumbBar")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 6, 10, 6)
-        lay.setSpacing(4)
+        lay.setSpacing(6)
+        lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         self.root_btn = QPushButton("Il mio Quaderno")
         self.root_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.root_btn.clicked.connect(self.rootClicked.emit)
-        lay.addWidget(self.root_btn)
+        lay.addWidget(self.root_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.sep_1 = QLabel("›")
-        lay.addWidget(self.sep_1)
+        lay.addWidget(self.sep_1, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.subj_btn = QPushButton("Generale")
         self.subj_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.subj_btn.clicked.connect(lambda: self.subjectClicked.emit(self._current_subject))
-        lay.addWidget(self.subj_btn)
+        lay.addWidget(self.subj_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.sep_2 = QLabel("›")
-        lay.addWidget(self.sep_2)
+        lay.addWidget(self.sep_2, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.path_lbl = QLabel("")
         self.path_lbl.setObjectName("NKBreadcrumbPath")
         self.path_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        lay.addWidget(self.path_lbl, 1)
+        lay.addWidget(self.path_lbl, 1, Qt.AlignmentFlag.AlignVCenter)
 
-        # Stato Lock + Azioni Gruppo
+        # Stato Lock + Switch Stato Nota
         self.lock_pill = QLabel("")
         self.lock_pill.setObjectName("NKLockPill")
+        self.lock_pill.setFixedHeight(32)
+        self.lock_pill.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self.lock_pill.setVisible(False)
-        lay.addWidget(self.lock_pill)
+        lay.addWidget(self.lock_pill, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self.status_switch_btn = QPushButton(" Privata ▾")
+        self.status_switch_btn.setObjectName("NKNoteStatusSwitch")
+        self.status_switch_btn.setFixedHeight(32)
+        self.status_switch_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.status_switch_btn.setToolTip("Stato della nota: Privata, Pubblicata, In manutenzione o Elimina")
+        self.status_switch_btn.clicked.connect(self._open_status_switch_menu)
+        self.status_switch_btn.setVisible(False)
+        lay.addWidget(self.status_switch_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.btn_acquire_lock = QPushButton(" Acquisisci Lock")
         self.btn_acquire_lock.setObjectName("NKToolbarPill")
-        self.btn_acquire_lock.setFixedHeight(28)
+        self.btn_acquire_lock.setFixedHeight(32)
         self.btn_acquire_lock.setIcon(get_icon("lock_open", theme_key=theme_key, role="text", size=13))
         self.btn_acquire_lock.clicked.connect(self.acquireLockRequested.emit)
         self.btn_acquire_lock.setVisible(False)
-        lay.addWidget(self.btn_acquire_lock)
+        lay.addWidget(self.btn_acquire_lock, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.btn_publish_group = QPushButton(" Salva nel Gruppo")
         self.btn_publish_group.setObjectName("NKActionBtn")
-        self.btn_publish_group.setFixedHeight(28)
+        self.btn_publish_group.setFixedHeight(32)
         self.btn_publish_group.setIcon(get_icon("upload", theme_key=theme_key, role="accent", size=13))
         self.btn_publish_group.clicked.connect(self.publishGroupRequested.emit)
         self.btn_publish_group.setVisible(False)
-        lay.addWidget(self.btn_publish_group)
+        lay.addWidget(self.btn_publish_group, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.btn_copy_local = QPushButton(" Copia nel Quaderno")
         self.btn_copy_local.setObjectName("NKToolbarPill")
@@ -1060,22 +1206,22 @@ class BreadcrumbBar(QWidget):
         self.btn_copy_local.setIcon(get_icon("copy", theme_key=theme_key, role="text", size=13))
         self.btn_copy_local.clicked.connect(self.copyToLocalRequested.emit)
         self.btn_copy_local.setVisible(False)
-        lay.addWidget(self.btn_copy_local)
 
-        # Azione rapida per nota Locale
         self.btn_publish_local = QPushButton(" Pubblica in un Gruppo...")
         self.btn_publish_local.setObjectName("NKToolbarPill")
         self.btn_publish_local.setFixedHeight(28)
         self.btn_publish_local.setIcon(get_icon("cloud", theme_key=theme_key, role="text", size=13))
         self.btn_publish_local.clicked.connect(self.publishLocalToGroupRequested.emit)
         self.btn_publish_local.setVisible(False)
-        lay.addWidget(self.btn_publish_local)
 
         # Slot per la strip di azioni condivisa dell'editor (Vista Studio, RSVP, Whis icon, ..., Time Machine, Split, Focus)
         self.toolbar_slot = QHBoxLayout()
         self.toolbar_slot.setContentsMargins(0, 0, 0, 0)
         self.toolbar_slot.setSpacing(4)
         lay.addLayout(self.toolbar_slot)
+
+    def set_groups(self, groups: List[Dict[str, Any]]):
+        self._groups = list(groups or [])
 
     def set_theme(self, theme_key: str, palette: Dict[str, str], is_dark: Optional[bool] = None):
         self._theme_key = theme_key
@@ -1091,7 +1237,7 @@ class BreadcrumbBar(QWidget):
         title_col = self._palette.get("title") or "#F8FAFC"
         btn_qss = (
             f"QPushButton {{ background: transparent; border: none; color: {sub_col}; "
-            f"font-size: 11.5px; padding: 2px 4px; border-radius: 4px; }}"
+            "font-size: 11.5px; padding: 2px 4px; border-radius: 4px; }"
             f"QPushButton:hover {{ color: {title_col}; background-color: rgba(148,163,184,0.12); }}"
         )
         self._default_root_btn_qss = btn_qss
@@ -1104,8 +1250,125 @@ class BreadcrumbBar(QWidget):
         self.btn_publish_group.setIcon(get_icon("upload", theme_key=theme_key, role="accent", size=13))
         self.btn_copy_local.setIcon(get_icon("copy", theme_key=theme_key, role="text", size=13))
         self.btn_publish_local.setIcon(get_icon("cloud", theme_key=theme_key, role="text", size=13))
+        if self._current_tab is not None:
+            self.update_from_tab(self._current_tab)
+
+    def _style_status_switch(self, hex_color: str, label_text: str):
+        rad = self._palette.get("btn_radius") or "8px"
+        self.status_switch_btn.setIcon(_make_color_dot_icon(hex_color, size=10))
+        self.status_switch_btn.setText(f" {label_text} ▾")
+        self.status_switch_btn.setStyleSheet(
+            f"QPushButton#NKNoteStatusSwitch {{ background-color: {_hex_to_rgba(hex_color, 0.14)}; "
+            f"border: 1px solid {_hex_to_rgba(hex_color, 0.42)}; color: {hex_color}; "
+            f"min-height: 32px; max-height: 32px; border-radius: {rad}; "
+            "font-size: 12px; font-weight: 600; padding: 0px 12px; margin: 0px; }"
+            f"QPushButton#NKNoteStatusSwitch:hover {{ background-color: {_hex_to_rgba(hex_color, 0.24)}; }}"
+        )
+
+    def _open_status_switch_menu(self):
+        tab = self._current_tab
+        if tab is None or tab.workspace_type == "board" or tab.is_trashed:
+            return
+        p = self._palette
+        bg = p.get("combo_popup_bg") or p.get("dialog_bg") or p.get("card_bg") or "#1E293B"
+        fg = p.get("text") or "#F8FAFC"
+        bd = p.get("card_border") or p.get("border") or "#334155"
+        hv = p.get("nav_hover") or "#334155"
+
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background-color: {bg}; color: {fg}; border: 1px solid {bd}; border-radius: 8px; padding: 5px; }}"
+            "QMenu::item { padding: 7px 12px; border-radius: 5px; font-size: 12px; }"
+            f"QMenu::item:selected {{ background-color: {hv}; }}"
+            f"QMenu::separator {{ height: 1px; background-color: {bd}; margin: 4px 8px; }}"
+        )
+
+        if tab.workspace_type == "local":
+            act_priv = menu.addAction(_make_color_dot_icon("#94A3B8", size=10), "Privata (Quaderno locale)")
+            act_priv.setCheckable(True)
+            act_priv.setChecked(True)
+            act_priv.setEnabled(False)
+
+            if self._groups:
+                pub_menu = menu.addMenu(get_icon("cloud", theme_key=self._theme_key, role="accent", size=14), "Pubblica in un Gruppo")
+                pub_menu.setStyleSheet(menu.styleSheet())
+                for g in self._groups:
+                    gid = int(g["id"])
+                    gcol = _group_color(g)
+                    act_g = pub_menu.addAction(_make_color_dot_icon(gcol, size=10), str(g.get("group_name") or "Gruppo"))
+                    act_g.triggered.connect(
+                        lambda _chk=False, target_id=gid: self.publishLocalToSpecificGroupRequested.emit(target_id)
+                    )
+            else:
+                act_pub = menu.addAction(
+                    get_icon("cloud", theme_key=self._theme_key, role="accent", size=14),
+                    "Pubblica in un Gruppo...",
+                )
+                act_pub.triggered.connect(self.publishLocalToGroupRequested.emit)
+
+            menu.addSeparator()
+            act_del = menu.addAction(
+                get_icon("trash", theme_key=self._theme_key, role="danger", size=14),
+                "Sposta nel Cestino",
+            )
+            act_del.triggered.connect(self.deleteNoteFromSwitchRequested.emit)
+        elif tab.workspace_type == "group":
+            is_maint = (tab.note_status == NOTE_STATUS_MAINTENANCE)
+            can_maint = bool(tab.can_set_maintenance)
+            can_del = bool(tab.can_delete_in_group)
+
+            act_pub = menu.addAction(_make_color_dot_icon("#10B981", size=10), "Pubblicata nel gruppo")
+            act_pub.setCheckable(True)
+            act_pub.setChecked(not is_maint)
+            if is_maint:
+                act_pub.setEnabled(can_maint)
+                if not can_maint:
+                    act_pub.setToolTip("Solo gli Amministratori o utenti autorizzati possono modificare lo stato manutenzione")
+                act_pub.triggered.connect(lambda: self.noteStatusChangeRequested.emit(NOTE_STATUS_PUBLISHED))
+            else:
+                act_pub.setEnabled(False)
+
+            act_maint = menu.addAction(_make_color_dot_icon("#F59E0B", size=10), "In manutenzione (sola lettura)")
+            act_maint.setCheckable(True)
+            act_maint.setChecked(is_maint)
+            if not is_maint:
+                act_maint.setEnabled(can_maint)
+                if not can_maint:
+                    act_maint.setToolTip("Solo gli Amministratori o utenti autorizzati possono impostare la manutenzione")
+                act_maint.triggered.connect(lambda: self.noteStatusChangeRequested.emit(NOTE_STATUS_MAINTENANCE))
+            else:
+                act_maint.setEnabled(False)
+
+            menu.addSeparator()
+            act_copy = menu.addAction(
+                get_icon("copy", theme_key=self._theme_key, role="text", size=14),
+                "Copia come Privata nel Quaderno",
+            )
+            act_copy.triggered.connect(self.copyToLocalRequested.emit)
+
+            act_make_priv = menu.addAction(
+                get_icon("lock", theme_key=self._theme_key, role="text", size=14),
+                "Rendi Privata (sposta nel Quaderno)",
+            )
+            act_make_priv.setEnabled(can_del)
+            if not can_del:
+                act_make_priv.setToolTip("Richiede il permesso di eliminare la nota dal gruppo")
+            act_make_priv.triggered.connect(lambda: self.noteStatusChangeRequested.emit("make_private"))
+
+            menu.addSeparator()
+            act_del = menu.addAction(
+                get_icon("trash", theme_key=self._theme_key, role="danger", size=14),
+                "Elimina dal gruppo",
+            )
+            act_del.setEnabled(can_del)
+            if not can_del:
+                act_del.setToolTip("Non hai il permesso di eliminare questa nota (permessi Amministratore)")
+            act_del.triggered.connect(self.deleteNoteFromSwitchRequested.emit)
+
+        menu.exec(self.status_switch_btn.mapToGlobal(QPoint(0, self.status_switch_btn.height() + 4)))
 
     def update_from_tab(self, tab: Optional[TabContext]):
+        self._current_tab = tab
         default_root_qss = getattr(self, "_default_root_btn_qss", "")
         if tab is None:
             if default_root_qss:
@@ -1116,6 +1379,7 @@ class BreadcrumbBar(QWidget):
             self.sep_2.setVisible(False)
             self.path_lbl.setText("")
             self.lock_pill.setVisible(False)
+            self.status_switch_btn.setVisible(False)
             self.btn_acquire_lock.setVisible(False)
             self.btn_publish_group.setVisible(False)
             self.btn_copy_local.setVisible(False)
@@ -1137,6 +1401,7 @@ class BreadcrumbBar(QWidget):
             self.sep_2.setVisible(False)
             self.path_lbl.setText("Bacheca & Stato Sbobine")
             self.lock_pill.setVisible(False)
+            self.status_switch_btn.setVisible(False)
             self.btn_acquire_lock.setVisible(False)
             self.btn_publish_group.setVisible(False)
             self.btn_copy_local.setVisible(False)
@@ -1163,12 +1428,29 @@ class BreadcrumbBar(QWidget):
             self.path_lbl.setText(title if len(title) <= 28 else title[:27] + "…")
 
             self.btn_publish_local.setVisible(False)
-            self.btn_copy_local.setVisible(True)
+            self.btn_copy_local.setVisible(False)
             self.lock_pill.setVisible(True)
+            self.status_switch_btn.setVisible(True)
+
+            is_maint = (tab.note_status == NOTE_STATUS_MAINTENANCE)
+            if is_maint:
+                self._style_status_switch("#F59E0B", "In manutenzione")
+            else:
+                self._style_status_switch("#10B981", "Pubblicata")
 
             locked_other = bool((tab.group_note_item or {}).get("locked_by_other"))
             lock_auth = (tab.group_note_item or {}).get("lock_author") or (tab.lock_info or {}).get("author") or ""
-            if tab.is_locked_by_me:
+            if is_maint:
+                col = resolve_icon_color(self._theme_key, "warning")
+                self.lock_pill.setText("In manutenzione")
+                self.lock_pill.setStyleSheet(
+                    f"color: {col}; font-size: 11px; font-weight: 600; background: transparent; padding: 2px 6px;"
+                )
+                self.btn_acquire_lock.setVisible(True)
+                self.btn_acquire_lock.setEnabled(False)
+                self.btn_acquire_lock.setToolTip("Nota in manutenzione: rimuovi lo stato manutenzione per modificare")
+                self.btn_publish_group.setVisible(False)
+            elif tab.is_locked_by_me:
                 col = resolve_icon_color(self._theme_key, "success")
                 self.lock_pill.setText("Modifica attiva (Lock tuo)")
                 self.lock_pill.setStyleSheet(
@@ -1215,7 +1497,12 @@ class BreadcrumbBar(QWidget):
         self.btn_acquire_lock.setVisible(False)
         self.btn_publish_group.setVisible(False)
         self.btn_copy_local.setVisible(False)
-        self.btn_publish_local.setVisible(not tab.is_trashed)
+        self.btn_publish_local.setVisible(False)
+        if tab.is_trashed:
+            self.status_switch_btn.setVisible(False)
+        else:
+            self.status_switch_btn.setVisible(True)
+            self._style_status_switch("#94A3B8", "Privata")
 
 
 class GroupBoardWidget(QWidget):
@@ -1226,6 +1513,7 @@ class GroupBoardWidget(QWidget):
     changeGroupColorRequested = pyqtSignal(int, str)
     changeMemberRoleRequested = pyqtSignal(int, str, str)
     updateGroupPermissionsRequested = pyqtSignal(int, dict)
+    deleteGroupNoteRequested = pyqtSignal(int, dict)
 
     def __init__(self, theme_key: str = "obsidian", parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -1574,11 +1862,33 @@ class GroupBoardWidget(QWidget):
                 lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
                 cl.addWidget(lbl, 1)
 
+                if item.get("status") == NOTE_STATUS_MAINTENANCE:
+                    maint_pill = QLabel("In manutenzione")
+                    maint_pill.setStyleSheet(
+                        "background-color: rgba(245, 158, 11, 0.16); color: #F59E0B; "
+                        "border: 1px solid rgba(245, 158, 11, 0.42); border-radius: 10px; "
+                        "padding: 2px 8px; font-size: 11px; font-weight: 600;"
+                    )
+                    cl.addWidget(maint_pill)
+
                 open_btn = QPushButton("Apri")
                 open_btn.setObjectName("NKToolbarPill")
                 open_btn.setFixedHeight(26)
                 open_btn.clicked.connect(lambda _chk=False, it=item: self.openGroupNoteRequested.emit(it))
                 cl.addWidget(open_btn)
+
+                if (item.get("can_delete") or is_admin) and self._current_group_id is not None:
+                    del_btn = QPushButton()
+                    del_btn.setObjectName("NKToolbarIconBtn")
+                    del_btn.setFixedSize(26, 26)
+                    del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                    del_btn.setIcon(get_icon("trash", theme_key=self._theme_key, role="danger", size=13))
+                    del_btn.setToolTip("Elimina nota dal gruppo")
+                    target_gid = int(self._current_group_id)
+                    del_btn.clicked.connect(
+                        lambda _chk=False, g_id=target_gid, it=dict(item): self.deleteGroupNoteRequested.emit(g_id, it)
+                    )
+                    cl.addWidget(del_btn)
                 self.scroll_vbox.addWidget(card)
 
         self.scroll_vbox.addStretch(1)
@@ -1633,6 +1943,10 @@ class EditorPane(QWidget):
     changeGroupColorRequested = pyqtSignal(object, int, str)
     changeMemberRoleRequested = pyqtSignal(object, int, str, str)
     updateGroupPermissionsRequested = pyqtSignal(object, int, dict)
+    noteStatusChangeRequested = pyqtSignal(object, str)
+    publishLocalToSpecificGroupRequested = pyqtSignal(object, int)
+    deleteNoteFromSwitchRequested = pyqtSignal(object)
+    deleteGroupNoteFromBoardRequested = pyqtSignal(object, int, dict)
 
     def __init__(
         self,
@@ -1692,6 +2006,15 @@ class EditorPane(QWidget):
         self.breadcrumb.publishGroupRequested.connect(lambda: self.publishGroupRequested.emit(self))
         self.breadcrumb.copyToLocalRequested.connect(lambda: self.copyToLocalRequested.emit(self))
         self.breadcrumb.publishLocalToGroupRequested.connect(lambda: self.publishLocalToGroupRequested.emit(self))
+        self.breadcrumb.publishLocalToSpecificGroupRequested.connect(
+            lambda gid: self.publishLocalToSpecificGroupRequested.emit(self, gid)
+        )
+        self.breadcrumb.noteStatusChangeRequested.connect(
+            lambda st: self.noteStatusChangeRequested.emit(self, st)
+        )
+        self.breadcrumb.deleteNoteFromSwitchRequested.connect(
+            lambda: self.deleteNoteFromSwitchRequested.emit(self)
+        )
         root.addWidget(self.breadcrumb)
 
         # Stack: Editor (0) vs Bacheca Gruppo (1)
@@ -1737,6 +2060,34 @@ class EditorPane(QWidget):
         tb_lay.addWidget(self._trash_perm_del_btn)
         self.trash_banner.hide()
         ed_lay.addWidget(self.trash_banner)
+
+        self.maintenance_banner = QFrame()
+        self.maintenance_banner.setObjectName("NKMaintenanceBanner")
+        self.maintenance_banner.setStyleSheet(
+            "QFrame#NKMaintenanceBanner { background-color: rgba(245, 158, 11, 0.14); "
+            "border: 1px solid rgba(245, 158, 11, 0.42); border-radius: 8px; }"
+        )
+        mb_lay = QHBoxLayout(self.maintenance_banner)
+        mb_lay.setContentsMargins(10, 6, 10, 6)
+        mb_lay.setSpacing(8)
+        self._maint_banner_lbl = QLabel("Questa nota è in stato di manutenzione (sola lettura)")
+        self._maint_banner_lbl.setWordWrap(True)
+        self._maint_banner_lbl.setStyleSheet(
+            "background: transparent; border: none; color: #FCD34D; font-size: 12px; font-weight: 600;"
+            if is_dark else
+            "background: transparent; border: none; color: #B45309; font-size: 12px; font-weight: 600;"
+        )
+        mb_lay.addWidget(self._maint_banner_lbl, 1)
+        self._maint_restore_btn = QPushButton("Ripristina a Pubblicata")
+        self._maint_restore_btn.setObjectName("NKToolbarPill")
+        self._maint_restore_btn.setFixedHeight(26)
+        self._maint_restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._maint_restore_btn.clicked.connect(
+            lambda: self.noteStatusChangeRequested.emit(self, NOTE_STATUS_PUBLISHED)
+        )
+        mb_lay.addWidget(self._maint_restore_btn)
+        self.maintenance_banner.hide()
+        ed_lay.addWidget(self.maintenance_banner)
 
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -1824,9 +2175,7 @@ class EditorPane(QWidget):
 
         self.editor_body = ScientificNoteEditor(dark_mode=is_dark, reading_mode=reading_mode)
         self.editor_body.setObjectName("NKEditorBody")
-        self.editor_body.setPlaceholderText(
-            "Scrivi o detta qui in Markdown + LaTeX ($...$), incolla immagini (Ctrl+V) o digita '/' per i comandi..."
-        )
+        
         self.editor_body.setMinimumHeight(220)
         accent = self._palette.get("accent") or self._palette.get("nav_checked_border") or "#6366F1"
         self.editor_body.set_sync_accent_color(accent)
@@ -1879,6 +2228,9 @@ class EditorPane(QWidget):
         )
         self.board_widget.updateGroupPermissionsRequested.connect(
             lambda gid, perms: self.updateGroupPermissionsRequested.emit(self, gid, perms)
+        )
+        self.board_widget.deleteGroupNoteRequested.connect(
+            lambda gid, item: self.deleteGroupNoteFromBoardRequested.emit(self, gid, item)
         )
         self.stack.addWidget(self.board_widget)
 
@@ -2010,6 +2362,11 @@ class EditorPane(QWidget):
             self._trash_banner_lbl.setStyleSheet(
                 f"background: transparent; border: none; color: {col_tr}; font-size: 12px; font-weight: 600;"
             )
+        if hasattr(self, "_maint_banner_lbl"):
+            col_mt = "#FCD34D" if is_dark else "#B45309"
+            self._maint_banner_lbl.setStyleSheet(
+                f"background: transparent; border: none; color: {col_mt}; font-size: 12px; font-weight: 600;"
+            )
         self.set_active_pane(self._is_active_pane)
 
     def active_tab(self) -> Optional[TabContext]:
@@ -2045,6 +2402,39 @@ class EditorPane(QWidget):
         matching = [
             i for i, t in enumerate(self.tabs)
             if t.workspace_type == "local" and t.note_id is not None and int(t.note_id) == target_id
+        ]
+        if not matching:
+            return
+        self._autosave_timer.stop()
+        for idx in reversed(matching):
+            self.tabs.pop(idx)
+            if self.current_tab_index == idx:
+                self.current_tab_index = -1
+            elif self.current_tab_index > idx:
+                self.current_tab_index -= 1
+        if not self.tabs:
+            self.current_tab_index = -1
+            self.tab_bar_widget.sync_tabs([], -1)
+            self.breadcrumb.update_from_tab(None)
+            self.lastTabClosed.emit(self)
+            self.activeTabChanged.emit(None)
+            return
+        if self.current_tab_index < 0 or self.current_tab_index >= len(self.tabs):
+            self.current_tab_index = max(0, min(matching[0], len(self.tabs) - 1))
+        self.tab_bar_widget.sync_tabs(self.tabs, self.current_tab_index)
+        self._render_tab(self.tabs[self.current_tab_index])
+        self.activeTabChanged.emit(self.tabs[self.current_tab_index])
+
+    def close_tabs_for_group_note(self, group_id: int, rel_path: str):
+        """Chiude tutte le schede di gruppo associate a (group_id, rel_path) senza conferme."""
+        target_gid = int(group_id)
+        target_rel = (rel_path or "").strip()
+        matching = [
+            i for i, t in enumerate(self.tabs)
+            if t.workspace_type == "group"
+            and t.group_id is not None
+            and int(t.group_id) == target_gid
+            and (t.rel_path or "").strip() == target_rel
         ]
         if not matching:
             return
@@ -2323,16 +2713,23 @@ class EditorPane(QWidget):
             else:
                 self.editor_author_lbl.setVisible(False)
 
-            # Read-only enforcement per note di gruppo senza lock o note nel Cestino
+            # Read-only enforcement per note di gruppo senza lock, in manutenzione o note nel Cestino
+            is_maint = (tab.workspace_type == "group" and tab.note_status == NOTE_STATUS_MAINTENANCE)
             self.trash_banner.setVisible(bool(tab.is_trashed))
-            is_ro = (tab.workspace_type == "group" and not tab.is_locked_by_me) or bool(tab.is_trashed)
+            self.maintenance_banner.setVisible(is_maint and not tab.is_trashed)
+            if is_maint:
+                by_txt = f" — impostata da {tab.maintenance_by}" if tab.maintenance_by else ""
+                self._maint_banner_lbl.setText(f"Questa nota è in stato di manutenzione (sola lettura){by_txt}")
+                self._maint_restore_btn.setVisible(bool(tab.can_set_maintenance))
+                self._maint_restore_btn.setEnabled(bool(tab.can_set_maintenance))
+            is_ro = (tab.workspace_type == "group" and (not tab.is_locked_by_me or is_maint)) or bool(tab.is_trashed)
             self.editor_body.setReadOnly(is_ro)
             self.editor_title.setReadOnly(is_ro)
             self.editor_subject.setReadOnly(tab.workspace_type == "group" or bool(tab.is_trashed))
             self.editor_topic.setReadOnly(tab.workspace_type == "group" or bool(tab.is_trashed))
-            self.editor_type.setEnabled(not tab.is_trashed)
-            self.editor_profile.setEnabled(not tab.is_trashed)
-            self.btn_auto_title.setEnabled(not tab.is_trashed)
+            self.editor_type.setEnabled(not tab.is_trashed and not is_maint)
+            self.editor_profile.setEnabled(not tab.is_trashed and not is_maint)
+            self.btn_auto_title.setEnabled(not tab.is_trashed and not is_maint)
 
             if tab.workspace_type == "local" and tab.note_id and self._audio_sync_loader:
                 sync_data = self._audio_sync_loader(tab.note_id)
@@ -2347,7 +2744,12 @@ class EditorPane(QWidget):
                 self.audio_bar.unload()
 
             if tab.workspace_type == "group":
-                badge_txt = "Modifica con Lock attivo" if tab.is_locked_by_me else "Sola lettura (Acquisisci Lock per modificare)"
+                if is_maint:
+                    badge_txt = "In manutenzione (Sola lettura)"
+                elif tab.is_locked_by_me:
+                    badge_txt = "Modifica con Lock attivo"
+                else:
+                    badge_txt = "Sola lettura (Acquisisci Lock per modificare)"
                 self.set_autosave_badge(True, badge_txt)
                 self.refresh_backlinks(None, "")
             elif tab.is_trashed:
