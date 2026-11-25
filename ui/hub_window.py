@@ -131,6 +131,7 @@ from ui.orb_radial_menu import (
     WORLD_BY_KEY,
 )
 from ui.icons import get_icon, get_pixmap, apply_win11_titlebar
+from ui.flownotes_ribbon import FlowNotesRibbonWidget
 from ui.settings_dialog import HubSettingsDialog, GeminiKeyGuideDialog, GEMINI_AISTUDIO_URL
 from core.gemini_client import (
     add_runtime_engine_listener,
@@ -1009,7 +1010,13 @@ class FlowLocalHub(QMainWindow):
             if pane is not None and hasattr(pane.editor_body, "set_typography"):
                 pane.editor_body.set_typography(resolved_font, self._font_scale)
 
+    def _step_nk_font_scale(self, delta: int):
+        cur = int(getattr(self, "_font_scale", 100) or 100)
+        self._set_font_scale(max(90, min(120, cur + int(delta))))
+
     def _apply_typography_change(self):
+        p_sync = self._active_palette()
+        is_dark = self._active_is_dark()
         self.setUpdatesEnabled(False)
         self.setStyleSheet(
             get_hub_qss(
@@ -1025,6 +1032,8 @@ class FlowLocalHub(QMainWindow):
             self.top_orb.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "orb_radial_menu"):
             self.orb_radial_menu.set_theme(self._current_theme, p_sync, is_dark=is_dark)
+        if hasattr(self, "nk_ribbon"):
+            self.nk_ribbon.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "flowtype_subbar") and hasattr(self.flowtype_subbar, "sync_pill_geometry"):
             QTimer.singleShot(0, self.flowtype_subbar.sync_pill_geometry)
         self.setUpdatesEnabled(True)
@@ -1095,6 +1104,8 @@ class FlowLocalHub(QMainWindow):
             self.top_orb.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "orb_radial_menu"):
             self.orb_radial_menu.set_theme(self._current_theme, p_sync, is_dark=is_dark)
+        if hasattr(self, "nk_ribbon"):
+            self.nk_ribbon.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "flowtype_subbar") and hasattr(self.flowtype_subbar, "sync_pill_geometry"):
             QTimer.singleShot(0, self.flowtype_subbar.sync_pill_geometry)
         self.setUpdatesEnabled(True)
@@ -2090,6 +2101,17 @@ class FlowLocalHub(QMainWindow):
         self.sbobina_progress_box.hide()
         main_vbox.addWidget(self.sbobina_progress_box)
 
+        # ---------------- WORD FLUENT RIBBON IN CIMA A FLOWNOTES ----------------
+        self._nk_ribbon_collapsed_before_focus: Optional[bool] = None
+        self.nk_ribbon = FlowNotesRibbonWidget(
+            theme_key=self._current_theme,
+            palette=self._active_palette(),
+            is_dark=self._active_is_dark(),
+            parent=page,
+        )
+        self._wire_nk_ribbon_signals()
+        main_vbox.addWidget(self.nk_ribbon, 0)
+
         # ---------------- LAYOUT FLOWNOTES A 2 COLONNE STILE NOTION + RAIL GRUPPI A DESTRA ----------------
         nk_container = QFrame()
         nk_container.setObjectName("NotekeeperContainer")
@@ -2420,8 +2442,11 @@ class FlowLocalHub(QMainWindow):
         self.nk_pane_right.hide()
 
         self._nk_active_pane = self.nk_pane_left
+        self.nk_actions_strip.setVisible(False)
         self.nk_pane_left.breadcrumb.toolbar_slot.addWidget(self.nk_actions_strip)
         for pane in (self.nk_pane_left, self.nk_pane_right):
+            pane.editor_body.cursorPositionChanged.connect(self._on_nk_editor_cursor_changed)
+            pane.editor_body.selectionChanged.connect(self._on_nk_editor_cursor_changed)
             pane.activated.connect(self._on_nk_pane_activated)
             pane.activeTabChanged.connect(self._on_nk_active_tab_changed)
             pane.lastTabClosed.connect(self._on_nk_pane_last_tab_closed)
@@ -2532,6 +2557,93 @@ class FlowLocalHub(QMainWindow):
     # -----------------------------------------------------------------
     # FlowNotes Multi-Workspace, Multi-Tab & Split-View Helpers
     # -----------------------------------------------------------------
+    def _wire_nk_ribbon_signals(self):
+        r = self.nk_ribbon
+        # Tab Edita
+        r.fontSizeRequested.connect(lambda sz: self._apply_nk_inline_action(lambda ed, s=sz: ed.apply_font_size_selection(s)))
+        r.fontSizeDeltaRequested.connect(lambda d: self._apply_nk_inline_action(lambda ed, step=d: ed.step_font_size_selection(step)))
+        r.fontScaleDeltaRequested.connect(self._step_nk_font_scale)
+        r.clearFormatRequested.connect(lambda: self._apply_nk_inline_action(lambda ed: ed.clear_inline_formatting_selection()))
+        r.boldRequested.connect(lambda: self._apply_nk_inline_action(lambda ed: ed.toggle_bold_selection()))
+        r.italicRequested.connect(lambda: self._apply_nk_inline_action(lambda ed: ed.toggle_italic_selection()))
+        r.underlineRequested.connect(lambda: self._apply_nk_inline_action(lambda ed: ed.toggle_underline_selection()))
+        r.strikeRequested.connect(lambda: self._apply_nk_inline_action(lambda ed: ed.toggle_strikethrough_selection()))
+        r.subscriptRequested.connect(lambda: self._apply_nk_inline_action(lambda ed: ed.toggle_subscript_selection()))
+        r.superscriptRequested.connect(lambda: self._apply_nk_inline_action(lambda ed: ed.toggle_superscript_selection()))
+        r.highlightRequested.connect(lambda hx: self.nk_editor_body.apply_highlight_selection(hx or None))
+        r.textColorRequested.connect(lambda hx: self.nk_editor_body.apply_text_color_selection(hx or None))
+        r.bulletListRequested.connect(lambda: self.nk_editor_body.toggle_bullet_list())
+        r.numberedListRequested.connect(lambda: self.nk_editor_body.toggle_numbered_list())
+        r.todoListRequested.connect(lambda: self.nk_editor_body.toggle_todo_list())
+        r.indentDeltaRequested.connect(lambda d: self.nk_editor_body.indent_current_block(d))
+        r.quoteRequested.connect(lambda: self.nk_editor_body.toggle_quote_block())
+        r.calloutRequested.connect(lambda: self.nk_editor_body.toggle_callout_block())
+        r.linkNoteRequested.connect(lambda: self.nk_editor_body.open_link_note_picker())
+        r.headingLevelRequested.connect(lambda lvl: self.nk_editor_body.set_block_heading(lvl))
+
+        # Tab Inserisci
+        r.insertTableRequested.connect(lambda: self.nk_editor_body.insert_table_interactive())
+        r.insertMatrixRequested.connect(lambda: self.nk_editor_body.insert_matrix_interactive())
+        r.insertFormulaRequested.connect(lambda: self.nk_editor_body.insert_formula_block())
+        r.insertImageRequested.connect(lambda: self.nk_editor_body.insert_image_interactive())
+        r.insertFileRequested.connect(lambda: self.nk_editor_body.insert_file_block())
+        r.insertOcrRequested.connect(lambda: self.nk_editor_body.trigger_vision_ocr())
+        r.insertCodeRequested.connect(lambda: self.nk_editor_body.insert_code_block())
+        r.insertBibtexRequested.connect(lambda: self.nk_editor_body.insert_bibtex_block())
+
+        # Tab Gruppo
+        r.acquireLockRequested.connect(lambda: self._on_nk_acquire_group_lock(self._active_nk_pane()))
+        r.publishGroupRequested.connect(lambda: self._on_nk_publish_group_note(self._active_nk_pane()))
+        r.publishLocalToSpecificGroupRequested.connect(
+            lambda gid: self._on_nk_publish_local_to_specific_group(self._active_nk_pane(), gid)
+        )
+        r.joinOrCreateGroupRequested.connect(self._on_nk_join_or_create_group)
+        r.copyToLocalRequested.connect(lambda: self._on_nk_copy_group_to_local(self._active_nk_pane()))
+        r.duplicateNoteRequested.connect(self._on_nk_duplicate_clicked)
+        r.noteStatusChangeRequested.connect(
+            lambda st: self._on_nk_note_status_change(self._active_nk_pane(), st)
+        )
+        r.historyRequested.connect(self._on_nk_history_clicked)
+        r.exportFormatRequested.connect(self._export_notes_by_format)
+        r.deleteNoteRequested.connect(lambda: self._on_nk_delete_note_from_switch(self._active_nk_pane()))
+
+        # Tab Studio
+        r.studioViewToggled.connect(self._on_nk_studio_btn_clicked)
+        r.rsvpRequested.connect(self._on_nk_rsvp_btn_clicked)
+        r.flashcardsRequested.connect(self._on_nk_extract_flashcards_clicked)
+        r.timestampMarkerRequested.connect(self._on_nk_insert_timestamp_marker)
+        r.splitViewRequested.connect(self._on_nk_toggle_split_view)
+        r.sendToSplitRequested.connect(self._on_nk_send_selection_to_other_pane)
+        r.focusModeRequested.connect(self._toggle_nk_focus_mode)
+        r.favoriteToggled.connect(self._on_nk_toggle_favorite_active)
+
+        # Tab Whis
+        r.askWhisRequested.connect(self._on_nk_ask_whis_clicked)
+        r.summarizeRequested.connect(self._on_nk_summarize_clicked)
+        r.aiCorrectSelectionRequested.connect(self._on_nk_ribbon_ai_correct)
+        r.sbobinaRequested.connect(self._on_sbobina_clicked)
+        r.importSlideRequested.connect(self._on_import_slide_clicked)
+
+    def _apply_nk_inline_action(self, fn):
+        ed = self.nk_editor_body
+        fn(ed)
+        ed.setFocus()
+        self._on_nk_editor_cursor_changed()
+
+    def _on_nk_editor_cursor_changed(self):
+        if not hasattr(self, "nk_ribbon"):
+            return
+        pane = self._active_nk_pane()
+        ed = pane.editor_body
+        self.nk_ribbon.update_heading_indicator(ed.current_block_kind())
+        if hasattr(ed, "current_inline_format_state"):
+            self.nk_ribbon.update_inline_format_indicators(ed.current_inline_format_state())
+
+    def _on_nk_ribbon_ai_correct(self):
+        ed = self.nk_editor_body
+        if not ed.trigger_selection_ai_correct():
+            ed._show_discrete_toast("Seleziona prima una frase nell'editor da correggere con l'AI.")
+
     def _active_nk_pane(self) -> EditorPane:
         pane = getattr(self, "_nk_active_pane", None)
         if pane is not None:
@@ -2593,7 +2705,7 @@ class FlowLocalHub(QMainWindow):
         if hasattr(self, "nk_actions_strip") and hasattr(pane, "breadcrumb"):
             if self.nk_actions_strip.parentWidget() is not pane.breadcrumb:
                 pane.breadcrumb.toolbar_slot.addWidget(self.nk_actions_strip)
-                self.nk_actions_strip.show()
+            self.nk_actions_strip.setVisible(False)
         self._sync_toolbar_from_active_pane()
         self._sync_workspace_highlight_from_tab(pane.active_tab())
 
@@ -2718,6 +2830,23 @@ class FlowLocalHub(QMainWindow):
             self.nk_split_btn.blockSignals(False)
             if hasattr(self, "nk_send_to_split_btn"):
                 self.nk_send_to_split_btn.setVisible(is_split)
+        if hasattr(self, "nk_ribbon"):
+            is_local_saved = bool(tab and tab.workspace_type == "local" and tab.note_id is not None)
+            is_fav = bool(tab and tab.is_favorite) if is_local_saved else False
+            is_st = bool(tab and tab.is_studio_view) or bool(pane.editor_body.is_studio_view)
+            is_split = bool(hasattr(self, "nk_pane_right") and not self.nk_pane_right.isHidden())
+            is_focus = self._is_nk_col_collapsed(0) if hasattr(self, "nk_splitter") else False
+            block_kind = pane.editor_body.current_block_kind() if hasattr(pane.editor_body, "current_block_kind") else ""
+            self.nk_ribbon.update_from_context(
+                tab,
+                is_studio=is_st,
+                is_split=is_split,
+                is_focus=is_focus,
+                is_favorite=is_fav,
+                block_kind=block_kind,
+            )
+            if hasattr(pane.editor_body, "current_inline_format_state"):
+                self.nk_ribbon.update_inline_format_indicators(pane.editor_body.current_inline_format_state())
 
     def _on_nk_pane_last_tab_closed(self, pane: EditorPane):
         if pane is self.nk_pane_right:
@@ -3818,10 +3947,19 @@ class FlowLocalHub(QMainWindow):
             total = max(sum(self.nk_splitter.sizes()), 1020)
             c2_w = 280 if self.nk_col2.isVisible() else 0
             self.nk_splitter.setSizes([280, c2_w, max(420, total - 280 - c2_w)])
+            if hasattr(self, "nk_ribbon"):
+                prev_coll = getattr(self, "_nk_ribbon_collapsed_before_focus", None)
+                if prev_coll is not None:
+                    self.nk_ribbon.set_collapsed(bool(prev_coll))
+                self._nk_ribbon_collapsed_before_focus = None
         else:
             self.nk_col1.hide()
             self.nk_col2.hide()
+            if hasattr(self, "nk_ribbon"):
+                self._nk_ribbon_collapsed_before_focus = self.nk_ribbon.is_collapsed()
+                self.nk_ribbon.set_collapsed(True)
         self._sync_nk_panel_toggles()
+        self._sync_toolbar_from_active_pane()
 
     def _make_note_leaf_item(self, note: Dict, p: Dict[str, str], max_len: int = 32) -> QTreeWidgetItem:
         clean_t = strip_markdown_syntax((note.get("title") or "Senza titolo").replace("Nota: ", "").strip()) or "Senza titolo"
@@ -3858,6 +3996,8 @@ class FlowLocalHub(QMainWindow):
             self.nk_workspace_switcher.set_state(groups, active_gid)
         if hasattr(self, "nk_group_rail"):
             self.nk_group_rail.set_state(groups, active_gid)
+        if hasattr(self, "nk_ribbon"):
+            self.nk_ribbon.set_groups(groups)
         self._sync_breadcrumb_groups(groups)
 
         p = self._active_palette()

@@ -95,6 +95,20 @@ ICON_MAP: Dict[str, str] = {
     "board": "ph.kanban-light",
     "users": "ph.users-three-light",
     "share": "ph.export-light",
+    "table": "ph.table-light",
+    "list_bullets": "ph.list-bullets-light",
+    "list_numbers": "ph.list-numbers-light",
+    "indent": "ph.arrow-bend-down-right-light",
+    "outdent": "ph.arrow-left-light",
+    "eraser": "ph.eraser-light",
+    "caret_up": "ph.caret-up",
+    "math_ops": "ph.math-operations-light",
+    "highlighter": "ph.highlighter-circle-light",
+    "italic": "ph.text-italic-light",
+    "underline": "ph.text-underline-light",
+    "strikethrough": "ph.text-strikethrough-light",
+    "text_t": "ph.text-t-light",
+    "matrix": "ph.brackets-square-light",
 }
 
 _qta_ready: Optional[bool] = None

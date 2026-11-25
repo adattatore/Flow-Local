@@ -124,6 +124,14 @@ PROP_TODO_INDENT = QTextFormat.Property.UserProperty + 12   # int: livello inden
 PROP_BULLET_INDENT = QTextFormat.Property.UserProperty + 13  # int: livello indentazione elenco (0..4)
 PROP_INLINE_HIGHLIGHT = QTextFormat.Property.UserProperty + 14  # str: hex colore evidenziazione
 PROP_INLINE_COLOR = QTextFormat.Property.UserProperty + 15      # str: hex colore testo
+PROP_INLINE_BOLD = QTextFormat.Property.UserProperty + 16       # bool: grassetto WYSIWYG
+PROP_INLINE_ITALIC = QTextFormat.Property.UserProperty + 17     # bool: corsivo WYSIWYG
+PROP_INLINE_UNDERLINE = QTextFormat.Property.UserProperty + 18  # bool: sottolineato WYSIWYG
+PROP_INLINE_STRIKE = QTextFormat.Property.UserProperty + 19     # bool: barrato WYSIWYG
+PROP_INLINE_SCRIPT = QTextFormat.Property.UserProperty + 20     # str: "" | "sub" | "sup"
+PROP_INLINE_FONT_SIZE = QTextFormat.Property.UserProperty + 21  # int: 1..100 pt (0 = default)
+
+WORD_FONT_SIZES: Tuple[int, ...] = (8, 9, 10, 11, 12, 14, 16, 18, 20, 22, 24, 26, 28, 36, 48, 72, 96)
 
 HIGHLIGHT_COLORS: List[Tuple[str, str]] = [
     ("Giallo", "#FDE047"),
@@ -171,7 +179,7 @@ class BlockUserData(QTextBlockUserData):
 
 
 def strip_markdown_syntax(text: str) -> str:
-    """Rimuove tag Markdown (#, ##, **, ==, <mark>, <span>, $$, ```, :::ai-note) per titoli e anteprime pulite nella sidebar."""
+    """Rimuove tag Markdown (#, ##, **, ==, ~~, <u>, <sub>, <sup>, <mark>, <span>, $$, ```, :::ai-note) per titoli e anteprime pulite nella sidebar."""
     if not text:
         return ""
     s = re.sub(r":::ai-note[^\n]*\n?", "", text)
@@ -179,6 +187,9 @@ def strip_markdown_syntax(text: str) -> str:
     s = re.sub(r"```[a-zA-Z]*", "", s)
     s = re.sub(r"</?mark(?:\s+data-color=\"#[0-9A-Fa-f]{6}\")?>", "", s)
     s = re.sub(r"<span\s+style=\"color:\s*#[0-9A-Fa-f]{6}\s*;?\">|</span>", "", s)
+    s = re.sub(r"<span\s+style=\"font-size:\s*\d{1,3}pt\s*;?\">", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"</?(?:u|sub|sup)>", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"~~([^~\n]+?)~~", r"\1", s)
     s = re.sub(r"==([^=\n]+?)==", r"\1", s)
     s = s.replace("$$", "").replace("**", "")
     s = re.sub(r"^#{1,6}\s+", "", s, flags=re.MULTILINE)
@@ -505,8 +516,10 @@ def _format_math_img_tag(b64: str, w_px: int, h_px: int, is_display: bool, alt: 
 _INLINE_MARKUP_RE = re.compile(
     r'<mark(?:\s+data-color="(#[0-9A-Fa-f]{6})")?>(.*?)</mark>'
     r"|==([^=\n]+?)=="
-    r'|<span\s+style="color:\s*(#[0-9A-Fa-f]{6})\s*;?">(.*?)</span>',
-    re.DOTALL,
+    r'|<span\s+style="color:\s*(#[0-9A-Fa-f]{6})\s*;?">(.*?)</span>'
+    r"|<(u|sub|sup)>(.*?)</\6>"
+    r'|<span\s+style="font-size:\s*(\d{1,3})pt\s*;?">(.*?)</span>',
+    re.DOTALL | re.IGNORECASE,
 )
 
 
@@ -518,7 +531,7 @@ def _hex_rgba_css(hex_col: str, alpha: float = 0.35) -> str:
 
 
 def _render_styled_inline_fragment(raw_str: str) -> str:
-    """Converte in sicurezza <mark>, ==...== e <span style="color:#..."> escapando il resto."""
+    """Converte in sicurezza <mark>, ==...==, <span style="color:#...">, <span style="font-size:...">, <u>, <sub>, <sup>."""
     parts: List[str] = []
     pos = 0
     for m in _INLINE_MARKUP_RE.finditer(raw_str):
@@ -543,6 +556,14 @@ def _render_styled_inline_fragment(raw_str: str) -> str:
             col_hex = m.group(4).upper()
             inner_html = _render_styled_inline_fragment(m.group(5))
             parts.append(f'<span style="color: {col_hex};">{inner_html}</span>')
+        elif m.group(6) is not None and m.group(7) is not None:
+            tag = m.group(6).lower()
+            inner_html = _render_styled_inline_fragment(m.group(7))
+            parts.append(f"<{tag}>{inner_html}</{tag}>")
+        elif m.group(8) is not None and m.group(9) is not None:
+            sz = max(1, min(100, int(m.group(8))))
+            inner_html = _render_styled_inline_fragment(m.group(9))
+            parts.append(f'<span style="font-size: {sz}pt;">{inner_html}</span>')
         pos = m.end()
     if pos < len(raw_str):
         parts.append(html.escape(raw_str[pos:]))
@@ -589,6 +610,11 @@ def _render_inline_markdown_html(
         else:
             escaped = _render_styled_inline_fragment(tok)
             escaped = re.sub(
+                r"\*\*\*(.+?)\*\*\*",
+                rf'<strong style="color: {bold_fg}; font-weight: 700;"><em style="color: {em_fg}; font-style: italic;">\1</em></strong>',
+                escaped,
+            )
+            escaped = re.sub(
                 r"\*\*(.+?)\*\*",
                 rf'<strong style="color: {bold_fg}; font-weight: 700;">\1</strong>',
                 escaped,
@@ -596,6 +622,11 @@ def _render_inline_markdown_html(
             escaped = re.sub(
                 r"(?<!\*)\*([^*\n]+?)\*(?!\*)",
                 rf'<em style="color: {em_fg}; font-style: italic;">\1</em>',
+                escaped,
+            )
+            escaped = re.sub(
+                r"~~([^~\n]+?)~~",
+                r"<s>\1</s>",
                 escaped,
             )
             out.append(escaped)
@@ -976,7 +1007,7 @@ class MarkdownLatexHighlighter(QSyntaxHighlighter):
             self.setFormat(0, len(text), self._latex_fmt)
             self.setCurrentBlockState(1)
 
-        # Preserva evidenziatore e colore testo inline sopra eventuali match di sintassi (**bold**, ecc.)
+        # Preserva evidenziatore, colore e stili inline WYSIWYG sopra eventuali match di sintassi
         blk = self.currentBlock()
         b_pos = blk.position()
         fit = blk.begin()
@@ -986,7 +1017,13 @@ class MarkdownLatexHighlighter(QSyntaxHighlighter):
                 cf = frag.charFormat()
                 hl_hex = str(cf.property(PROP_INLINE_HIGHLIGHT) or "").strip()
                 col_hex = str(cf.property(PROP_INLINE_COLOR) or "").strip()
-                if hl_hex or col_hex:
+                is_b = bool(cf.property(PROP_INLINE_BOLD))
+                is_i = bool(cf.property(PROP_INLINE_ITALIC))
+                is_u = bool(cf.property(PROP_INLINE_UNDERLINE))
+                is_s = bool(cf.property(PROP_INLINE_STRIKE))
+                script = str(cf.property(PROP_INLINE_SCRIPT) or "").strip().lower()
+                fsz = int(cf.property(PROP_INLINE_FONT_SIZE) or 0)
+                if hl_hex or col_hex or is_b or is_i or is_u or is_s or script or (1 <= fsz <= 100):
                     f_start = max(0, frag.position() - b_pos)
                     f_len = min(len(text) - f_start, frag.length())
                     for pos in range(f_start, f_start + f_len):
@@ -995,6 +1032,20 @@ class MarkdownLatexHighlighter(QSyntaxHighlighter):
                             merged.setBackground(_highlight_brush_for_hex(hl_hex, self._dark_mode))
                         if col_hex:
                             merged.setForeground(QColor(col_hex))
+                        if is_b:
+                            merged.setFontWeight(QFont.Weight.Bold)
+                        if is_i:
+                            merged.setFontItalic(True)
+                        if is_u:
+                            merged.setFontUnderline(True)
+                        if is_s:
+                            merged.setFontStrikeOut(True)
+                        if script == "sub":
+                            merged.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignSubScript)
+                        elif script == "sup":
+                            merged.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignSuperScript)
+                        if 1 <= fsz <= 100:
+                            merged.setFontPointSize(float(fsz))
                         self.setFormat(pos, 1, merged)
             fit += 1
 
@@ -3292,24 +3343,38 @@ class ScientificNoteEditor(QTextEdit):
     def _serialize_block_to_md(self, block) -> str:
         kind = block.blockFormat().property(PROP_BLOCK_KIND)
         # Controlla se il blocco contiene immagini LaTeX renderizzate (PROP_LATEX_SOURCE)
-        # e serializza eventuali span inline evidenziati/colorati coalescendo frammenti contigui.
+        # e serializza tutti gli stili inline WYSIWYG coalescendo frammenti contigui identici.
         parts: List[str] = []
         run_txt: List[str] = []
-        run_hl: str = ""
-        run_col: str = ""
+        run_key: Tuple[bool, bool, bool, bool, str, int, str, str] = (False, False, False, False, "", 0, "", "")
 
         def _flush_run():
             if not run_txt:
                 return
             chunk = "".join(run_txt)
             run_txt.clear()
-            if run_col:
-                chunk = f'<span style="color:{run_col}">{chunk}</span>'
-            if run_hl:
-                if run_hl.upper() == "#FDE047" and "==" not in chunk:
+            r_b, r_i, r_u, r_s, r_sc, r_fsz, r_hl, r_col = run_key
+            if r_u:
+                chunk = f"<u>{chunk}</u>"
+            if r_b and r_i:
+                chunk = f"***{chunk}***"
+            elif r_b:
+                chunk = f"**{chunk}**"
+            elif r_i:
+                chunk = f"*{chunk}*"
+            if r_s:
+                chunk = f"~~{chunk}~~"
+            if r_sc in ("sub", "sup"):
+                chunk = f"<{r_sc}>{chunk}</{r_sc}>"
+            if 1 <= r_fsz <= 100:
+                chunk = f'<span style="font-size:{r_fsz}pt">{chunk}</span>'
+            if r_col:
+                chunk = f'<span style="color:{r_col}">{chunk}</span>'
+            if r_hl:
+                if r_hl.upper() == "#FDE047" and "==" not in chunk:
                     chunk = f"=={chunk}=="
                 else:
-                    chunk = f'<mark data-color="{run_hl}">{chunk}</mark>'
+                    chunk = f'<mark data-color="{r_hl}">{chunk}</mark>'
             parts.append(chunk)
 
         fit = block.begin()
@@ -3319,8 +3384,7 @@ class ScientificNoteEditor(QTextEdit):
                 cf = frag.charFormat()
                 if cf.hasProperty(PROP_LATEX_SOURCE):
                     _flush_run()
-                    run_hl = ""
-                    run_col = ""
+                    run_key = (False, False, False, False, "", 0, "", "")
                     tex_src = str(cf.property(PROP_LATEX_SOURCE) or "").strip()
                     if tex_src:
                         parts.append(f"$$\n{tex_src}\n$$")
@@ -3329,10 +3393,22 @@ class ScientificNoteEditor(QTextEdit):
                     if t:
                         hl_hex = str(cf.property(PROP_INLINE_HIGHLIGHT) or "").strip()
                         col_hex = str(cf.property(PROP_INLINE_COLOR) or "").strip()
-                        if run_txt and (hl_hex != run_hl or col_hex != run_col):
+                        fsz_val = int(cf.property(PROP_INLINE_FONT_SIZE) or 0)
+                        if not (1 <= fsz_val <= 100):
+                            fsz_val = 0
+                        f_key = (
+                            bool(cf.property(PROP_INLINE_BOLD)),
+                            bool(cf.property(PROP_INLINE_ITALIC)),
+                            bool(cf.property(PROP_INLINE_UNDERLINE)),
+                            bool(cf.property(PROP_INLINE_STRIKE)),
+                            str(cf.property(PROP_INLINE_SCRIPT) or "").strip().lower(),
+                            fsz_val,
+                            hl_hex,
+                            col_hex,
+                        )
+                        if run_txt and f_key != run_key:
                             _flush_run()
-                        run_hl = hl_hex
-                        run_col = col_hex
+                        run_key = f_key
                         run_txt.append(t)
             fit += 1
         _flush_run()
@@ -3707,24 +3783,139 @@ class ScientificNoteEditor(QTextEdit):
         fmt.setToolTip("Doppio clic per modificare la matrice / formula")
         cursor.insertImage(fmt)
 
+    _INLINE_WYSIWYG_RE = re.compile(
+        r'<mark(?:\s+data-color="(#[0-9A-Fa-f]{6})")?>(.*?)</mark>'
+        r"|==([^=\n]+?)=="
+        r'|<span\s+style="color:\s*(#[0-9A-Fa-f]{6})\s*;?">(.*?)</span>'
+        r"|<(u|sub|sup)>(.*?)</\6>"
+        r"|~~([^~\n]+?)~~"
+        r"|\*\*\*([^*\n]+?)\*\*\*"
+        r"|\*\*([^*\n]+?)\*\*"
+        r"|(?<!\*)\*([^*\n]+?)\*(?!\*)"
+        r'|<span\s+style="font-size:\s*(\d{1,3})pt\s*;?">(.*?)</span>',
+        re.DOTALL | re.IGNORECASE,
+    )
+    _ATOMIC_INLINE_RE = re.compile(r"(\$\$.*?\$\$|\$[^$\n]+?\$|`[^`\n]+?`|\[\[[^\]\n]+\]\])")
+
     @staticmethod
-    def _parse_inline_markup_runs(raw_text: str, cur_hl: str = "", cur_col: str = "") -> List[Tuple[str, str, str]]:
-        runs: List[Tuple[str, str, str]] = []
-        pos = 0
-        for m in _INLINE_MARKUP_RE.finditer(raw_text or ""):
-            if m.start() > pos:
-                runs.append((raw_text[pos:m.start()], cur_hl, cur_col))
-            if m.group(2) is not None:
-                hl_val = (m.group(1) or "#FDE047").upper()
-                runs.extend(ScientificNoteEditor._parse_inline_markup_runs(m.group(2), hl_val, cur_col))
-            elif m.group(3) is not None:
-                runs.extend(ScientificNoteEditor._parse_inline_markup_runs(m.group(3), "#FDE047", cur_col))
-            elif m.group(4) is not None and m.group(5) is not None:
-                runs.extend(ScientificNoteEditor._parse_inline_markup_runs(m.group(5), cur_hl, m.group(4).upper()))
-            pos = m.end()
-        if pos < len(raw_text or ""):
-            runs.append((raw_text[pos:], cur_hl, cur_col))
+    def _parse_inline_markup_runs(
+        raw_text: str,
+        cur_style: Optional[Dict[str, Any]] = None,
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        """Analizza Markdown/HTML inline in run WYSIWYG proteggendo LaTeX, codice inline e wikilink."""
+        st: Dict[str, Any] = {
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "strike": False,
+            "script": "",
+            "font_size": 0,
+            "hl": "",
+            "col": "",
+        }
+        if cur_style:
+            st.update(cur_style)
+
+        runs: List[Tuple[str, Dict[str, Any]]] = []
+        if not raw_text:
+            return runs
+
+        def _parse_segment(seg: str, seg_style: Dict[str, Any]):
+            pos = 0
+            for m in ScientificNoteEditor._INLINE_WYSIWYG_RE.finditer(seg):
+                if m.start() > pos:
+                    runs.append((seg[pos:m.start()], dict(seg_style)))
+                child_st = dict(seg_style)
+                inner = ""
+                if m.group(2) is not None:
+                    child_st["hl"] = (m.group(1) or "#FDE047").upper()
+                    inner = m.group(2)
+                elif m.group(3) is not None:
+                    child_st["hl"] = "#FDE047"
+                    inner = m.group(3)
+                elif m.group(4) is not None and m.group(5) is not None:
+                    child_st["col"] = m.group(4).upper()
+                    inner = m.group(5)
+                elif m.group(6) is not None and m.group(7) is not None:
+                    tag = m.group(6).lower()
+                    if tag == "u":
+                        child_st["underline"] = True
+                    else:
+                        child_st["script"] = tag
+                    inner = m.group(7)
+                elif m.group(8) is not None:
+                    child_st["strike"] = True
+                    inner = m.group(8)
+                elif m.group(9) is not None:
+                    child_st["bold"] = True
+                    child_st["italic"] = True
+                    inner = m.group(9)
+                elif m.group(10) is not None:
+                    child_st["bold"] = True
+                    inner = m.group(10)
+                elif m.group(11) is not None:
+                    child_st["italic"] = True
+                    inner = m.group(11)
+                elif m.group(12) is not None and m.group(13) is not None:
+                    child_st["font_size"] = max(1, min(100, int(m.group(12))))
+                    inner = m.group(13)
+                if inner:
+                    _parse_segment(inner, child_st)
+                pos = m.end()
+            if pos < len(seg):
+                runs.append((seg[pos:], dict(seg_style)))
+
+        # Proteggi token atomici ($...$, `...`, [[...]]) da formattazione * / ** / ~~
+        tokens = ScientificNoteEditor._ATOMIC_INLINE_RE.split(raw_text)
+        for tok in tokens:
+            if not tok:
+                continue
+            if ScientificNoteEditor._ATOMIC_INLINE_RE.fullmatch(tok):
+                runs.append((tok, dict(st)))
+            else:
+                _parse_segment(tok, st)
         return runs
+
+    def _apply_inline_visuals_to_format(
+        self,
+        cf: QTextCharFormat,
+        preserve_block_bold: bool = False,
+    ):
+        """Applica sul QTextCharFormat i veri attributi visivi Qt delle proprietà inline."""
+        is_b = bool(cf.property(PROP_INLINE_BOLD))
+        is_i = bool(cf.property(PROP_INLINE_ITALIC))
+        is_u = bool(cf.property(PROP_INLINE_UNDERLINE))
+        is_s = bool(cf.property(PROP_INLINE_STRIKE))
+        script = str(cf.property(PROP_INLINE_SCRIPT) or "").strip().lower()
+        fsz = int(cf.property(PROP_INLINE_FONT_SIZE) or 0)
+        hl_hex = str(cf.property(PROP_INLINE_HIGHLIGHT) or "").strip()
+        col_hex = str(cf.property(PROP_INLINE_COLOR) or "").strip()
+
+        if is_b:
+            cf.setFontWeight(QFont.Weight.Bold)
+        elif not preserve_block_bold:
+            cf.setFontWeight(QFont.Weight.Normal)
+
+        cf.setFontItalic(is_i)
+        cf.setFontUnderline(is_u)
+        cf.setFontStrikeOut(is_s)
+
+        if script == "sub":
+            cf.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignSubScript)
+        elif script == "sup":
+            cf.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignSuperScript)
+        else:
+            cf.setVerticalAlignment(QTextCharFormat.VerticalAlignment.AlignNormal)
+
+        if 1 <= fsz <= 100:
+            cf.setFontPointSize(float(fsz))
+        elif not preserve_block_bold:
+            cf.clearProperty(QTextFormat.Property.FontPointSize)
+
+        if hl_hex:
+            cf.setBackground(_highlight_brush_for_hex(hl_hex, self._dark_mode))
+        if col_hex:
+            cf.setForeground(QColor(col_hex))
 
     def _insert_inline_formatted_text(
         self,
@@ -3736,16 +3927,29 @@ class ScientificNoteEditor(QTextEdit):
         if not text:
             cursor.setCharFormat(base)
             return
-        for chunk, hl_hex, col_hex in self._parse_inline_markup_runs(text):
+        preserve_bold = base.fontWeight() >= QFont.Weight.DemiBold
+        for chunk, st in self._parse_inline_markup_runs(text):
             if not chunk:
                 continue
             cf = QTextCharFormat(base)
-            if hl_hex:
-                cf.setProperty(PROP_INLINE_HIGHLIGHT, hl_hex)
-                cf.setBackground(_highlight_brush_for_hex(hl_hex, self._dark_mode))
-            if col_hex:
-                cf.setProperty(PROP_INLINE_COLOR, col_hex)
-                cf.setForeground(QColor(col_hex))
+            if st.get("hl"):
+                cf.setProperty(PROP_INLINE_HIGHLIGHT, st["hl"])
+            if st.get("col"):
+                cf.setProperty(PROP_INLINE_COLOR, st["col"])
+            if st.get("bold"):
+                cf.setProperty(PROP_INLINE_BOLD, True)
+            if st.get("italic"):
+                cf.setProperty(PROP_INLINE_ITALIC, True)
+            if st.get("underline"):
+                cf.setProperty(PROP_INLINE_UNDERLINE, True)
+            if st.get("strike"):
+                cf.setProperty(PROP_INLINE_STRIKE, True)
+            if st.get("script") in ("sub", "sup"):
+                cf.setProperty(PROP_INLINE_SCRIPT, st["script"])
+            fsz = int(st.get("font_size") or 0)
+            if 1 <= fsz <= 100:
+                cf.setProperty(PROP_INLINE_FONT_SIZE, fsz)
+            self._apply_inline_visuals_to_format(cf, preserve_block_bold=preserve_bold)
             cursor.insertText(chunk, cf)
         cursor.setCharFormat(base)
 
@@ -3975,80 +4179,616 @@ class ScientificNoteEditor(QTextEdit):
                 return (s, e)
         return None
 
-    def toggle_bold_selection(self, sel_range: Optional[Tuple[int, int]] = None):
-        """Avvolge o rimuove **...** attorno al testo selezionato preservando altri formati inline."""
+    def _toggle_inline_bool_property(
+        self,
+        prop_id: int,
+        sel_range: Optional[Tuple[int, int]] = None,
+    ):
+        """Attiva/disattiva una proprietà inline WYSIWYG sulla selezione o sul cursore corrente."""
         if self._is_studio_view:
             return
         rng = self._resolve_selection_range(sel_range)
         if rng is None:
+            cf = QTextCharFormat(self.currentCharFormat())
+            new_state = not bool(cf.property(prop_id))
+            if new_state:
+                cf.setProperty(prop_id, True)
+            else:
+                cf.clearProperty(prop_id)
+            blk_kind = str(self.textCursor().block().blockFormat().property(PROP_BLOCK_KIND) or "")
+            self._apply_inline_visuals_to_format(cf, preserve_block_bold=blk_kind in ("h1", "h2", "h3", "h4"))
+            self.setCurrentCharFormat(cf)
             return
+
         s_pos, e_pos = rng
+        all_on = self._range_has_uniform_bool_property(s_pos, e_pos, prop_id)
+        self._set_inline_char_property_on_range(s_pos, e_pos, prop_id, not all_on)
+        sel_cur = QTextCursor(self.document())
+        sel_cur.setPosition(s_pos)
+        sel_cur.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(sel_cur)
+        self._saved_selection_range = (s_pos, e_pos)
+        self._rehighlight_pos_range(s_pos, e_pos)
+        self._on_internal_text_changed()
+
+    def _toggle_inline_script(
+        self,
+        script_kind: str,
+        sel_range: Optional[Tuple[int, int]] = None,
+    ):
+        """Attiva/disattiva pedice ('sub') o apice ('sup') in modalità WYSIWYG mutualmente esclusiva."""
+        if self._is_studio_view:
+            return
+        target = script_kind.strip().lower()
+        rng = self._resolve_selection_range(sel_range)
+        if rng is None:
+            cf = QTextCharFormat(self.currentCharFormat())
+            cur_val = str(cf.property(PROP_INLINE_SCRIPT) or "").strip().lower()
+            if cur_val == target:
+                cf.clearProperty(PROP_INLINE_SCRIPT)
+            else:
+                cf.setProperty(PROP_INLINE_SCRIPT, target)
+            blk_kind = str(self.textCursor().block().blockFormat().property(PROP_BLOCK_KIND) or "")
+            self._apply_inline_visuals_to_format(cf, preserve_block_bold=blk_kind in ("h1", "h2", "h3", "h4"))
+            self.setCurrentCharFormat(cf)
+            return
+
+        s_pos, e_pos = rng
+        already = self._range_has_uniform_inline_property(s_pos, e_pos, PROP_INLINE_SCRIPT, target)
+        new_val = "" if already else target
+        self._set_inline_char_property_on_range(s_pos, e_pos, PROP_INLINE_SCRIPT, new_val)
+        sel_cur = QTextCursor(self.document())
+        sel_cur.setPosition(s_pos)
+        sel_cur.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(sel_cur)
+        self._saved_selection_range = (s_pos, e_pos)
+        self._rehighlight_pos_range(s_pos, e_pos)
+        self._on_internal_text_changed()
+
+    def _rehighlight_pos_range(self, s_pos: int, e_pos: int):
+        doc = self.document()
+        blk = doc.findBlock(s_pos)
+        while blk.isValid() and blk.position() <= e_pos:
+            self.highlighter.rehighlightBlock(blk)
+            blk = blk.next()
+
+    def toggle_bold_selection(self, sel_range: Optional[Tuple[int, int]] = None):
+        """Attiva o disattiva il grassetto WYSIWYG sulla selezione o al cursore."""
+        self._toggle_inline_bool_property(PROP_INLINE_BOLD, sel_range=sel_range)
+
+    def toggle_italic_selection(self, sel_range: Optional[Tuple[int, int]] = None):
+        """Attiva o disattiva il corsivo WYSIWYG sulla selezione o al cursore."""
+        self._toggle_inline_bool_property(PROP_INLINE_ITALIC, sel_range=sel_range)
+
+    def toggle_underline_selection(self, sel_range: Optional[Tuple[int, int]] = None):
+        """Attiva o disattiva il sottolineato WYSIWYG sulla selezione o al cursore."""
+        self._toggle_inline_bool_property(PROP_INLINE_UNDERLINE, sel_range=sel_range)
+
+    def toggle_strikethrough_selection(self, sel_range: Optional[Tuple[int, int]] = None):
+        """Attiva o disattiva il barrato WYSIWYG sulla selezione o al cursore."""
+        self._toggle_inline_bool_property(PROP_INLINE_STRIKE, sel_range=sel_range)
+
+    def toggle_subscript_selection(self, sel_range: Optional[Tuple[int, int]] = None):
+        """Attiva o disattiva il pedice WYSIWYG sulla selezione o al cursore."""
+        self._toggle_inline_script("sub", sel_range=sel_range)
+
+    def toggle_superscript_selection(self, sel_range: Optional[Tuple[int, int]] = None):
+        """Attiva o disattiva l'apice WYSIWYG sulla selezione o al cursore."""
+        self._toggle_inline_script("sup", sel_range=sel_range)
+
+    def default_body_font_size(self) -> int:
+        return max(1, min(100, int(round(11.0 * (self._font_scale_pct / 100.0)))))
+
+    def apply_font_size_selection(self, size_pt: Optional[int], sel_range: Optional[Tuple[int, int]] = None):
+        """Applica una dimensione carattere (1..100 pt) solo al testo selezionato o al cursore corrente."""
+        if self._is_studio_view:
+            return
+        clean_sz = 0 if (size_pt is None or int(size_pt) <= 0) else max(1, min(100, int(size_pt)))
+        rng = self._resolve_selection_range(sel_range)
+        if rng is None:
+            cf = QTextCharFormat(self.currentCharFormat())
+            if clean_sz > 0:
+                cf.setProperty(PROP_INLINE_FONT_SIZE, clean_sz)
+            else:
+                cf.clearProperty(PROP_INLINE_FONT_SIZE)
+            blk_kind = str(self.textCursor().block().blockFormat().property(PROP_BLOCK_KIND) or "")
+            self._apply_inline_visuals_to_format(cf, preserve_block_bold=blk_kind in ("h1", "h2", "h3", "h4"))
+            self.setCurrentCharFormat(cf)
+            return
+
+        s_pos, e_pos = rng
+        self._set_inline_char_property_on_range(s_pos, e_pos, PROP_INLINE_FONT_SIZE, clean_sz)
+        sel_cur = QTextCursor(self.document())
+        sel_cur.setPosition(s_pos)
+        sel_cur.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(sel_cur)
+        self._saved_selection_range = (s_pos, e_pos)
+        self._rehighlight_pos_range(s_pos, e_pos)
+        self._on_internal_text_changed()
+
+    def step_font_size_selection(self, direction: int, sel_range: Optional[Tuple[int, int]] = None):
+        """Aumenta o riduce la dimensione carattere del testo selezionato lungo la scala Word (1..100)."""
+        if self._is_studio_view:
+            return
+        rng = self._resolve_selection_range(sel_range)
+        cur_sz = self.default_body_font_size()
+        if rng is not None:
+            s_pos, e_pos = rng
+            blk = self.document().findBlock(s_pos)
+            if blk.isValid():
+                fit = blk.begin()
+                while not fit.atEnd():
+                    frag = fit.fragment()
+                    if frag.isValid():
+                        fs = max(s_pos, frag.position())
+                        fe = min(e_pos, frag.position() + frag.length())
+                        if fe > fs and frag.text().strip():
+                            f_sz = int(frag.charFormat().property(PROP_INLINE_FONT_SIZE) or 0)
+                            if 1 <= f_sz <= 100:
+                                cur_sz = f_sz
+                            elif frag.charFormat().fontPointSize() > 0:
+                                cur_sz = max(1, min(100, int(round(frag.charFormat().fontPointSize()))))
+                            break
+                    fit += 1
+        else:
+            cur_sz = int(self.current_inline_format_state().get("font_size") or cur_sz)
+
+        if direction > 0:
+            larger = [s for s in WORD_FONT_SIZES if s > cur_sz]
+            next_sz = larger[0] if larger else min(100, cur_sz + 2)
+        else:
+            smaller = [s for s in WORD_FONT_SIZES if s < cur_sz]
+            next_sz = smaller[-1] if smaller else max(1, cur_sz - 1)
+
+        target_val = 0 if next_sz == self.default_body_font_size() else next_sz
+        self.apply_font_size_selection(target_val, sel_range=rng)
+
+    def clear_inline_formatting_selection(self, sel_range: Optional[Tuple[int, int]] = None):
+        """Rimuove tutte le formattazioni inline WYSIWYG (grassetto, corsivo, dimensione, colori, pedice/apice)."""
+        if self._is_studio_view:
+            return
+        rng = self._resolve_selection_range(sel_range)
+        if rng is None:
+            cf = QTextCharFormat(self.currentCharFormat())
+            for prop in (
+                PROP_INLINE_HIGHLIGHT,
+                PROP_INLINE_COLOR,
+                PROP_INLINE_BOLD,
+                PROP_INLINE_ITALIC,
+                PROP_INLINE_UNDERLINE,
+                PROP_INLINE_STRIKE,
+                PROP_INLINE_SCRIPT,
+                PROP_INLINE_FONT_SIZE,
+            ):
+                cf.clearProperty(prop)
+            cf.clearBackground()
+            cf.clearForeground()
+            self._apply_inline_visuals_to_format(cf, preserve_block_bold=False)
+            self.setCurrentCharFormat(cf)
+            return
+
+        s_pos, e_pos = rng
+        for prop_id, empty_val in (
+            (PROP_INLINE_HIGHLIGHT, ""),
+            (PROP_INLINE_COLOR, ""),
+            (PROP_INLINE_BOLD, False),
+            (PROP_INLINE_ITALIC, False),
+            (PROP_INLINE_UNDERLINE, False),
+            (PROP_INLINE_STRIKE, False),
+            (PROP_INLINE_SCRIPT, ""),
+            (PROP_INLINE_FONT_SIZE, 0),
+        ):
+            self._set_inline_char_property_on_range(s_pos, e_pos, prop_id, empty_val)
+
+        # Pulisce anche eventuali marcatori Markdown/HTML incollati letteralmente
         doc = self.document()
         c = QTextCursor(doc)
         c.setPosition(s_pos)
         c.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
-        sel_txt = c.selectedText()
-        if not sel_txt.strip():
-            return
-
-        c.beginEditBlock()
-        # Controlla se è già avvolto dentro la selezione (**testo**) o subito fuori (** + selezione + **)
-        max_pos = max(0, doc.characterCount() - 1)
-        surrounded = False
-        if s_pos >= 2 and e_pos + 2 <= max_pos:
-            before_c = QTextCursor(doc)
-            before_c.setPosition(s_pos - 2)
-            before_c.setPosition(s_pos, QTextCursor.MoveMode.KeepAnchor)
-            after_c = QTextCursor(doc)
-            after_c.setPosition(e_pos)
-            after_c.setPosition(e_pos + 2, QTextCursor.MoveMode.KeepAnchor)
-            surrounded = (before_c.selectedText() == "**" and after_c.selectedText() == "**")
-
-        if surrounded:
-            rm_after = QTextCursor(doc)
-            rm_after.setPosition(e_pos)
-            rm_after.setPosition(e_pos + 2, QTextCursor.MoveMode.KeepAnchor)
-            rm_after.removeSelectedText()
-            rm_before = QTextCursor(doc)
-            rm_before.setPosition(s_pos - 2)
-            rm_before.setPosition(s_pos, QTextCursor.MoveMode.KeepAnchor)
-            rm_before.removeSelectedText()
-            new_s, new_e = s_pos - 2, e_pos - 2
-        elif sel_txt.startswith("**") and sel_txt.endswith("**") and len(sel_txt) > 4:
-            rm_end = QTextCursor(doc)
-            rm_end.setPosition(e_pos - 2)
-            rm_end.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
-            rm_end.removeSelectedText()
-            rm_start = QTextCursor(doc)
-            rm_start.setPosition(s_pos)
-            rm_start.setPosition(s_pos + 2, QTextCursor.MoveMode.KeepAnchor)
-            rm_start.removeSelectedText()
-            new_s, new_e = s_pos, e_pos - 4
+        raw_sel = c.selectedText()
+        cleaned = raw_sel.replace("**", "")
+        cleaned = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"\1", cleaned)
+        cleaned = re.sub(r"~~([^~\n]+?)~~", r"\1", cleaned)
+        cleaned = re.sub(r"</?(?:u|sub|sup)>", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"<span\s+style=\"font-size:\s*\d{1,3}pt\s*;?\">|</span>", "", cleaned, flags=re.IGNORECASE)
+        if cleaned != raw_sel:
+            c.beginEditBlock()
+            c.removeSelectedText()
+            c.insertText(cleaned, QTextCharFormat())
+            c.endEditBlock()
+            new_e = s_pos + len(cleaned)
         else:
-            ins_end = QTextCursor(doc)
-            ins_end.setPosition(e_pos)
-            ins_end.insertText("**", QTextCharFormat())
-            ins_start = QTextCursor(doc)
-            ins_start.setPosition(s_pos)
-            ins_start.insertText("**", QTextCharFormat())
-            new_s, new_e = s_pos, e_pos + 4
+            new_e = e_pos
 
-        c.endEditBlock()
         sel_cur = QTextCursor(doc)
-        sel_cur.setPosition(max(0, new_s))
-        sel_cur.setPosition(max(0, new_e), QTextCursor.MoveMode.KeepAnchor)
+        sel_cur.setPosition(s_pos)
+        sel_cur.setPosition(new_e, QTextCursor.MoveMode.KeepAnchor)
         self.setTextCursor(sel_cur)
-        self._saved_selection_range = (new_s, new_e)
+        self._saved_selection_range = (s_pos, new_e)
+        self._rehighlight_pos_range(s_pos, new_e)
         self._on_internal_text_changed()
 
-    def _set_inline_char_property_on_range(self, s_pos: int, e_pos: int, prop_id: int, value: Optional[str]):
-        """Imposta o rimuove una proprietà inline (evidenziazione o colore) preservando le altre proprietà."""
+    def current_inline_format_state(self) -> Dict[str, Any]:
+        """Restituisce lo stato degli stili inline alla selezione o al cursore per i toggle del Ribbon."""
+        def_sz = self.default_body_font_size()
+        out: Dict[str, Any] = {
+            "bold": False,
+            "italic": False,
+            "underline": False,
+            "strike": False,
+            "script": "",
+            "font_size": def_sz,
+        }
+        if self._is_studio_view:
+            return out
+        cur = self.textCursor()
+        if cur.hasSelection() and cur.selectedText().strip():
+            s_pos = min(cur.selectionStart(), cur.selectionEnd())
+            e_pos = max(cur.selectionStart(), cur.selectionEnd())
+            out["bold"] = self._range_has_uniform_bool_property(s_pos, e_pos, PROP_INLINE_BOLD)
+            out["italic"] = self._range_has_uniform_bool_property(s_pos, e_pos, PROP_INLINE_ITALIC)
+            out["underline"] = self._range_has_uniform_bool_property(s_pos, e_pos, PROP_INLINE_UNDERLINE)
+            out["strike"] = self._range_has_uniform_bool_property(s_pos, e_pos, PROP_INLINE_STRIKE)
+            if self._range_has_uniform_inline_property(s_pos, e_pos, PROP_INLINE_SCRIPT, "sub"):
+                out["script"] = "sub"
+            elif self._range_has_uniform_inline_property(s_pos, e_pos, PROP_INLINE_SCRIPT, "sup"):
+                out["script"] = "sup"
+            blk = self.document().findBlock(s_pos)
+            if blk.isValid():
+                fit = blk.begin()
+                while not fit.atEnd():
+                    frag = fit.fragment()
+                    if frag.isValid():
+                        fs = max(s_pos, frag.position())
+                        fe = min(e_pos, frag.position() + frag.length())
+                        if fe > fs and frag.text().strip():
+                            f_sz = int(frag.charFormat().property(PROP_INLINE_FONT_SIZE) or 0)
+                            if 1 <= f_sz <= 100:
+                                out["font_size"] = f_sz
+                            elif frag.charFormat().fontPointSize() > 0:
+                                out["font_size"] = max(1, min(100, int(round(frag.charFormat().fontPointSize()))))
+                            break
+                    fit += 1
+            return out
+
+        cf = cur.charFormat() if cur.positionInBlock() > 0 or not cur.block().text() else self.currentCharFormat()
+        out["bold"] = bool(cf.property(PROP_INLINE_BOLD))
+        out["italic"] = bool(cf.property(PROP_INLINE_ITALIC))
+        out["underline"] = bool(cf.property(PROP_INLINE_UNDERLINE))
+        out["strike"] = bool(cf.property(PROP_INLINE_STRIKE))
+        out["script"] = str(cf.property(PROP_INLINE_SCRIPT) or "").strip().lower()
+        f_sz = int(cf.property(PROP_INLINE_FONT_SIZE) or 0)
+        if 1 <= f_sz <= 100:
+            out["font_size"] = f_sz
+        elif cf.fontPointSize() > 0:
+            out["font_size"] = max(1, min(100, int(round(cf.fontPointSize()))))
+        return out
+
+    def current_block_kind(self) -> str:
+        """Restituisce il tipo di blocco corrente ('h1', 'h2', 'h3', 'bullet', 'todo', 'quote', 'callout', '')."""
+        if self._is_studio_view:
+            return ""
+        blk = self.textCursor().block()
+        if not blk.isValid():
+            return ""
+        return str(blk.blockFormat().property(PROP_BLOCK_KIND) or "")
+
+    def _selected_blocks(self) -> List[Any]:
+        cur = self.textCursor()
+        doc = self.document()
+        s_pos = min(cur.selectionStart(), cur.selectionEnd())
+        e_pos = max(cur.selectionStart(), cur.selectionEnd())
+        start_blk = doc.findBlock(s_pos)
+        end_blk = doc.findBlock(max(s_pos, e_pos - 1 if e_pos > s_pos else e_pos))
+        blocks = []
+        b = start_blk
+        while b.isValid():
+            blocks.append(b)
+            if b == end_blk:
+                break
+            b = b.next()
+        return blocks
+
+    def set_block_heading(self, level: int):
+        """Imposta il blocco corrente come Normale (level=0) oppure H1..H3 preservando il testo."""
+        if self._is_studio_view:
+            return
+        blk = self.textCursor().block()
+        if not blk.isValid():
+            return
+        cur = self.textCursor()
+        cur_pos_in_blk = cur.positionInBlock()
+        cur.beginEditBlock()
+        bc = QTextCursor(blk)
+        if level <= 0:
+            bc.setBlockFormat(QTextBlockFormat())
+            clean_cf = QTextCharFormat()
+            clean_cf.clearForeground()
+            bc.setBlockCharFormat(clean_cf)
+            bc.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            bc.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+            bc.setCharFormat(clean_cf)
+            blk.setUserData(None)
+        else:
+            lvl = max(1, min(4, int(level)))
+            self._apply_heading_block_at_cursor(bc, level=lvl, text="")
+            h_cf = self._heading_char_format(lvl)
+            bc.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            bc.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+            bc.mergeCharFormat(h_cf)
+        cur.endEditBlock()
+        restore = QTextCursor(blk)
+        restore.setPosition(min(blk.position() + cur_pos_in_blk, blk.position() + len(blk.text())))
+        self.setTextCursor(restore)
+        self.highlighter.rehighlightBlock(blk)
+        self.viewport().update()
+        self._on_internal_text_changed()
+
+    def _toggle_special_block_kind(self, target_kind: str):
+        if self._is_studio_view:
+            return
+        blocks = self._selected_blocks()
+        if not blocks:
+            return
+        all_target = all(blk.blockFormat().property(PROP_BLOCK_KIND) == target_kind for blk in blocks)
+        cur = self.textCursor()
+        cur.beginEditBlock()
+        for blk in blocks:
+            bc = QTextCursor(blk)
+            if all_target:
+                bc.setBlockFormat(QTextBlockFormat())
+                clean_cf = QTextCharFormat()
+                clean_cf.clearForeground()
+                bc.setBlockCharFormat(clean_cf)
+                bc.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                bc.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                bc.setCharFormat(clean_cf)
+                blk.setUserData(None)
+            elif target_kind == "todo":
+                self._apply_todo_block_at_cursor(bc, text="", checked=False, indent_level=0)
+            elif target_kind == "quote":
+                self._apply_quote_block_at_cursor(bc, text="")
+            elif target_kind == "callout":
+                self._apply_callout_block_at_cursor(bc, text="")
+        cur.endEditBlock()
+        self.viewport().update()
+        self._on_internal_text_changed()
+
+    def toggle_todo_list(self):
+        """Attiva/disattiva il blocco To-Do sui blocchi selezionati o correnti preservando il testo."""
+        self._toggle_special_block_kind("todo")
+
+    def toggle_quote_block(self):
+        """Attiva/disattiva il blocco Citazione sui blocchi selezionati o correnti."""
+        self._toggle_special_block_kind("quote")
+
+    def toggle_callout_block(self):
+        """Attiva/disattiva il blocco Callout sui blocchi selezionati o correnti."""
+        self._toggle_special_block_kind("callout")
+
+    def toggle_numbered_list(self):
+        """Attiva/rimuove il prefisso numerato (1. , 2. , ...) sui blocchi selezionati o correnti."""
+        if self._is_studio_view:
+            return
+        blocks = self._selected_blocks()
+        if not blocks:
+            return
+        all_numbered = all(bool(re.match(r"^\s*\d+\.\s+", blk.text())) for blk in blocks)
+        cur = self.textCursor()
+        cur.beginEditBlock()
+        for idx, blk in enumerate(blocks, 1):
+            bc = QTextCursor(blk)
+            txt = blk.text()
+            if all_numbered:
+                m = re.match(r"^(\s*\d+\.\s+)", txt)
+                if m:
+                    bc.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                    bc.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(m.group(1)))
+                    bc.removeSelectedText()
+            else:
+                if blk.blockFormat().property(PROP_BLOCK_KIND) in ("bullet", "todo"):
+                    bc.setBlockFormat(QTextBlockFormat())
+                    blk.setUserData(None)
+                if not re.match(r"^\s*\d+\.\s+", txt):
+                    bc.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                    bc.insertText(f"{idx}. ", QTextCharFormat())
+        cur.endEditBlock()
+        self.viewport().update()
+        self._on_internal_text_changed()
+
+    def indent_current_block(self, delta: int):
+        """Aumenta o riduce il rientro del blocco corrente (+1 / -1)."""
+        if self._is_studio_view:
+            return
+        blk = self.textCursor().block()
+        if not blk.isValid():
+            return
+        kind = blk.blockFormat().property(PROP_BLOCK_KIND)
+        if kind == "bullet":
+            self._set_bullet_indent(blk, delta)
+            return
+        if kind == "todo":
+            self._set_todo_indent(blk, delta)
+            return
+        bf = blk.blockFormat()
+        cur_m = float(bf.leftMargin() or 0.0)
+        new_m = max(0.0, min(88.0, cur_m + (22.0 if delta > 0 else -22.0)))
+        if abs(new_m - cur_m) < 0.1:
+            return
+        bf.setLeftMargin(new_m)
+        c = QTextCursor(blk)
+        c.beginEditBlock()
+        c.setBlockFormat(bf)
+        c.endEditBlock()
+        self.viewport().update()
+        self._on_internal_text_changed()
+
+    def _popup_anchor_point(self, anchor_pos: Optional[QPoint] = None) -> QPoint:
+        if anchor_pos is not None:
+            return anchor_pos
+        rect = self.cursorRect()
+        return self.viewport().mapToGlobal(QPoint(rect.left(), rect.bottom() + 4))
+
+    def insert_table_interactive(self, anchor_pos: Optional[QPoint] = None):
+        """Apre il selettore griglia e inserisce una tabella interattiva alla posizione del cursore."""
+        if self._is_studio_view:
+            return
+        picker = GridSizePickerPopup("Tabella", dark_mode=self._dark_mode, parent=self)
+        picker.move(self._popup_anchor_point(anchor_pos))
+        if picker.exec() == QDialog.DialogCode.Accepted and picker.selected_size():
+            r, c = picker.selected_size()
+            cursor = self.textCursor()
+            if cursor.block().text().strip() != "":
+                cursor.insertBlock()
+                cursor.setBlockFormat(QTextBlockFormat())
+                cursor.setCharFormat(QTextCharFormat())
+                cursor.block().setUserData(None)
+            tbl = self._insert_table_at_cursor(cursor, rows=r, cols=c)
+            self.setTextCursor(tbl.cellAt(0, 0).firstCursorPosition())
+            self._on_internal_text_changed()
+
+    def insert_matrix_interactive(self, anchor_pos: Optional[QPoint] = None):
+        """Apre il selettore dimensioni e inserisce una matrice LaTeX modificabile inline."""
+        if self._is_studio_view:
+            return
+        picker = GridSizePickerPopup("Matrice", dark_mode=self._dark_mode, parent=self)
+        picker.move(self._popup_anchor_point(anchor_pos))
+        if picker.exec() == QDialog.DialogCode.Accepted and picker.selected_size():
+            r, c = picker.selected_size()
+            rows_tex = [
+                " & ".join("1" if (r == c and ri == ci) else "0" for ci in range(c))
+                for ri in range(r)
+            ]
+            init_tex = "\\begin{bmatrix}\n" + " \\\\\n".join(rows_tex) + "\n\\end{bmatrix}"
+            cursor = self.textCursor()
+            if cursor.block().text().strip() != "":
+                cursor.insertBlock()
+                cursor.setBlockFormat(QTextBlockFormat())
+                cursor.setCharFormat(QTextCharFormat())
+                cursor.block().setUserData(None)
+            mat_pos = cursor.position()
+            self._insert_latex_block_at_cursor(cursor, init_tex)
+            self.setTextCursor(cursor)
+            self._on_internal_text_changed()
+            self._open_inline_matrix_editor(mat_pos, init_tex)
+
+    def insert_formula_block(self):
+        """Inserisce un blocco formula $$ ... $$ alla posizione del cursore."""
+        if self._is_studio_view:
+            return
+        cursor = self.textCursor()
+        if cursor.block().text().strip() != "":
+            cursor.insertBlock()
+            cursor.setBlockFormat(QTextBlockFormat())
+            cursor.setCharFormat(QTextCharFormat())
+            cursor.block().setUserData(None)
+        cursor.insertText("$$\n  \n$$")
+        cursor.movePosition(QTextCursor.MoveOperation.Up)
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfLine)
+        self.setTextCursor(cursor)
+
+    def insert_image_interactive(self):
+        """Apre il selettore file e incorpora un'immagine inline."""
+        if self._is_studio_view:
+            return
+        self._open_file_picker_and_embed(target_block=None)
+
+    def insert_file_block(self):
+        """Inserisce un blocco allegato file (/file) alla posizione del cursore."""
+        if self._is_studio_view:
+            return
+        cursor = self.textCursor()
+        if cursor.block().text().strip() != "":
+            cursor.insertBlock()
+            cursor.setBlockFormat(QTextBlockFormat())
+            cursor.setCharFormat(QTextCharFormat())
+            cursor.block().setUserData(None)
+        self._apply_file_block_at_cursor(cursor, "")
+        self.setTextCursor(cursor)
+
+    def insert_code_block(self, lang: str = "python"):
+        """Inserisce un blocco codice a larghezza piena."""
+        if self._is_studio_view:
+            return
+        cursor = self.textCursor()
+        if cursor.block().text().strip() != "":
+            cursor.insertBlock()
+            cursor.setBlockFormat(QTextBlockFormat())
+            cursor.setCharFormat(QTextCharFormat())
+            cursor.block().setUserData(None)
+        self._insert_code_frame_at_cursor(cursor, "", lang=lang)
+
+    def insert_bibtex_block(self):
+        """Inserisce un blocco citazione accademica BibTeX."""
+        if self._is_studio_view:
+            return
+        cursor = self.textCursor()
+        if cursor.block().text().strip() != "":
+            cursor.insertBlock()
+            cursor.setBlockFormat(QTextBlockFormat())
+            cursor.setCharFormat(QTextCharFormat())
+            cursor.block().setUserData(None)
+        self._insert_code_frame_at_cursor(
+            cursor,
+            "@article{autore2026,\n"
+            "  author  = {Cognome, Nome},\n"
+            "  title   = {Titolo dell'articolo},\n"
+            "  journal = {Rivista Scientifica},\n"
+            "  year    = {2026}\n"
+            "}",
+            lang="bibtex",
+        )
+
+    def open_link_note_picker(self, anchor_pos: Optional[QPoint] = None):
+        """Apre il selettore note [[Titolo]] dalla selezione corrente o al cursore."""
+        if self._is_studio_view:
+            return
+        rng = self._resolve_selection_range()
+        if rng is not None:
+            s_pos, e_pos = rng
+            c = QTextCursor(self.document())
+            c.setPosition(s_pos)
+            c.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+            sel_text = c.selectedText().replace("\u2029", " ").strip()
+        else:
+            pos = self.textCursor().position()
+            s_pos, e_pos = pos, pos
+            sel_text = ""
+
+        self._pending_link_range = (s_pos, e_pos)
+        self._pending_link_text = sel_text
+        self._selection_toolbar.hide()
+
+        global_pt = self._popup_anchor_point(anchor_pos)
+        screen = QApplication.screenAt(global_pt) or QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            if global_pt.x() + self._link_picker_popup.width() > avail.right():
+                global_pt.setX(max(avail.left(), avail.right() - self._link_picker_popup.width() - 8))
+            if global_pt.y() + 260 > avail.bottom():
+                above_pt = self.viewport().mapToGlobal(QPoint(self.cursorRect().left(), self.cursorRect().top()))
+                global_pt.setY(max(avail.top(), above_pt.y() - 260))
+        self._link_picker_popup.move(global_pt)
+        self._link_picker_popup.open_for_query(sel_text)
+
+    def trigger_selection_ai_correct(self) -> bool:
+        """Avvia la correzione AI sulla selezione corrente. Ritorna False se nessuna selezione attiva."""
+        if self._is_studio_view:
+            return False
+        if self._resolve_selection_range() is None:
+            return False
+        self._on_selection_ai_correct_clicked()
+        return True
+
+    def _set_inline_char_property_on_range(self, s_pos: int, e_pos: int, prop_id: int, value: Any):
+        """Imposta o rimuove una proprietà inline WYSIWYG preservando tutte le altre proprietà."""
         doc = self.document()
         blk = doc.findBlock(s_pos)
-        clean_val = (value or "").strip().upper()
         cur = QTextCursor(doc)
         cur.beginEditBlock()
         while blk.isValid() and blk.position() < e_pos:
+            blk_kind = str(blk.blockFormat().property(PROP_BLOCK_KIND) or "")
+            preserve_bold = blk_kind in ("h1", "h2", "h3", "h4")
             slices: List[Tuple[int, int, QTextCharFormat]] = []
             fit = blk.begin()
             while not fit.atEnd():
@@ -4059,19 +4799,37 @@ class ScientificNoteEditor(QTextEdit):
                     if fe > fs:
                         cf = QTextCharFormat(frag.charFormat())
                         if prop_id == PROP_INLINE_HIGHLIGHT:
+                            clean_val = str(value or "").strip().upper()
                             if clean_val:
                                 cf.setProperty(PROP_INLINE_HIGHLIGHT, clean_val)
-                                cf.setBackground(_highlight_brush_for_hex(clean_val, self._dark_mode))
                             else:
                                 cf.clearProperty(PROP_INLINE_HIGHLIGHT)
                                 cf.clearBackground()
                         elif prop_id == PROP_INLINE_COLOR:
+                            clean_val = str(value or "").strip().upper()
                             if clean_val:
                                 cf.setProperty(PROP_INLINE_COLOR, clean_val)
-                                cf.setForeground(QColor(clean_val))
                             else:
                                 cf.clearProperty(PROP_INLINE_COLOR)
                                 cf.clearForeground()
+                        elif prop_id in (PROP_INLINE_BOLD, PROP_INLINE_ITALIC, PROP_INLINE_UNDERLINE, PROP_INLINE_STRIKE):
+                            if bool(value):
+                                cf.setProperty(prop_id, True)
+                            else:
+                                cf.clearProperty(prop_id)
+                        elif prop_id == PROP_INLINE_SCRIPT:
+                            clean_sc = str(value or "").strip().lower()
+                            if clean_sc in ("sub", "sup"):
+                                cf.setProperty(PROP_INLINE_SCRIPT, clean_sc)
+                            else:
+                                cf.clearProperty(PROP_INLINE_SCRIPT)
+                        elif prop_id == PROP_INLINE_FONT_SIZE:
+                            fsz_val = int(value or 0)
+                            if 1 <= fsz_val <= 100:
+                                cf.setProperty(PROP_INLINE_FONT_SIZE, fsz_val)
+                            else:
+                                cf.clearProperty(PROP_INLINE_FONT_SIZE)
+                        self._apply_inline_visuals_to_format(cf, preserve_block_bold=preserve_bold)
                         slices.append((fs, fe, cf))
                 fit += 1
             for fs, fe, cf in slices:
@@ -4081,6 +4839,25 @@ class ScientificNoteEditor(QTextEdit):
                 sc.setCharFormat(cf)
             blk = blk.next()
         cur.endEditBlock()
+
+    def _range_has_uniform_bool_property(self, s_pos: int, e_pos: int, prop_id: int) -> bool:
+        doc = self.document()
+        blk = doc.findBlock(s_pos)
+        found_any = False
+        while blk.isValid() and blk.position() < e_pos:
+            fit = blk.begin()
+            while not fit.atEnd():
+                frag = fit.fragment()
+                if frag.isValid():
+                    fs = max(s_pos, frag.position())
+                    fe = min(e_pos, frag.position() + frag.length())
+                    if fe > fs and frag.text().strip():
+                        found_any = True
+                        if not bool(frag.charFormat().property(prop_id)):
+                            return False
+                fit += 1
+            blk = blk.next()
+        return found_any
 
     def _range_has_uniform_inline_property(self, s_pos: int, e_pos: int, prop_id: int, expected_val: str) -> bool:
         doc = self.document()
@@ -4942,24 +5719,28 @@ class ScientificNoteEditor(QTextEdit):
         s_pos, e_pos = rng
         doc = self.document()
         max_pos = max(0, doc.characterCount() - 1)
-        if s_pos < 0 or e_pos > max_pos or s_pos >= e_pos:
+        if s_pos < 0 or e_pos > max_pos or s_pos > e_pos:
             return
 
         c = QTextCursor(doc)
         c.beginEditBlock()
-        s_low = sel_text.lower()
-        t_low = clean_t.lower()
-        replace_entire = (s_low == t_low) or (
-            len(s_low) >= 3 and (s_low in t_low or t_low in s_low) and abs(len(s_low) - len(t_low)) <= 12
-        )
-        if replace_entire:
+        if s_pos == e_pos:
             c.setPosition(s_pos)
-            c.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
-            c.removeSelectedText()
             c.insertText(f"[[{clean_t}]]", QTextCharFormat())
         else:
-            c.setPosition(e_pos)
-            c.insertText(f" [[{clean_t}]]", QTextCharFormat())
+            s_low = sel_text.lower()
+            t_low = clean_t.lower()
+            replace_entire = (s_low == t_low) or (
+                len(s_low) >= 3 and (s_low in t_low or t_low in s_low) and abs(len(s_low) - len(t_low)) <= 12
+            )
+            if replace_entire:
+                c.setPosition(s_pos)
+                c.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+                c.removeSelectedText()
+                c.insertText(f"[[{clean_t}]]", QTextCharFormat())
+            else:
+                c.setPosition(e_pos)
+                c.insertText(f" [[{clean_t}]]", QTextCharFormat())
         c.endEditBlock()
         self.setTextCursor(c)
         self.setFocus()
@@ -5777,14 +6558,8 @@ class ScientificNoteEditor(QTextEdit):
             cursor.block().setUserData(None)
 
         if cmd == "/tabella":
-            picker = GridSizePickerPopup("Tabella", dark_mode=self._dark_mode, parent=self)
-            rect = self.cursorRect()
-            picker.move(self.viewport().mapToGlobal(QPoint(rect.left(), rect.bottom() + 4)))
-            if picker.exec() == QDialog.DialogCode.Accepted and picker.selected_size():
-                r, c = picker.selected_size()
-                tbl = self._insert_table_at_cursor(cursor, rows=r, cols=c)
-                self.setTextCursor(tbl.cellAt(0, 0).firstCursorPosition())
-                self._on_internal_text_changed()
+            self.setTextCursor(cursor)
+            self.insert_table_interactive()
         elif cmd == "/quote":
             self._apply_quote_block_at_cursor(cursor, "")
             self.setTextCursor(cursor)
@@ -5800,42 +6575,19 @@ class ScientificNoteEditor(QTextEdit):
         elif cmd == "/code":
             self._insert_code_frame_at_cursor(cursor, "", lang="python")
         elif cmd == "/bibtex":
-            self._insert_code_frame_at_cursor(
-                cursor,
-                "@article{autore2026,\n"
-                "  author  = {Cognome, Nome},\n"
-                "  title   = {Titolo dell'articolo},\n"
-                "  journal = {Rivista Scientifica},\n"
-                "  year    = {2026}\n"
-                "}",
-                lang="bibtex",
-            )
+            self.setTextCursor(cursor)
+            self.insert_bibtex_block()
         elif cmd == "/file":
             self._apply_file_block_at_cursor(cursor, "")
             self.setTextCursor(cursor)
         elif cmd == "/immagine":
-            self._open_file_picker_and_embed(target_block=None)
+            self.insert_image_interactive()
         elif cmd == "/formula":
-            cursor.insertText("$$\n  \n$$")
-            cursor.movePosition(QTextCursor.MoveOperation.Up)
-            cursor.movePosition(QTextCursor.MoveOperation.EndOfLine)
             self.setTextCursor(cursor)
+            self.insert_formula_block()
         elif cmd in ("/matrice", "/matrix"):
-            picker = GridSizePickerPopup("Matrice", dark_mode=self._dark_mode, parent=self)
-            rect = self.cursorRect()
-            picker.move(self.viewport().mapToGlobal(QPoint(rect.left(), rect.bottom() + 4)))
-            if picker.exec() == QDialog.DialogCode.Accepted and picker.selected_size():
-                r, c = picker.selected_size()
-                rows_tex = [
-                    " & ".join("1" if (r == c and ri == ci) else "0" for ci in range(c))
-                    for ri in range(r)
-                ]
-                init_tex = "\\begin{bmatrix}\n" + " \\\\\n".join(rows_tex) + "\n\\end{bmatrix}"
-                mat_pos = cursor.position()
-                self._insert_latex_block_at_cursor(cursor, init_tex)
-                self.setTextCursor(cursor)
-                self._on_internal_text_changed()
-                self._open_inline_matrix_editor(mat_pos, init_tex)
+            self.setTextCursor(cursor)
+            self.insert_matrix_interactive()
         elif cmd == "/ocr":
             self.setTextCursor(cursor)
             self.trigger_vision_ocr()
@@ -5882,15 +6634,22 @@ class ScientificNoteEditor(QTextEdit):
             super().keyPressEvent(event)
             return
 
-        # 0-pre. Scorciatoia Grassetto rapido (Ctrl+B)
+        # 0-pre. Scorciatoie inline rapide (Ctrl+B Grassetto, Ctrl+I Corsivo, Ctrl+U Sottolineato)
         if (
-            key == Qt.Key.Key_B
-            and (mods & Qt.KeyboardModifier.ControlModifier)
+            (mods & Qt.KeyboardModifier.ControlModifier)
             and not (mods & Qt.KeyboardModifier.AltModifier)
             and not (mods & Qt.KeyboardModifier.ShiftModifier)
         ):
-            if self.textCursor().hasSelection():
+            if key == Qt.Key.Key_B:
                 self.toggle_bold_selection()
+                event.accept()
+                return
+            if key == Qt.Key.Key_I:
+                self.toggle_italic_selection()
+                event.accept()
+                return
+            if key == Qt.Key.Key_U:
+                self.toggle_underline_selection()
                 event.accept()
                 return
 

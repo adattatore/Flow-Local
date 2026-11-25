@@ -457,11 +457,16 @@ class OrbRadialMenuOverlay(QWidget):
     worldSelected = pyqtSignal(int)
     openProgressChanged = pyqtSignal(float)
 
-    OVERLAY_W = 380
-    OVERLAY_H = 196
+    OVERLAY_W = 360
+    OVERLAY_H = 160
     INNER_RADIUS = 20.0
     OUTER_RADIUS = 148.0
     LABEL_RADIUS = 84.0
+    ORB_BLOOM_OFFSETS: Tuple[Tuple[float, float], ...] = (
+        (-56.0, 32.0),  # Note (Ciano)
+        (0.0, 62.0),    # Calendario (Viola)
+        (56.0, 32.0),   # Trascrizione (Smeraldo)
+    )
 
     def __init__(
         self,
@@ -622,23 +627,33 @@ class OrbRadialMenuOverlay(QWidget):
         self.update()
 
     def _item_rect_and_center(self, idx: int) -> Tuple[QRectF, QPointF]:
-        item = RADIAL_WORLD_ITEMS[idx]
         p = self._open_progress
         ease = 1.0 - (1.0 - p) ** 3
 
-        ang_rad = math.radians(float(item["mid_deg"]))
-        r = self.LABEL_RADIUS * ease
-        drift_x = math.sin(self._phase * 1.15 + idx * 2.094) * 2.8 * ease
-        drift_y = math.cos(self._phase * 0.90 + idx * 2.618) * 2.2 * ease
+        off_x, off_y = self.ORB_BLOOM_OFFSETS[idx]
+        drift_x = math.sin(self._phase * 1.15 + idx * 2.094) * 1.8 * ease
+        drift_y = math.cos(self._phase * 0.90 + idx * 2.618) * 1.5 * ease
 
-        cx = self._origin.x() + r * math.cos(ang_rad) + drift_x
-        cy = self._origin.y() + r * math.sin(ang_rad) + drift_y
-        rect = QRectF(cx - 46.0, cy - 24.0, 92.0, 48.0)
+        cx = self._origin.x() + off_x * ease + drift_x
+        cy = self._origin.y() + off_y * ease + drift_y
+        rect = QRectF(cx - 42.0, cy - 42.0, 84.0, 84.0)
         return rect, QPointF(cx, cy)
 
     def _hit_test_item(self, pos: QPointF) -> int:
         if self._open_progress < 0.25:
             return -1
+        # Prima verifica distanza circolare dalle 3 sfere sbocciate (sceglie la più vicina)
+        best_idx = -1
+        best_dist = 44.0
+        for idx in range(len(RADIAL_WORLD_ITEMS)):
+            _rect, center = self._item_rect_and_center(idx)
+            d = math.hypot(pos.x() - center.x(), pos.y() - center.y())
+            if d <= best_dist:
+                best_dist = d
+                best_idx = idx
+        if best_idx >= 0:
+            return best_idx
+
         dx = pos.x() - self._origin.x()
         dy = pos.y() - self._origin.y()
         dist = math.hypot(dx, dy)
@@ -712,35 +727,6 @@ class OrbRadialMenuOverlay(QWidget):
             return
         super().keyPressEvent(event)
 
-    @staticmethod
-    def _build_flame_lobe_path(
-        fx: float,
-        fy: float,
-        base_r: float,
-        f_ang: float,
-        target_rad: float,
-        stretch_len: float,
-        sigma: float,
-        plasma_phase: float,
-        flame_idx: int,
-        wobble_amp: float,
-    ) -> QPainterPath:
-        """Curva continua Catmull-Rom: identica al fuoco dell'Orb a riposo e si allunga in petalo fluido."""
-        num_pts = 48
-        f_points: List[QPointF] = []
-        for i in range(num_pts):
-            theta = (2.0 * math.pi * i) / num_pts - (math.pi / 2.0)
-            d_ang = math.atan2(math.sin(theta - target_rad), math.cos(theta - target_rad))
-            lobe = math.exp(-0.5 * (abs(d_ang) / sigma) ** 2.3)
-            wobble = (
-                1.0
-                + wobble_amp * math.sin(theta * 2.0 + f_ang)
-                + 0.025 * lobe * math.sin(plasma_phase * 1.9 + theta * 3.0 + flame_idx * 2.1)
-            )
-            r_pt = (base_r * wobble) + (lobe * stretch_len)
-            f_points.append(QPointF(fx + r_pt * math.cos(theta), fy + r_pt * math.sin(theta)))
-        return create_smooth_closed_path(f_points)
-
     def paintEvent(self, event):
         p = self._open_progress
         if p <= 0.005:
@@ -752,132 +738,125 @@ class OrbRadialMenuOverlay(QWidget):
 
         ox, oy = self._origin.x(), self._origin.y()
         ease = 1.0 - (1.0 - p) ** 3
+        item_geos = [self._item_rect_and_center(i) for i in range(len(RADIAL_WORLD_ITEMS))]
+        phase_offsets = (self._phase, self._phase * 1.35 + 2.1, -self._phase * 0.9 + 4.2)
 
-        idle_core = 14.5
-        wobble_amp = 0.045
-        orbit_r = 2.4
-        flame_specs = [
-            (QColor("#38BDF8"), self._phase, 1.00, 195),
-            (QColor("#A855F7"), self._phase * 1.35 + 2.1, 0.92, 185),
-            (QColor("#10B981"), -self._phase * 0.9 + 4.2, 0.86, 175),
-        ]
-
-        # 1. Costruisci le 3 curve continue Catmull-Rom (estensione diretta delle fiamme dell'Orb)
-        flame_geoms: List[Tuple[QPainterPath, QColor, float, float, float, float, float, int]] = []
-        for idx, item in enumerate(RADIAL_WORLD_ITEMS):
-            f_col, f_ang, r_scale, base_alpha = flame_specs[idx]
-            glow = self._item_glow[idx]
-            target_rad = math.radians(float(item["mid_deg"]))
-            base_r = idle_core * 0.88 * r_scale
-            stretch_len = ease * (112.0 + 16.0 * glow)
-            sigma = 0.43 + 0.05 * glow
-
-            fx = ox + orbit_r * math.cos(f_ang)
-            fy = oy + orbit_r * math.sin(f_ang * 1.15)
-            f_path = self._build_flame_lobe_path(
-                fx,
-                fy,
-                base_r,
-                f_ang,
-                target_rad,
-                stretch_len,
-                sigma,
-                self._phase,
-                idx,
-                wobble_amp,
-            )
-            flame_geoms.append((f_path, f_col, fx, fy, target_rad, base_r, stretch_len, base_alpha))
-
-        # 2. Silhouette scura organica esattamente sotto il nucleo e i 3 petali (copre linee UI sotto)
+        # 1. Base scura morbida dietro le 3 sfere di plasma (maschera il Ribbon senza bordi)
         painter.setPen(Qt.PenStyle.NoPen)
-        center_r = idle_core * 1.08
-        center_bg = QRadialGradient(ox, oy, center_r)
-        center_bg.setColorAt(0.0, QColor(8, 10, 16, 220))
-        center_bg.setColorAt(0.70, QColor(8, 10, 16, 160))
-        center_bg.setColorAt(1.0, QColor(8, 10, 16, 0))
-        painter.setBrush(center_bg)
-        painter.drawEllipse(QPointF(ox, oy), center_r, center_r)
+        for idx, (_rect, center) in enumerate(item_geos):
+            glow = self._item_glow[idx]
+            r_orb = 13.5 + ease * (29.5 + 4.5 * glow)
+            bg_r = r_orb * 1.15
+            dark_grad = QRadialGradient(center.x(), center.y(), bg_r)
+            dark_grad.setColorAt(0.0, QColor(10, 14, 22, int(232 * p)))
+            dark_grad.setColorAt(0.68, QColor(10, 14, 22, int(210 * p)))
+            dark_grad.setColorAt(0.86, QColor(10, 14, 22, int(150 * p)))
+            dark_grad.setColorAt(1.0, QColor(10, 14, 22, 0))
+            painter.setBrush(dark_grad)
+            painter.drawEllipse(center, bg_r, bg_r)
 
-        dark_peak = int(205 * p) if self._is_dark else int(185 * p)
-        dark_mid = int(165 * p) if self._is_dark else int(145 * p)
-        for f_path, _f_col, fx, fy, target_rad, base_r, stretch_len, _ba in flame_geoms:
-            ux, uy = math.cos(target_rad), math.sin(target_rad)
-            gx = fx + ux * stretch_len * 0.38
-            gy = fy + uy * stretch_len * 0.38
-            g_rad = max(12.0, base_r + stretch_len * 0.72)
-            dg = QRadialGradient(gx, gy, g_rad)
-            dg.setColorAt(0.0, QColor(8, 10, 16, dark_peak))
-            dg.setColorAt(0.68, QColor(8, 10, 16, dark_mid))
-            dg.setColorAt(1.0, QColor(8, 10, 16, 0))
-            painter.setBrush(dg)
-            painter.drawPath(f_path)
+        # 2. Nucleo canonico dell'Orb ancorato al centro superiore (rimane vivo e connesso)
+        pull_vectors: List[Tuple[float, float]] = []
+        for idx, (_rect, center) in enumerate(item_geos):
+            dx = center.x() - ox
+            dy = center.y() - oy
+            dist = math.hypot(dx, dy)
+            if dist > 1e-3:
+                pull = ease * 4.0
+                pull_vectors.append(((dx / dist) * pull, (dy / dist) * pull))
+            else:
+                pull_vectors.append((0.0, 0.0))
 
-        # 3. Riempimento unico canonico in CompositionMode_Screen (nessuno stacco tra Orb e petali)
+        painter.save()
+        painter.setOpacity(0.78)
+        paint_voice_orb_body(
+            painter,
+            ox,
+            oy,
+            core_radius=13.5,
+            levels=np.zeros(24, dtype=np.float32),
+            plasma_phase=self._phase,
+            wave_envelope=0.0,
+            spinner_opacity=0.0,
+            spinner_angle=0.0,
+            current_color=QColor("#38BDF8"),
+            state="IDLE",
+            is_active=False,
+            orb_scale=1.0,
+            max_wave_height=16.5,
+            flame_pull_vectors=pull_vectors,
+        )
+        painter.restore()
+
+        # 3. I 3 fuochi autentici che sbocciano in sfere di plasma Catmull-Rom (zero bordi)
         painter.save()
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
         painter.setPen(Qt.PenStyle.NoPen)
-        for idx, (f_path, f_col, fx, fy, target_rad, base_r, stretch_len, base_alpha) in enumerate(flame_geoms):
+        num_pts = 24
+        for idx, item in enumerate(RADIAL_WORLD_ITEMS):
+            _rect, center = item_geos[idx]
+            cx_i, cy_i = center.x(), center.y()
             glow = self._item_glow[idx]
             is_hov = (idx == self._hovered_idx)
-            dim_other = 0.70 if (self._hovered_idx >= 0 and not is_hov) else 1.0
-            eff_alpha = int(min(235.0, (base_alpha + 40.0 * glow) * dim_other))
+            dim_other = 0.78 if (self._hovered_idx >= 0 and not is_hov) else 1.0
+            eff_alpha = int(min(242.0, (190.0 + 45.0 * glow) * dim_other * min(1.0, p * 1.15)))
+            r_orb = 13.5 + ease * (29.5 + 4.5 * glow)
+            f_ang = phase_offsets[idx]
 
-            ux, uy = math.cos(target_rad), math.sin(target_rad)
-            gx = fx + ux * stretch_len * 0.42
-            gy = fy + uy * stretch_len * 0.42
-            g_rad = max(12.0, base_r + stretch_len * 0.68)
+            f_points: List[QPointF] = []
+            for i in range(num_pts):
+                theta = (2.0 * math.pi * i) / num_pts - (math.pi / 2.0)
+                wobble = 1.0 + 0.045 * math.sin(theta * 2.0 + f_ang)
+                r_pt = r_orb * wobble
+                f_points.append(QPointF(cx_i + r_pt * math.cos(theta), cy_i + r_pt * math.sin(theta)))
 
-            f_grad = QRadialGradient(gx, gy, g_rad)
-            c_hot = QColor(f_col)
+            f_path = create_smooth_closed_path(f_points)
+            col = QColor(item["color"])
+            f_grad = QRadialGradient(cx_i, cy_i, r_orb * 1.18)
+            c_hot = QColor(col)
             c_hot.setAlpha(eff_alpha)
-            c_mid = QColor(f_col)
+            c_mid = QColor(col)
             c_mid.setAlpha(int(eff_alpha * 0.72))
-            c_edge = QColor(f_col)
-            c_edge.setAlpha(int(eff_alpha * 0.24))
-            c_tip = QColor(f_col)
+            c_tip = QColor(col)
             c_tip.setAlpha(0)
             f_grad.setColorAt(0.0, c_hot)
-            f_grad.setColorAt(0.68, c_mid)
-            f_grad.setColorAt(0.94, c_edge)
+            f_grad.setColorAt(0.64, c_mid)
             f_grad.setColorAt(1.0, c_tip)
-
             painter.setBrush(f_grad)
             painter.drawPath(f_path)
         painter.restore()
 
-        # 4. Icona + Testo nitido dentro il cuore di ciascuna fiamma
-        item_geos = [self._item_rect_and_center(i) for i in range(len(RADIAL_WORLD_ITEMS))]
+        # 4. Icona + Label nitida flottante dentro il cuore di ciascuna sfera di plasma
         for idx, item in enumerate(RADIAL_WORLD_ITEMS):
             _rect, center = item_geos[idx]
-            ix, iy = center.x(), center.y()
             col = QColor(item["color"])
             is_hov = (idx == self._hovered_idx)
             is_act = (item["key"] == self._active_world)
-            scale = (0.72 + 0.28 * ease) * self._item_scales[idx]
+            scale = (0.76 + 0.24 * ease) * self._item_scales[idx]
 
             painter.save()
-            painter.setOpacity(min(1.0, p * 1.15))
-            painter.translate(ix, iy)
+            painter.setOpacity(min(1.0, p * 1.18))
+            painter.translate(center)
             painter.scale(scale, scale)
 
             ic_color = "#FFFFFF" if is_hov else item["color"]
-            ic_pm = get_pixmap(item["icon"], color=ic_color, size=18)
+            ic_pm = get_pixmap(item["icon"], color=ic_color, size=17)
             if not ic_pm.isNull():
-                painter.drawPixmap(QPointF(-9.0, -18.0), ic_pm)
+                painter.drawPixmap(QPointF(-8.5, -16.0), ic_pm)
 
             lbl_font = QFont("Segoe UI", 9, QFont.Weight.Bold if (is_hov or is_act) else QFont.Weight.DemiBold)
-            lbl_font.setPointSizeF(9.5)
+            lbl_font.setPointSizeF(9.2)
             painter.setFont(lbl_font)
-            txt_rect = QRectF(-48.0, 2.0, 96.0, 20.0)
+            txt_rect = QRectF(-44.0, 3.0, 88.0, 18.0)
 
-            painter.setPen(QColor(4, 7, 14, int(215 * p)))
-            painter.drawText(txt_rect.translated(0.0, 1.1), Qt.AlignmentFlag.AlignCenter, item["label"])
+            painter.setPen(QColor(6, 9, 15, int(225 * p)))
+            painter.drawText(txt_rect.translated(0.0, 1.0), Qt.AlignmentFlag.AlignCenter, item["label"])
             painter.setPen(QColor("#FFFFFF" if (is_hov or is_act) else "#F1F5F9"))
             painter.drawText(txt_rect, Qt.AlignmentFlag.AlignCenter, item["label"])
 
             if is_act:
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(col)
-                painter.drawEllipse(QPointF(0.0, 24.0), 2.5, 2.5)
+                painter.drawEllipse(QPointF(0.0, 23.0), 2.4, 2.4)
 
             painter.restore()
