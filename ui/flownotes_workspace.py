@@ -575,6 +575,7 @@ class GroupDiscordRail(QFrame):
     """Barra verticale stile Discord sul lato destro di FlowNotes per cambiare rapidamente gruppo."""
 
     workspaceSelected = pyqtSignal(object)  # None (Locale) oppure group_id (int)
+    graphRequested = pyqtSignal()
     joinOrCreateRequested = pyqtSignal()
     changeGroupColorRequested = pyqtSignal(int, str)
     openGroupBoardRequested = pyqtSignal(int)
@@ -583,6 +584,7 @@ class GroupDiscordRail(QFrame):
 
     _ACTIVE_SIZE = 46
     _INACTIVE_SIZE = 36
+    _GRAPH_SIZE = 28
 
     def __init__(self, theme_key: str = "obsidian", is_dark: bool = True, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -591,6 +593,7 @@ class GroupDiscordRail(QFrame):
         self._palette: Dict[str, str] = {}
         self._groups: List[Dict[str, Any]] = []
         self._active_group_id: Optional[int] = None
+        self._graph_active: bool = False
         self._last_render_sig: Optional[tuple] = None
 
         self.setObjectName("NKGroupDiscordRail")
@@ -622,6 +625,28 @@ class GroupDiscordRail(QFrame):
         self.local_pill.setFixedSize(4, 28)
         loc_lay.addWidget(self.local_pill)
         root.addWidget(loc_row, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        # Tasto Grafo piccolo e discreto appena sotto la cartella locale
+        graph_row = QWidget(self)
+        graph_row.setFixedWidth(62)
+        graph_row.setStyleSheet("background: transparent;")
+        graph_lay = QHBoxLayout(graph_row)
+        graph_lay.setContentsMargins(2, 0, 2, 0)
+        graph_lay.setSpacing(2)
+        graph_lay.addStretch(1)
+        self.graph_btn = QPushButton("", graph_row)
+        self.graph_btn.setObjectName("NKRailGraphBtn")
+        self.graph_btn.setFixedSize(self._GRAPH_SIZE, self._GRAPH_SIZE)
+        self.graph_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.graph_btn.setToolTip("Grafo Concettuale — Visualizza i collegamenti tra le note")
+        self.graph_btn.clicked.connect(self.graphRequested.emit)
+        graph_lay.addWidget(self.graph_btn)
+        graph_lay.addStretch(1)
+        graph_spacer = QWidget(graph_row)
+        graph_spacer.setFixedSize(4, 16)
+        graph_spacer.setStyleSheet("background: transparent;")
+        graph_lay.addWidget(graph_spacer)
+        root.addWidget(graph_row, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self._top_sep = QFrame(self)
         self._top_sep.setFixedSize(32, 1)
@@ -669,6 +694,34 @@ class GroupDiscordRail(QFrame):
     def active_group_id(self) -> Optional[int]:
         return self._active_group_id
 
+    def set_graph_active(self, active: bool):
+        self._graph_active = bool(active)
+        self._apply_graph_btn_style()
+
+    def _apply_graph_btn_style(self):
+        p = self._palette
+        bd = p.get("card_border") or p.get("border") or ("#2A3342" if self._is_dark else "#D8DEE9")
+        accent = p.get("accent") or DEFAULT_GROUP_COLOR
+        hover = p.get("nav_hover") or ("rgba(255,255,255,0.09)" if self._is_dark else "rgba(15,23,42,0.08)")
+        card_bg = p.get("card_bg") or ("#161B24" if self._is_dark else "#FFFFFF")
+        sz = self._GRAPH_SIZE
+        self.graph_btn.setIcon(
+            get_icon("graph", theme_key=self._theme_key, role="accent" if self._graph_active else "subtitle", size=14)
+        )
+        if self._graph_active:
+            self.graph_btn.setStyleSheet(
+                f"QPushButton#NKRailGraphBtn {{ background-color: {_hex_to_rgba(accent, 0.22)}; "
+                f"border: 1.5px solid {accent}; border-radius: 9px; "
+                f"min-width: {sz}px; max-width: {sz}px; min-height: {sz}px; max-height: {sz}px; padding: 0px; }}"
+            )
+        else:
+            self.graph_btn.setStyleSheet(
+                f"QPushButton#NKRailGraphBtn {{ background-color: {card_bg}; border: 1px solid {bd}; "
+                f"border-radius: 9px; min-width: {sz}px; max-width: {sz}px; "
+                f"min-height: {sz}px; max-height: {sz}px; padding: 0px; }}"
+                f"QPushButton#NKRailGraphBtn:hover {{ background-color: {hover}; border-color: {accent}; }}"
+            )
+
     def set_theme(self, theme_key: str, palette: Dict[str, str], is_dark: Optional[bool] = None):
         self._theme_key = theme_key
         self._palette = dict(palette or {})
@@ -714,6 +767,7 @@ class GroupDiscordRail(QFrame):
             f"min-height: {sz}px; max-height: {sz}px; padding: 0px; }}"
             f"QPushButton#NKRailAddBtn:hover {{ background-color: {hover}; border-color: {accent}; border-radius: 13px; }}"
         )
+        self._apply_graph_btn_style()
 
     def _rebuild_items(self):
         p = self._palette

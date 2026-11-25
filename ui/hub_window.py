@@ -894,6 +894,8 @@ class FlowLocalHub(QMainWindow):
             self.fn_graph_view_btns[page_idx].setChecked(True)
         if hasattr(self, "fn_focus_view_btns") and page_idx in self.fn_focus_view_btns:
             self.fn_focus_view_btns[page_idx].setChecked(True)
+        if hasattr(self, "nk_group_rail"):
+            self.nk_group_rail.set_graph_active(page_idx == 3)
 
     def _set_theme(self, theme_key: str):
         if theme_key not in _THEME_PALETTES or theme_key == self._current_theme:
@@ -2446,6 +2448,7 @@ class FlowLocalHub(QMainWindow):
         )
         self.nk_group_rail.set_theme(self._current_theme, self._active_palette(), is_dark=self._active_is_dark())
         self.nk_group_rail.workspaceSelected.connect(self._on_nk_workspace_selected)
+        self.nk_group_rail.graphRequested.connect(lambda: self._on_nav_clicked(3))
         self.nk_group_rail.joinOrCreateRequested.connect(self._on_nk_join_or_create_group)
         self.nk_group_rail.changeGroupColorRequested.connect(self._on_nk_change_group_color)
         self.nk_group_rail.openGroupBoardRequested.connect(

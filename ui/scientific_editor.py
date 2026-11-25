@@ -40,6 +40,7 @@ from PyQt6.QtGui import (
     QDesktopServices,
     QFont,
     QFontMetricsF,
+    QIcon,
     QImage,
     QKeyEvent,
     QMouseEvent,
@@ -60,6 +61,7 @@ from PyQt6.QtGui import (
     QTextLength,
     QTextTable,
     QTextTableFormat,
+    QAction,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -74,6 +76,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -118,12 +121,42 @@ PROP_OCR_PLACEHOLDER_ID = QTextFormat.Property.UserProperty + 9
 PROP_CODE_ID = QTextFormat.Property.UserProperty + 10
 PROP_TODO_CHECKED = QTextFormat.Property.UserProperty + 11  # bool: stato spunta blocco To-Do
 PROP_TODO_INDENT = QTextFormat.Property.UserProperty + 12   # int: livello indentazione To-Do (0..4)
+PROP_BULLET_INDENT = QTextFormat.Property.UserProperty + 13  # int: livello indentazione elenco (0..4)
+PROP_INLINE_HIGHLIGHT = QTextFormat.Property.UserProperty + 14  # str: hex colore evidenziazione
+PROP_INLINE_COLOR = QTextFormat.Property.UserProperty + 15      # str: hex colore testo
+
+HIGHLIGHT_COLORS: List[Tuple[str, str]] = [
+    ("Giallo", "#FDE047"),
+    ("Verde", "#4ADE80"),
+    ("Ciano", "#38BDF8"),
+    ("Rosa", "#F472B6"),
+    ("Arancio", "#FB923C"),
+]
+TEXT_COLORS: List[Tuple[str, str]] = [
+    ("Rosso", "#EF4444"),
+    ("Blu", "#3B82F6"),
+    ("Verde", "#10B981"),
+    ("Ambra", "#F59E0B"),
+    ("Viola", "#A855F7"),
+    ("Ciano", "#06B6D4"),
+]
+
+
+def _highlight_brush_for_hex(hex_color: str, dark_mode: bool) -> QBrush:
+    """Restituisce un QBrush traslucido leggibile per l'evidenziatore inline."""
+    c = QColor((hex_color or "").strip())
+    if not c.isValid():
+        return QBrush(Qt.BrushStyle.NoBrush)
+    c.setAlpha(78 if dark_mode else 135)
+    return QBrush(c)
+
 
 PLACEHOLDER_TEXTS: Dict[str, str] = {
     "h1": "Titolo 1",
     "h2": "Titolo 2",
     "h3": "Titolo 3",
     "todo": "To-do",
+    "bullet": "Voce elenco...",
     "quote": "Citazione...",
     "callout": "Nota in evidenza...",
 }
@@ -138,12 +171,15 @@ class BlockUserData(QTextBlockUserData):
 
 
 def strip_markdown_syntax(text: str) -> str:
-    """Rimuove tag Markdown (#, ##, **, $$, ```, :::ai-note) per titoli e anteprime pulite nella sidebar."""
+    """Rimuove tag Markdown (#, ##, **, ==, <mark>, <span>, $$, ```, :::ai-note) per titoli e anteprime pulite nella sidebar."""
     if not text:
         return ""
     s = re.sub(r":::ai-note[^\n]*\n?", "", text)
     s = s.replace(":::", "")
     s = re.sub(r"```[a-zA-Z]*", "", s)
+    s = re.sub(r"</?mark(?:\s+data-color=\"#[0-9A-Fa-f]{6}\")?>", "", s)
+    s = re.sub(r"<span\s+style=\"color:\s*#[0-9A-Fa-f]{6}\s*;?\">|</span>", "", s)
+    s = re.sub(r"==([^=\n]+?)==", r"\1", s)
     s = s.replace("$$", "").replace("**", "")
     s = re.sub(r"^#{1,6}\s+", "", s, flags=re.MULTILINE)
     s = re.sub(r"^>\s+", "", s, flags=re.MULTILINE)
@@ -466,6 +502,53 @@ def _format_math_img_tag(b64: str, w_px: int, h_px: int, is_display: bool, alt: 
     return img
 
 
+_INLINE_MARKUP_RE = re.compile(
+    r'<mark(?:\s+data-color="(#[0-9A-Fa-f]{6})")?>(.*?)</mark>'
+    r"|==([^=\n]+?)=="
+    r'|<span\s+style="color:\s*(#[0-9A-Fa-f]{6})\s*;?">(.*?)</span>',
+    re.DOTALL,
+)
+
+
+def _hex_rgba_css(hex_col: str, alpha: float = 0.35) -> str:
+    c = QColor((hex_col or "").strip())
+    if not c.isValid():
+        return f"rgba(253, 224, 71, {alpha})"
+    return f"rgba({c.red()}, {c.green()}, {c.blue()}, {alpha})"
+
+
+def _render_styled_inline_fragment(raw_str: str) -> str:
+    """Converte in sicurezza <mark>, ==...== e <span style="color:#..."> escapando il resto."""
+    parts: List[str] = []
+    pos = 0
+    for m in _INLINE_MARKUP_RE.finditer(raw_str):
+        if m.start() > pos:
+            parts.append(html.escape(raw_str[pos:m.start()]))
+        if m.group(2) is not None:
+            hl_hex = (m.group(1) or "#FDE047").upper()
+            inner_html = _render_styled_inline_fragment(m.group(2))
+            rgba = _hex_rgba_css(hl_hex, 0.35)
+            parts.append(
+                f'<mark style="background-color: {rgba}; color: inherit; padding: 0 2px; border-radius: 3px;">'
+                f"{inner_html}</mark>"
+            )
+        elif m.group(3) is not None:
+            inner_html = _render_styled_inline_fragment(m.group(3))
+            rgba = _hex_rgba_css("#FDE047", 0.35)
+            parts.append(
+                f'<mark style="background-color: {rgba}; color: inherit; padding: 0 2px; border-radius: 3px;">'
+                f"{inner_html}</mark>"
+            )
+        elif m.group(4) is not None and m.group(5) is not None:
+            col_hex = m.group(4).upper()
+            inner_html = _render_styled_inline_fragment(m.group(5))
+            parts.append(f'<span style="color: {col_hex};">{inner_html}</span>')
+        pos = m.end()
+    if pos < len(raw_str):
+        parts.append(html.escape(raw_str[pos:]))
+    return "".join(parts)
+
+
 def _render_inline_markdown_html(
     text: str,
     dark_mode: bool = False,
@@ -504,7 +587,7 @@ def _render_inline_markdown_html(
                 f'font-size: {code_pt:g}pt;">{html.escape(tok[1:-1])}</code>'
             )
         else:
-            escaped = html.escape(tok)
+            escaped = _render_styled_inline_fragment(tok)
             escaped = re.sub(
                 r"\*\*(.+?)\*\*",
                 rf'<strong style="color: {bold_fg}; font-weight: 700;">\1</strong>',
@@ -893,12 +976,35 @@ class MarkdownLatexHighlighter(QSyntaxHighlighter):
             self.setFormat(0, len(text), self._latex_fmt)
             self.setCurrentBlockState(1)
 
+        # Preserva evidenziatore e colore testo inline sopra eventuali match di sintassi (**bold**, ecc.)
+        blk = self.currentBlock()
+        b_pos = blk.position()
+        fit = blk.begin()
+        while not fit.atEnd():
+            frag = fit.fragment()
+            if frag.isValid():
+                cf = frag.charFormat()
+                hl_hex = str(cf.property(PROP_INLINE_HIGHLIGHT) or "").strip()
+                col_hex = str(cf.property(PROP_INLINE_COLOR) or "").strip()
+                if hl_hex or col_hex:
+                    f_start = max(0, frag.position() - b_pos)
+                    f_len = min(len(text) - f_start, frag.length())
+                    for pos in range(f_start, f_start + f_len):
+                        merged = self.format(pos)
+                        if hl_hex:
+                            merged.setBackground(_highlight_brush_for_hex(hl_hex, self._dark_mode))
+                        if col_hex:
+                            merged.setForeground(QColor(col_hex))
+                        self.setFormat(pos, 1, merged)
+            fit += 1
+
 
 SLASH_COMMANDS: List[Dict[str, str]] = [
     {"cmd": "/tabella", "label": "▦  /tabella", "desc": "Tabella interattiva (celle navigabili con Tab)"},
     {"cmd": "/quote", "label": "▎  /quote", "desc": "Blocco citazione con barra verticale"},
     {"cmd": "/callout", "label": "◈  /callout", "desc": "Nota in evidenza"},
     {"cmd": "/todo", "label": "☐  /todo", "desc": "To-Do list interattiva cliccabile"},
+    {"cmd": "/elenco", "label": "•  /elenco", "desc": "Elenco puntato (oppure digita '- ' a inizio riga)"},
     {"cmd": "/code", "label": "⌘  /code", "desc": "Blocco codice a larghezza piena"},
     {"cmd": "/bibtex", "label": "❝  /bibtex", "desc": "Blocco citazione BibTeX accademico"},
     {"cmd": "/file", "label": "⎘  /file", "desc": "Allega un file (PDF, Immagine, Doc)"},
@@ -1128,6 +1234,12 @@ class SlashPreviewPopup(QFrame):
                 f"<div style='color:{fg}; line-height:1.5;'>"
                 f"☑ Ripassare derivate<br>☐ Risolvere esercizi Cap. 3</div>",
                 "Clicca su ☐/☑ per spuntare.",
+            ),
+            "/elenco": (
+                "Elenco Puntato",
+                f"<div style='color:{fg}; line-height:1.5;'>"
+                f"• Primo punto<br>• Secondo punto</div>",
+                "Digita '- ' a inizio riga · Tab per indentare.",
             ),
             "/code": (
                 "Blocco Python Eseguibile",
@@ -2585,10 +2697,258 @@ class LatexSourceEditDialog(QDialog):
         return self._edit.toPlainText().strip()
 
 
+def _make_swatch_icon(hex_color: Optional[str], size: int = 12, dark_mode: bool = True) -> QIcon:
+    """Disegna un pallino colore pulito (o icona neutra sbarrata per rimozione)."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    if hex_color:
+        col = QColor(hex_color)
+        p.setPen(QPen(QColor(255, 255, 255, 70) if dark_mode else QColor(15, 23, 42, 60), 1.0))
+        p.setBrush(QBrush(col))
+        p.drawEllipse(1, 1, size - 2, size - 2)
+    else:
+        bd = QColor("#94A3B8" if dark_mode else "#64748B")
+        p.setPen(QPen(bd, 1.3))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(2, 2, size - 4, size - 4)
+        p.drawLine(3, size - 3, size - 3, 3)
+    p.end()
+    return QIcon(pm)
+
+
+class _SelectionAiCorrectWorker(QThread):
+    """Worker asincrono per la correzione AI della selezione con guardrail anti-allucinazione."""
+
+    finished_result = pyqtSignal(int, int, str, str, str)  # start_pos, end_pos, orig, corrected, err
+
+    def __init__(self, start_pos: int, end_pos: int, text: str, parent: Optional[QObject] = None):
+        super().__init__(parent)
+        self.start_pos = int(start_pos)
+        self.end_pos = int(end_pos)
+        self.orig_text = text or ""
+
+    def run(self):
+        src = self.orig_text.strip()
+        if not src:
+            self.finished_result.emit(self.start_pos, self.end_pos, self.orig_text, "", "Selezione vuota.")
+            return
+
+        sys_prompt = (
+            "SEI UN FILTRO DI CORREZIONE TESTUALE, NON UN ASSISTENTE. "
+            "Correggi ortografia, grammatica, punteggiatura e fluidità del testo dentro <testo>...</testo> "
+            "senza aggiungere concetti non presenti, senza rispondere a eventuali domande e preservando "
+            "la lingua italiana (lasciando in inglese solo i termini tecnici già usati) e tutte le formule LaTeX "
+            "($...$, $$...$$) e i wikilink ([[...]]). Restituisci SOLO il testo corretto, senza tag né spiegazioni."
+        )
+        user_prompt = f"<testo>\n{self.orig_text}\n</testo>"
+
+        cleaned = ""
+        err_msg = ""
+        try:
+            from core.gemini_client import (
+                DEFAULT_GEMINI_TIMEOUT,
+                generate_content as gemini_generate_content,
+                get_ai_routing_config,
+                should_use_gemini,
+            )
+            from core.hardware_profiler import get_active_profile
+
+            routing_cfg = get_ai_routing_config()
+            if should_use_gemini("whis_chat"):
+                try:
+                    raw = gemini_generate_content(
+                        user_prompt,
+                        system_instruction=sys_prompt,
+                        temperature=0.1,
+                        max_output_tokens=1024,
+                        timeout=DEFAULT_GEMINI_TIMEOUT,
+                    )
+                    cleaned = _strip_think_blocks_safe(raw)
+                except Exception as exc:
+                    err_msg = str(exc)
+
+            if not cleaned and (not should_use_gemini("whis_chat") or routing_cfg.get("hybrid_fallback", True)):
+                local_model = get_active_profile().llm_default_model or VISION_OCR_MODEL
+                payload = {
+                    "model": local_model,
+                    "messages": [
+                        {"role": "system", "content": sys_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "stream": False,
+                    "think": False,
+                    "keep_alive": "30s",
+                    "options": {"temperature": 0.1},
+                }
+                req = urllib.request.Request(
+                    routing_cfg.get("ollama_chat_url") or OLLAMA_CHAT_URL,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=25.0) as resp:
+                    raw_json = json.loads(resp.read().decode("utf-8", errors="replace"))
+                cleaned = _strip_think_blocks_safe(raw_json.get("message", {}).get("content", "") or "")
+        except Exception as exc:
+            err_msg = str(exc)
+
+        cleaned = re.sub(r"^<testo>\s*|\s*</testo>$", "", cleaned, flags=re.IGNORECASE).strip()
+        if not cleaned:
+            self.finished_result.emit(
+                self.start_pos,
+                self.end_pos,
+                self.orig_text,
+                "",
+                err_msg or "Nessun risultato dall'AI locale/cloud.",
+            )
+            return
+
+        max_allowed = max(int(len(self.orig_text) * 1.45), len(self.orig_text) + 40)
+        if len(cleaned) > max_allowed:
+            self.finished_result.emit(
+                self.start_pos,
+                self.end_pos,
+                self.orig_text,
+                "",
+                "Risposta AI scartata dal guardrail anti-allucinazione.",
+            )
+            return
+
+        self.finished_result.emit(self.start_pos, self.end_pos, self.orig_text, cleaned, "")
+
+
+class _LinkNotePickerPopup(QFrame):
+    """Popup compatto con ricerca per collegare il testo selezionato a un'altra nota ([[Titolo]])."""
+
+    noteChosen = pyqtSignal(str)
+
+    def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True):
+        super().__init__(parent)
+        self._dark_mode = dark_mode
+        self.setObjectName("LinkNotePickerPopup")
+        self.setWindowFlags(Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        self.setFixedWidth(310)
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.setSpacing(6)
+
+        self._search_edit = QLineEdit(self)
+        self._search_edit.setMinimumHeight(34)
+        self._search_edit.setPlaceholderText("Cerca nota da collegare...")
+        self._search_edit.textChanged.connect(self._on_query_changed)
+        self._search_edit.returnPressed.connect(self._accept_current)
+        lay.addWidget(self._search_edit)
+
+        self._list = QListWidget(self)
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._list.setMinimumHeight(140)
+        self._list.setMaximumHeight(220)
+        self._list.itemClicked.connect(self._on_item_clicked)
+        self._list.itemActivated.connect(self._on_item_clicked)
+        lay.addWidget(self._list)
+
+        self._search_edit.installEventFilter(self)
+        self._list.installEventFilter(self)
+        self.apply_theme(dark_mode)
+
+    def apply_theme(self, dark_mode: bool):
+        self._dark_mode = dark_mode
+        if dark_mode:
+            bg, fg, bd, in_bg, sel_bg, sel_fg = "#161B26", "#F1F5F9", "#2D3748", "#0F141E", "#312E81", "#FFFFFF"
+        else:
+            bg, fg, bd, in_bg, sel_bg, sel_fg = "#FFFFFF", "#0F172A", "#CBD5E1", "#F8FAFC", "#E0E7FF", "#1E1B4B"
+        self.setStyleSheet(
+            f"QFrame#LinkNotePickerPopup {{ background-color: {bg}; border: 1px solid {bd}; border-radius: 10px; }}"
+            f"QLineEdit {{ background-color: {in_bg}; color: {fg}; border: 1px solid {bd}; border-radius: 6px; padding: 4px 8px; font-size: 12px; }}"
+            f"QLineEdit:focus {{ border-color: #6366F1; }}"
+            f"QListWidget {{ background-color: transparent; color: {fg}; border: none; font-size: 12px; }}"
+            f"QListWidget::item {{ padding: 6px 8px; border-radius: 5px; }}"
+            f"QListWidget::item:selected {{ background-color: {sel_bg}; color: {sel_fg}; }}"
+        )
+
+    def open_for_query(self, initial_query: str = ""):
+        clean = (initial_query or "").strip()
+        if len(clean) > 48 or "\n" in clean:
+            clean = ""
+        self._search_edit.blockSignals(True)
+        self._search_edit.setText(clean)
+        self._search_edit.blockSignals(False)
+        count = self._populate_notes(clean)
+        if count == 0 and clean:
+            self._search_edit.blockSignals(True)
+            self._search_edit.setText("")
+            self._search_edit.blockSignals(False)
+            self._populate_notes("")
+        self.adjustSize()
+        self.show()
+        self.raise_()
+        self._search_edit.setFocus()
+        self._search_edit.selectAll()
+
+    def _populate_notes(self, query: str) -> int:
+        from database.db_manager import db
+        self._list.clear()
+        try:
+            rows = db.search_note_titles_for_wikilink(query, limit=14)
+        except Exception:
+            rows = []
+        for r in rows:
+            raw_t = strip_markdown_syntax((r.get("title") or "").replace("Nota: ", "").strip())
+            if not raw_t:
+                continue
+            subj = (r.get("subject") or "Generale").strip()
+            label = f"🔗 {raw_t}   ·   {subj}" if subj and subj != "Generale" else f"🔗 {raw_t}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, raw_t)
+            self._list.addItem(item)
+        if self._list.count() > 0:
+            self._list.setCurrentRow(0)
+        return self._list.count()
+
+    def _on_query_changed(self, text: str):
+        self._populate_notes(text)
+
+    def _accept_current(self):
+        it = self._list.currentItem()
+        if it is not None:
+            title = str(it.data(Qt.ItemDataRole.UserRole) or "")
+            if title:
+                self.hide()
+                self.noteChosen.emit(title)
+
+    def _on_item_clicked(self, item: QListWidgetItem):
+        title = str(item.data(Qt.ItemDataRole.UserRole) or "")
+        if title:
+            self.hide()
+            self.noteChosen.emit(title)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.KeyPress:
+            k = event.key()
+            if k == Qt.Key.Key_Escape:
+                self.hide()
+                return True
+            if watched is self._search_edit and k in (Qt.Key.Key_Down, Qt.Key.Key_Up):
+                cur = self._list.currentRow()
+                nxt = min(self._list.count() - 1, cur + 1) if k == Qt.Key.Key_Down else max(0, cur - 1)
+                if self._list.count() > 0:
+                    self._list.setCurrentRow(nxt)
+                return True
+        return super().eventFilter(watched, event)
+
+
 class _SelectionFloatingToolbar(QFrame):
     """Toolbar fluttuante contestuale che appare sopra il testo selezionato."""
 
+    boldClicked = pyqtSignal()
+    highlightClicked = pyqtSignal(str)
+    colorClicked = pyqtSignal(str)
+    aiCorrectClicked = pyqtSignal()
+    linkNoteClicked = pyqtSignal()
     rsvpClicked = pyqtSignal()
+    captureSelectionRequested = pyqtSignal()
 
     def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True):
         super().__init__(parent)
@@ -2598,17 +2958,95 @@ class _SelectionFloatingToolbar(QFrame):
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(6, 4, 6, 4)
-        lay.setSpacing(4)
+        lay.setSpacing(3)
 
-        self._rsvp_btn = QPushButton("⚡ RSVP", self)
-        self._rsvp_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._rsvp_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._rsvp_btn.setToolTip("Lettura veloce RSVP sulla selezione (Alt+R)")
+        def _make_tool_btn(text: str, tip: str, bold_font: bool = False) -> QPushButton:
+            b = QPushButton(text, self)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            b.setToolTip(tip)
+            if bold_font:
+                b.setProperty("boldBtn", True)
+            return b
+
+        self._bold_btn = _make_tool_btn("B", "Grassetto (Ctrl+B)", bold_font=True)
+        self._bold_btn.clicked.connect(self.boldClicked.emit)
+        lay.addWidget(self._bold_btn)
+
+        self._highlight_btn = _make_tool_btn("🖍 ▾", "Evidenzia testo")
+        self._highlight_btn.clicked.connect(self._open_highlight_menu)
+        lay.addWidget(self._highlight_btn)
+
+        self._color_btn = _make_tool_btn("A ▾", "Colore testo")
+        self._color_btn.clicked.connect(self._open_color_menu)
+        lay.addWidget(self._color_btn)
+
+        self._sep1 = QFrame(self)
+        self._sep1.setFixedSize(1, 18)
+        lay.addWidget(self._sep1)
+
+        self._ai_btn = _make_tool_btn("✦ Correggi", "Correggi ortografia e chiarezza con AI")
+        self._ai_btn.clicked.connect(self.aiCorrectClicked.emit)
+        lay.addWidget(self._ai_btn)
+
+        self._link_btn = _make_tool_btn("🔗 Collega", "Collega ad un'altra nota ([[...]])")
+        self._link_btn.clicked.connect(self.linkNoteClicked.emit)
+        lay.addWidget(self._link_btn)
+
+        self._sep2 = QFrame(self)
+        self._sep2.setFixedSize(1, 18)
+        lay.addWidget(self._sep2)
+
+        self._rsvp_btn = _make_tool_btn("⚡ RSVP", "Lettura veloce RSVP sulla selezione (Alt+R)")
         self._rsvp_btn.clicked.connect(self.rsvpClicked.emit)
         lay.addWidget(self._rsvp_btn)
 
+        self._all_btns = [
+            self._bold_btn,
+            self._highlight_btn,
+            self._color_btn,
+            self._ai_btn,
+            self._link_btn,
+            self._rsvp_btn,
+        ]
         self.apply_theme(dark_mode)
         self.adjustSize()
+
+    def _menu_stylesheet(self) -> str:
+        if self._dark_mode:
+            bg, fg, bd, hv = "#161B26", "#F1F5F9", "#2D3748", "#312E81"
+        else:
+            bg, fg, bd, hv = "#FFFFFF", "#0F172A", "#CBD5E1", "#E0E7FF"
+        return (
+            f"QMenu {{ background-color: {bg}; color: {fg}; border: 1px solid {bd}; border-radius: 8px; padding: 4px; }}"
+            f"QMenu::item {{ padding: 5px 12px; border-radius: 5px; font-size: 12px; }}"
+            f"QMenu::item:selected {{ background-color: {hv}; }}"
+            f"QMenu::separator {{ height: 1px; background-color: {bd}; margin: 4px 6px; }}"
+        )
+
+    def _open_highlight_menu(self):
+        self.captureSelectionRequested.emit()
+        menu = QMenu(self)
+        menu.setStyleSheet(self._menu_stylesheet())
+        for name, hex_c in HIGHLIGHT_COLORS:
+            act = menu.addAction(_make_swatch_icon(hex_c, 12, self._dark_mode), name)
+            act.triggered.connect(lambda _chk=False, h=hex_c: self.highlightClicked.emit(h))
+        menu.addSeparator()
+        rem_act = menu.addAction(_make_swatch_icon(None, 12, self._dark_mode), "Rimuovi evidenziazione")
+        rem_act.triggered.connect(lambda: self.highlightClicked.emit(""))
+        menu.exec(self._highlight_btn.mapToGlobal(QPoint(0, self._highlight_btn.height() + 4)))
+
+    def _open_color_menu(self):
+        self.captureSelectionRequested.emit()
+        menu = QMenu(self)
+        menu.setStyleSheet(self._menu_stylesheet())
+        for name, hex_c in TEXT_COLORS:
+            act = menu.addAction(_make_swatch_icon(hex_c, 12, self._dark_mode), name)
+            act.triggered.connect(lambda _chk=False, h=hex_c: self.colorClicked.emit(h))
+        menu.addSeparator()
+        rem_act = menu.addAction(_make_swatch_icon(None, 12, self._dark_mode), "Colore predefinito")
+        rem_act.triggered.connect(lambda: self.colorClicked.emit(""))
+        menu.exec(self._color_btn.mapToGlobal(QPoint(0, self._color_btn.height() + 4)))
 
     def apply_theme(self, dark_mode: bool):
         self._dark_mode = dark_mode
@@ -2617,19 +3055,32 @@ class _SelectionFloatingToolbar(QFrame):
             bd = "rgba(129, 140, 248, 0.35)"
             fg = "#E2E8F0"
             hv = "rgba(129, 140, 248, 0.25)"
+            sep = "rgba(148, 163, 184, 0.22)"
         else:
             bg = "rgba(255, 255, 255, 0.96)"
             bd = "rgba(79, 70, 229, 0.30)"
             fg = "#0F172A"
             hv = "rgba(79, 70, 229, 0.14)"
+            sep = "rgba(100, 116, 139, 0.22)"
         self.setStyleSheet(
             f"QFrame#SelectionFloatingToolbar {{ background-color: {bg}; border: 1px solid {bd}; border-radius: 9px; }}"
         )
-        self._rsvp_btn.setStyleSheet(
+        self._sep1.setStyleSheet(f"background-color: {sep}; border: none;")
+        self._sep2.setStyleSheet(f"background-color: {sep}; border: none;")
+        btn_qss = (
             f"QPushButton {{ color: {fg}; background: transparent; border: none; border-radius: 6px; "
-            f"padding: 4px 10px; font-size: 11px; font-weight: 700; }}"
+            f"padding: 4px 8px; font-size: 11px; font-weight: 600; }}"
             f"QPushButton:hover {{ background-color: {hv}; }}"
         )
+        for btn in self._all_btns:
+            if btn.property("boldBtn"):
+                btn.setStyleSheet(
+                    f"QPushButton {{ color: {fg}; background: transparent; border: none; border-radius: 6px; "
+                    f"padding: 4px 9px; font-size: 11.5px; font-weight: 800; }}"
+                    f"QPushButton:hover {{ background-color: {hv}; }}"
+                )
+            else:
+                btn.setStyleSheet(btn_qss)
         self.adjustSize()
 
 
@@ -2682,9 +3133,13 @@ class ScientificNoteEditor(QTextEdit):
         self._active_highlight_span = None
         self._auto_scroll_paused: bool = False
 
-        # Blocco 3B: Vision OCR & Inline Python Execution state
+        # Blocco 3B: Vision OCR, AI Selection Correct & Inline Python Execution state
         self._active_ocr_workers: List[_VisionOcrWorker] = []
         self._active_exec_workers: List[_PythonExecWorker] = []
+        self._bg_workers: List[QThread] = []
+        self._saved_selection_range: Optional[Tuple[int, int]] = None
+        self._pending_link_range: Optional[Tuple[int, int]] = None
+        self._pending_link_text: str = ""
         self._code_exec_states: Dict[str, Dict[str, Any]] = {}
         self._code_output_panels: Dict[str, CodeOutputPanel] = {}
         self._toast_label: Optional[QLabel] = None
@@ -2706,7 +3161,17 @@ class ScientificNoteEditor(QTextEdit):
         self.wikilink_popup.noteChosen.connect(self._apply_wikilink)
         self.wikilink_popup.hide()
 
+        self._link_picker_popup = _LinkNotePickerPopup(self, dark_mode=dark_mode)
+        self._link_picker_popup.noteChosen.connect(self._on_link_picker_note_chosen)
+        self._link_picker_popup.hide()
+
         self._selection_toolbar = _SelectionFloatingToolbar(self.viewport(), dark_mode=dark_mode)
+        self._selection_toolbar.captureSelectionRequested.connect(self._capture_current_selection_range)
+        self._selection_toolbar.boldClicked.connect(self.toggle_bold_selection)
+        self._selection_toolbar.highlightClicked.connect(self._on_selection_highlight_clicked)
+        self._selection_toolbar.colorClicked.connect(self._on_selection_color_clicked)
+        self._selection_toolbar.aiCorrectClicked.connect(self._on_selection_ai_correct_clicked)
+        self._selection_toolbar.linkNoteClicked.connect(self._on_selection_link_note_clicked)
         self._selection_toolbar.rsvpClicked.connect(self._on_selection_rsvp_clicked)
         self._selection_toolbar.hide()
 
@@ -2750,6 +3215,7 @@ class ScientificNoteEditor(QTextEdit):
         self.highlighter.set_dark_mode(dark_mode)
         self.slash_popup.apply_theme(dark_mode)
         self.wikilink_popup.apply_theme(dark_mode)
+        self._link_picker_popup.apply_theme(dark_mode)
         self._selection_toolbar.apply_theme(dark_mode)
         for panel in self._code_output_panels.values():
             panel.apply_theme(dark_mode, reading_mode)
@@ -2826,21 +3292,50 @@ class ScientificNoteEditor(QTextEdit):
     def _serialize_block_to_md(self, block) -> str:
         kind = block.blockFormat().property(PROP_BLOCK_KIND)
         # Controlla se il blocco contiene immagini LaTeX renderizzate (PROP_LATEX_SOURCE)
+        # e serializza eventuali span inline evidenziati/colorati coalescendo frammenti contigui.
         parts: List[str] = []
+        run_txt: List[str] = []
+        run_hl: str = ""
+        run_col: str = ""
+
+        def _flush_run():
+            if not run_txt:
+                return
+            chunk = "".join(run_txt)
+            run_txt.clear()
+            if run_col:
+                chunk = f'<span style="color:{run_col}">{chunk}</span>'
+            if run_hl:
+                if run_hl.upper() == "#FDE047" and "==" not in chunk:
+                    chunk = f"=={chunk}=="
+                else:
+                    chunk = f'<mark data-color="{run_hl}">{chunk}</mark>'
+            parts.append(chunk)
+
         fit = block.begin()
         while not fit.atEnd():
             frag = fit.fragment()
             if frag.isValid():
                 cf = frag.charFormat()
                 if cf.hasProperty(PROP_LATEX_SOURCE):
+                    _flush_run()
+                    run_hl = ""
+                    run_col = ""
                     tex_src = str(cf.property(PROP_LATEX_SOURCE) or "").strip()
                     if tex_src:
                         parts.append(f"$$\n{tex_src}\n$$")
                 else:
                     t = frag.text().replace("\ufffc", "")
                     if t:
-                        parts.append(t)
+                        hl_hex = str(cf.property(PROP_INLINE_HIGHLIGHT) or "").strip()
+                        col_hex = str(cf.property(PROP_INLINE_COLOR) or "").strip()
+                        if run_txt and (hl_hex != run_hl or col_hex != run_col):
+                            _flush_run()
+                        run_hl = hl_hex
+                        run_col = col_hex
+                        run_txt.append(t)
             fit += 1
+        _flush_run()
         txt = "".join(parts)
 
         if kind == "h1":
@@ -2859,6 +3354,9 @@ class ScientificNoteEditor(QTextEdit):
             return f"> [!NOTE] {txt}" if txt else "> [!NOTE]"
         if kind == "quote":
             return f"> {txt}"
+        if kind == "bullet":
+            indent_lvl = max(0, min(4, int(block.blockFormat().property(PROP_BULLET_INDENT) or 0)))
+            return f"{'  ' * indent_lvl}- {txt}"
         if kind == "todo":
             checked = bool(block.blockFormat().property(PROP_TODO_CHECKED))
             indent_lvl = int(block.blockFormat().property(PROP_TODO_INDENT) or 0)
@@ -3079,9 +3577,19 @@ class ScientificNoteEditor(QTextEdit):
                 i += 1
                 continue
 
+            # 6b. Blocco Elenco Puntato (- testo / * testo, escludendo divisori --- / ***)
+            if not re.match(r"^(?:-{3,}|\*{3,}|_{3,})$", stripped):
+                bullet_m = re.match(r"^(\s*)[-*•]\s+(.*)$", line)
+                if bullet_m:
+                    _ensure_new_block()
+                    indent_lvl = min(4, len(bullet_m.group(1).replace("\t", "  ")) // 2)
+                    self._apply_bullet_block_at_cursor(cursor, bullet_m.group(2), indent_level=indent_lvl)
+                    i += 1
+                    continue
+
             # 7. Testo normale + eventuale anteprima immagine inline
             _ensure_new_block()
-            cursor.insertText(line, QTextCharFormat())
+            self._insert_inline_formatted_text(cursor, line)
             img_m = re.match(r"^!\[(.*?)\]\((.+?)\)\s*$", stripped)
             if img_m:
                 rel_or_abs = img_m.group(2).strip()
@@ -3199,6 +3707,48 @@ class ScientificNoteEditor(QTextEdit):
         fmt.setToolTip("Doppio clic per modificare la matrice / formula")
         cursor.insertImage(fmt)
 
+    @staticmethod
+    def _parse_inline_markup_runs(raw_text: str, cur_hl: str = "", cur_col: str = "") -> List[Tuple[str, str, str]]:
+        runs: List[Tuple[str, str, str]] = []
+        pos = 0
+        for m in _INLINE_MARKUP_RE.finditer(raw_text or ""):
+            if m.start() > pos:
+                runs.append((raw_text[pos:m.start()], cur_hl, cur_col))
+            if m.group(2) is not None:
+                hl_val = (m.group(1) or "#FDE047").upper()
+                runs.extend(ScientificNoteEditor._parse_inline_markup_runs(m.group(2), hl_val, cur_col))
+            elif m.group(3) is not None:
+                runs.extend(ScientificNoteEditor._parse_inline_markup_runs(m.group(3), "#FDE047", cur_col))
+            elif m.group(4) is not None and m.group(5) is not None:
+                runs.extend(ScientificNoteEditor._parse_inline_markup_runs(m.group(5), cur_hl, m.group(4).upper()))
+            pos = m.end()
+        if pos < len(raw_text or ""):
+            runs.append((raw_text[pos:], cur_hl, cur_col))
+        return runs
+
+    def _insert_inline_formatted_text(
+        self,
+        cursor: QTextCursor,
+        text: str,
+        base_fmt: Optional[QTextCharFormat] = None,
+    ):
+        base = QTextCharFormat(base_fmt) if base_fmt is not None else QTextCharFormat()
+        if not text:
+            cursor.setCharFormat(base)
+            return
+        for chunk, hl_hex, col_hex in self._parse_inline_markup_runs(text):
+            if not chunk:
+                continue
+            cf = QTextCharFormat(base)
+            if hl_hex:
+                cf.setProperty(PROP_INLINE_HIGHLIGHT, hl_hex)
+                cf.setBackground(_highlight_brush_for_hex(hl_hex, self._dark_mode))
+            if col_hex:
+                cf.setProperty(PROP_INLINE_COLOR, col_hex)
+                cf.setForeground(QColor(col_hex))
+            cursor.insertText(chunk, cf)
+        cursor.setCharFormat(base)
+
     def _apply_quote_block_at_cursor(self, cursor: QTextCursor, text: str = ""):
         bf = QTextBlockFormat()
         bf.setLeftMargin(18)
@@ -3212,7 +3762,7 @@ class ScientificNoteEditor(QTextEdit):
         cf.setForeground(QColor("#E2E8F0" if self._dark_mode else "#334155"))
         cursor.setCharFormat(cf)
         if text:
-            cursor.insertText(text, cf)
+            self._insert_inline_formatted_text(cursor, text, base_fmt=cf)
 
     def _apply_callout_block_at_cursor(self, cursor: QTextCursor, text: str = ""):
         bf = QTextBlockFormat()
@@ -3228,7 +3778,7 @@ class ScientificNoteEditor(QTextEdit):
         cf.setForeground(QColor("#E2E8F0" if self._dark_mode else "#1E293B"))
         cursor.setCharFormat(cf)
         if text:
-            cursor.insertText(text, cf)
+            self._insert_inline_formatted_text(cursor, text, base_fmt=cf)
 
     def _apply_ai_note_block_at_cursor(
         self,
@@ -3313,13 +3863,290 @@ class ScientificNoteEditor(QTextEdit):
         cursor.setBlockCharFormat(txt_fmt)
         cursor.setCharFormat(txt_fmt)
         if text:
-            cursor.insertText(text, txt_fmt)
+            if checked:
+                cursor.insertText(text, txt_fmt)
+            else:
+                self._insert_inline_formatted_text(cursor, text, base_fmt=txt_fmt)
         elif not checked and cursor.block().text():
             # Se il blocco appena creato contiene testo splittato da un to-do barrato, ripulisce lo strikeout
             clean_c = QTextCursor(cursor.block())
             clean_c.movePosition(QTextCursor.MoveOperation.StartOfBlock)
             clean_c.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
             clean_c.setCharFormat(txt_fmt)
+
+    def _bullet_left_margin(self, indent_level: int = 0) -> float:
+        lvl = max(0, min(4, int(indent_level or 0)))
+        return 28.0 + lvl * 22.0
+
+    def _apply_bullet_block_at_cursor(
+        self,
+        cursor: QTextCursor,
+        text: str = "",
+        indent_level: int = 0,
+    ):
+        lvl = max(0, min(4, int(indent_level or 0)))
+        bf = QTextBlockFormat()
+        bf.setTopMargin(3)
+        bf.setBottomMargin(3)
+        bf.setLeftMargin(self._bullet_left_margin(lvl))
+        bf.setProperty(PROP_BLOCK_KIND, "bullet")
+        bf.setProperty(PROP_BULLET_INDENT, lvl)
+        cursor.setBlockFormat(bf)
+        cursor.block().setUserData(BlockUserData("bullet"))
+
+        clean_cf = QTextCharFormat()
+        clean_cf.setFontStrikeOut(False)
+        clean_cf.clearForeground()
+        cursor.setBlockCharFormat(clean_cf)
+        cursor.setCharFormat(clean_cf)
+        if text:
+            self._insert_inline_formatted_text(cursor, text, base_fmt=clean_cf)
+
+    def _set_bullet_indent(self, block, delta: int) -> bool:
+        """Aumenta o riduce il livello di indentazione (0..4) di una voce elenco."""
+        if not block.isValid() or block.blockFormat().property(PROP_BLOCK_KIND) != "bullet":
+            return False
+        bf = block.blockFormat()
+        cur_lvl = int(bf.property(PROP_BULLET_INDENT) or 0)
+        new_lvl = max(0, min(4, cur_lvl + int(delta)))
+        if new_lvl == cur_lvl:
+            return False
+        bf.setProperty(PROP_BULLET_INDENT, new_lvl)
+        bf.setLeftMargin(self._bullet_left_margin(new_lvl))
+        self._internal_update = True
+        try:
+            c = QTextCursor(block)
+            c.setBlockFormat(bf)
+        finally:
+            self._internal_update = False
+        self.viewport().update()
+        self._on_internal_text_changed()
+        return True
+
+    def toggle_bullet_list(self):
+        """Attiva/disattiva l'elenco puntato sul blocco corrente o sui blocchi selezionati."""
+        if self._is_studio_view:
+            return
+        cur = self.textCursor()
+        doc = self.document()
+        s_pos = min(cur.selectionStart(), cur.selectionEnd())
+        e_pos = max(cur.selectionStart(), cur.selectionEnd())
+        start_blk = doc.findBlock(s_pos)
+        end_blk = doc.findBlock(max(s_pos, e_pos - 1 if e_pos > s_pos else e_pos))
+        if not start_blk.isValid():
+            return
+
+        blocks = []
+        b = start_blk
+        while b.isValid():
+            blocks.append(b)
+            if b == end_blk:
+                break
+            b = b.next()
+
+        all_bullets = all(blk.blockFormat().property(PROP_BLOCK_KIND) == "bullet" for blk in blocks)
+        cur.beginEditBlock()
+        for blk in blocks:
+            bc = QTextCursor(blk)
+            if all_bullets:
+                bc.setBlockFormat(QTextBlockFormat())
+                bc.setBlockCharFormat(QTextCharFormat())
+                blk.setUserData(None)
+            else:
+                self._apply_bullet_block_at_cursor(bc, text="", indent_level=0)
+        cur.endEditBlock()
+        self.viewport().update()
+        self._on_internal_text_changed()
+
+    def _resolve_selection_range(self, sel_range: Optional[Tuple[int, int]] = None) -> Optional[Tuple[int, int]]:
+        if sel_range is not None:
+            s, e = int(sel_range[0]), int(sel_range[1])
+            if e > s:
+                return (s, e)
+        cur = self.textCursor()
+        if cur.hasSelection() and cur.selectedText().strip():
+            return (min(cur.selectionStart(), cur.selectionEnd()), max(cur.selectionStart(), cur.selectionEnd()))
+        if self._saved_selection_range is not None:
+            s, e = self._saved_selection_range
+            doc_max = max(0, self.document().characterCount() - 1)
+            s = max(0, min(s, doc_max))
+            e = max(0, min(e, doc_max))
+            if e > s:
+                return (s, e)
+        return None
+
+    def toggle_bold_selection(self, sel_range: Optional[Tuple[int, int]] = None):
+        """Avvolge o rimuove **...** attorno al testo selezionato preservando altri formati inline."""
+        if self._is_studio_view:
+            return
+        rng = self._resolve_selection_range(sel_range)
+        if rng is None:
+            return
+        s_pos, e_pos = rng
+        doc = self.document()
+        c = QTextCursor(doc)
+        c.setPosition(s_pos)
+        c.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+        sel_txt = c.selectedText()
+        if not sel_txt.strip():
+            return
+
+        c.beginEditBlock()
+        # Controlla se è già avvolto dentro la selezione (**testo**) o subito fuori (** + selezione + **)
+        max_pos = max(0, doc.characterCount() - 1)
+        surrounded = False
+        if s_pos >= 2 and e_pos + 2 <= max_pos:
+            before_c = QTextCursor(doc)
+            before_c.setPosition(s_pos - 2)
+            before_c.setPosition(s_pos, QTextCursor.MoveMode.KeepAnchor)
+            after_c = QTextCursor(doc)
+            after_c.setPosition(e_pos)
+            after_c.setPosition(e_pos + 2, QTextCursor.MoveMode.KeepAnchor)
+            surrounded = (before_c.selectedText() == "**" and after_c.selectedText() == "**")
+
+        if surrounded:
+            rm_after = QTextCursor(doc)
+            rm_after.setPosition(e_pos)
+            rm_after.setPosition(e_pos + 2, QTextCursor.MoveMode.KeepAnchor)
+            rm_after.removeSelectedText()
+            rm_before = QTextCursor(doc)
+            rm_before.setPosition(s_pos - 2)
+            rm_before.setPosition(s_pos, QTextCursor.MoveMode.KeepAnchor)
+            rm_before.removeSelectedText()
+            new_s, new_e = s_pos - 2, e_pos - 2
+        elif sel_txt.startswith("**") and sel_txt.endswith("**") and len(sel_txt) > 4:
+            rm_end = QTextCursor(doc)
+            rm_end.setPosition(e_pos - 2)
+            rm_end.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+            rm_end.removeSelectedText()
+            rm_start = QTextCursor(doc)
+            rm_start.setPosition(s_pos)
+            rm_start.setPosition(s_pos + 2, QTextCursor.MoveMode.KeepAnchor)
+            rm_start.removeSelectedText()
+            new_s, new_e = s_pos, e_pos - 4
+        else:
+            ins_end = QTextCursor(doc)
+            ins_end.setPosition(e_pos)
+            ins_end.insertText("**", QTextCharFormat())
+            ins_start = QTextCursor(doc)
+            ins_start.setPosition(s_pos)
+            ins_start.insertText("**", QTextCharFormat())
+            new_s, new_e = s_pos, e_pos + 4
+
+        c.endEditBlock()
+        sel_cur = QTextCursor(doc)
+        sel_cur.setPosition(max(0, new_s))
+        sel_cur.setPosition(max(0, new_e), QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(sel_cur)
+        self._saved_selection_range = (new_s, new_e)
+        self._on_internal_text_changed()
+
+    def _set_inline_char_property_on_range(self, s_pos: int, e_pos: int, prop_id: int, value: Optional[str]):
+        """Imposta o rimuove una proprietà inline (evidenziazione o colore) preservando le altre proprietà."""
+        doc = self.document()
+        blk = doc.findBlock(s_pos)
+        clean_val = (value or "").strip().upper()
+        cur = QTextCursor(doc)
+        cur.beginEditBlock()
+        while blk.isValid() and blk.position() < e_pos:
+            slices: List[Tuple[int, int, QTextCharFormat]] = []
+            fit = blk.begin()
+            while not fit.atEnd():
+                frag = fit.fragment()
+                if frag.isValid():
+                    fs = max(s_pos, frag.position())
+                    fe = min(e_pos, frag.position() + frag.length())
+                    if fe > fs:
+                        cf = QTextCharFormat(frag.charFormat())
+                        if prop_id == PROP_INLINE_HIGHLIGHT:
+                            if clean_val:
+                                cf.setProperty(PROP_INLINE_HIGHLIGHT, clean_val)
+                                cf.setBackground(_highlight_brush_for_hex(clean_val, self._dark_mode))
+                            else:
+                                cf.clearProperty(PROP_INLINE_HIGHLIGHT)
+                                cf.clearBackground()
+                        elif prop_id == PROP_INLINE_COLOR:
+                            if clean_val:
+                                cf.setProperty(PROP_INLINE_COLOR, clean_val)
+                                cf.setForeground(QColor(clean_val))
+                            else:
+                                cf.clearProperty(PROP_INLINE_COLOR)
+                                cf.clearForeground()
+                        slices.append((fs, fe, cf))
+                fit += 1
+            for fs, fe, cf in slices:
+                sc = QTextCursor(doc)
+                sc.setPosition(fs)
+                sc.setPosition(fe, QTextCursor.MoveMode.KeepAnchor)
+                sc.setCharFormat(cf)
+            blk = blk.next()
+        cur.endEditBlock()
+
+    def _range_has_uniform_inline_property(self, s_pos: int, e_pos: int, prop_id: int, expected_val: str) -> bool:
+        doc = self.document()
+        blk = doc.findBlock(s_pos)
+        found_any = False
+        target = expected_val.strip().upper()
+        while blk.isValid() and blk.position() < e_pos:
+            fit = blk.begin()
+            while not fit.atEnd():
+                frag = fit.fragment()
+                if frag.isValid():
+                    fs = max(s_pos, frag.position())
+                    fe = min(e_pos, frag.position() + frag.length())
+                    if fe > fs and frag.text().strip():
+                        found_any = True
+                        cur_val = str(frag.charFormat().property(prop_id) or "").strip().upper()
+                        if cur_val != target:
+                            return False
+                fit += 1
+            blk = blk.next()
+        return found_any
+
+    def apply_highlight_selection(self, hex_color: Optional[str], sel_range: Optional[Tuple[int, int]] = None):
+        """Applica o rimuove l'evidenziatore inline sul testo selezionato."""
+        if self._is_studio_view:
+            return
+        rng = self._resolve_selection_range(sel_range)
+        if rng is None:
+            return
+        s_pos, e_pos = rng
+        clean_hex = (hex_color or "").strip().upper()
+        if clean_hex and self._range_has_uniform_inline_property(s_pos, e_pos, PROP_INLINE_HIGHLIGHT, clean_hex):
+            clean_hex = ""
+        self._set_inline_char_property_on_range(s_pos, e_pos, PROP_INLINE_HIGHLIGHT, clean_hex)
+        sel_cur = QTextCursor(self.document())
+        sel_cur.setPosition(s_pos)
+        sel_cur.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(sel_cur)
+        self.highlighter.rehighlightBlock(self.document().findBlock(s_pos))
+        blk = self.document().findBlock(s_pos).next()
+        while blk.isValid() and blk.position() < e_pos:
+            self.highlighter.rehighlightBlock(blk)
+            blk = blk.next()
+        self._on_internal_text_changed()
+
+    def apply_text_color_selection(self, hex_color: Optional[str], sel_range: Optional[Tuple[int, int]] = None):
+        """Applica o rimuove il colore del testo inline sulla selezione."""
+        if self._is_studio_view:
+            return
+        rng = self._resolve_selection_range(sel_range)
+        if rng is None:
+            return
+        s_pos, e_pos = rng
+        clean_hex = (hex_color or "").strip().upper()
+        if clean_hex and self._range_has_uniform_inline_property(s_pos, e_pos, PROP_INLINE_COLOR, clean_hex):
+            clean_hex = ""
+        self._set_inline_char_property_on_range(s_pos, e_pos, PROP_INLINE_COLOR, clean_hex)
+        sel_cur = QTextCursor(self.document())
+        sel_cur.setPosition(s_pos)
+        sel_cur.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(sel_cur)
+        blk = self.document().findBlock(s_pos)
+        while blk.isValid() and blk.position() < e_pos:
+            self.highlighter.rehighlightBlock(blk)
+            blk = blk.next()
+        self._on_internal_text_changed()
 
     def _insert_code_frame_at_cursor(
         self,
@@ -3465,12 +4292,27 @@ class ScientificNoteEditor(QTextEdit):
                         if code_id and code_id in self._code_output_panels:
                             visible_code_panel_rects[code_id] = draw_rect
 
-        # 2. Disegna barra verticale Quote (3px), Callout, File, AI Note, Checkbox To-Do
+        # 2. Disegna barra verticale Quote (3px), Callout, File, AI Note, Checkbox To-Do, Pallini Elenco
         pending_todo_boxes: List[Tuple[QRectF, QRectF, bool, int]] = []
+        pending_bullet_dots: List[Tuple[float, float, int]] = []
         block = self.document().begin()
         while block.isValid():
             kind = block.blockFormat().property(PROP_BLOCK_KIND)
-            if kind == "todo":
+            if kind == "bullet":
+                b_rect = doc_layout.blockBoundingRect(block).translated(hx, vy)
+                if b_rect.bottom() >= -10 and b_rect.top() <= vp_rect.height() + 10:
+                    bf = block.blockFormat()
+                    indent_lvl = int(bf.property(PROP_BULLET_INDENT) or 0)
+                    left_m = float(bf.leftMargin() or 28.0)
+                    doc_m = float(self.document().documentMargin() or 0.0)
+                    line_h = b_rect.height()
+                    blk_lay = block.layout()
+                    if blk_lay is not None and blk_lay.lineCount() > 0:
+                        line_h = float(blk_lay.lineAt(0).height() or line_h)
+                    cx = hx + doc_m + max(7.0, left_m - 13.0)
+                    cy = b_rect.top() + line_h / 2.0
+                    pending_bullet_dots.append((cx, cy, indent_lvl))
+            elif kind == "todo":
                 b_rect = doc_layout.blockBoundingRect(block).translated(hx, vy)
                 if b_rect.bottom() >= -10 and b_rect.top() <= vp_rect.height() + 10:
                     bf = block.blockFormat()
@@ -3683,6 +4525,22 @@ class ScientificNoteEditor(QTextEdit):
                         Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
                         preview["ghost_text"],
                     )
+
+        # 4b-bis. Disegna pallini vettoriali nel margine sinistro dei blocchi Elenco Puntato
+        bullet_col = QColor("#94A3B8" if self._dark_mode else "#475569")
+        for cx, cy, indent_lvl in pending_bullet_dots:
+            if indent_lvl <= 0:
+                fg_painter.setPen(Qt.PenStyle.NoPen)
+                fg_painter.setBrush(QBrush(bullet_col))
+                fg_painter.drawEllipse(QPointF(cx, cy), 2.6, 2.6)
+            elif indent_lvl == 1:
+                fg_painter.setPen(QPen(bullet_col, 1.3))
+                fg_painter.setBrush(Qt.BrushStyle.NoBrush)
+                fg_painter.drawEllipse(QPointF(cx, cy), 2.5, 2.5)
+            else:
+                fg_painter.setPen(Qt.PenStyle.NoPen)
+                fg_painter.setBrush(QBrush(bullet_col))
+                fg_painter.drawRoundedRect(QRectF(cx - 2.2, cy - 2.2, 4.4, 4.4), 1.0, 1.0)
 
         # 4b. Disegna checkbox vettoriali interattive nel margine sinistro dei blocchi To-Do
         for box_rect, hit_rect, checked, blk_num in pending_todo_boxes:
@@ -3943,6 +4801,10 @@ class ScientificNoteEditor(QTextEdit):
         if not cur.hasSelection() or not cur.selectedText().strip():
             self._selection_toolbar.hide()
             return
+        self._saved_selection_range = (
+            min(cur.selectionStart(), cur.selectionEnd()),
+            max(cur.selectionStart(), cur.selectionEnd()),
+        )
         # Posiziona la toolbar fluttuante sopra l'inizio (o fine) della selezione
         start_cur = QTextCursor(self.document())
         start_cur.setPosition(min(cur.selectionStart(), cur.selectionEnd()))
@@ -3958,6 +4820,150 @@ class ScientificNoteEditor(QTextEdit):
         self._selection_toolbar.move(tx, ty)
         self._selection_toolbar.show()
         self._selection_toolbar.raise_()
+
+    def _capture_current_selection_range(self):
+        cur = self.textCursor()
+        if cur.hasSelection() and cur.selectedText().strip():
+            self._saved_selection_range = (
+                min(cur.selectionStart(), cur.selectionEnd()),
+                max(cur.selectionStart(), cur.selectionEnd()),
+            )
+
+    def _on_selection_highlight_clicked(self, hex_color: str):
+        self.apply_highlight_selection(hex_color or None)
+        self._selection_toolbar.hide()
+
+    def _on_selection_color_clicked(self, hex_color: str):
+        self.apply_text_color_selection(hex_color or None)
+        self._selection_toolbar.hide()
+
+    def _on_selection_ai_correct_clicked(self):
+        if self._is_studio_view:
+            return
+        rng = self._resolve_selection_range()
+        if rng is None:
+            return
+        s_pos, e_pos = rng
+        c = QTextCursor(self.document())
+        c.setPosition(s_pos)
+        c.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+        orig_text = c.selectedText().replace("\u2029", "\n")
+        if not orig_text.strip():
+            return
+
+        self._selection_toolbar.hide()
+        self._show_discrete_toast("✦ Correzione AI in corso...", duration_ms=8000)
+
+        worker = _SelectionAiCorrectWorker(s_pos, e_pos, orig_text, parent=self)
+        self._bg_workers.append(worker)
+        worker.finished_result.connect(self._on_selection_ai_correct_finished, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(lambda w=worker: self._cleanup_worker(self._bg_workers, w))
+        worker.start()
+
+    def _on_selection_ai_correct_finished(
+        self,
+        start_pos: int,
+        end_pos: int,
+        original_text: str,
+        corrected_text: str,
+        error_msg: str,
+    ):
+        if error_msg or not corrected_text.strip():
+            self._show_discrete_toast(error_msg or "Impossibile correggere il testo selezionato.")
+            return
+
+        doc = self.document()
+        max_pos = max(0, doc.characterCount() - 1)
+        if start_pos < 0 or end_pos > max_pos or start_pos >= end_pos:
+            self._show_discrete_toast("Testo modificato durante la correzione: operazione annullata.")
+            return
+
+        chk = QTextCursor(doc)
+        chk.setPosition(start_pos)
+        chk.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
+        current_slice = chk.selectedText().replace("\u2029", "\n")
+        if current_slice != original_text:
+            self._show_discrete_toast("Testo modificato durante la correzione: operazione annullata.")
+            return
+
+        chk.beginEditBlock()
+        chk.removeSelectedText()
+        chk.insertText(corrected_text, QTextCharFormat())
+        chk.endEditBlock()
+        new_cur = QTextCursor(doc)
+        new_cur.setPosition(start_pos)
+        new_cur.setPosition(start_pos + len(corrected_text), QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(new_cur)
+        self._on_internal_text_changed()
+        self._show_discrete_toast("✓ Testo corretto con AI (Ctrl+Z per annullare)")
+
+    def _on_selection_link_note_clicked(self):
+        if self._is_studio_view:
+            return
+        rng = self._resolve_selection_range()
+        if rng is None:
+            return
+        s_pos, e_pos = rng
+        c = QTextCursor(self.document())
+        c.setPosition(s_pos)
+        c.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+        sel_text = c.selectedText().replace("\u2029", " ").strip()
+        if not sel_text:
+            return
+
+        self._pending_link_range = (s_pos, e_pos)
+        self._pending_link_text = sel_text
+        self._selection_toolbar.hide()
+
+        start_cur = QTextCursor(self.document())
+        start_cur.setPosition(s_pos)
+        rect = self.cursorRect(start_cur)
+        global_pt = self.viewport().mapToGlobal(QPoint(rect.left(), rect.bottom() + 6))
+        screen = QApplication.screenAt(global_pt) or QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            if global_pt.x() + self._link_picker_popup.width() > avail.right():
+                global_pt.setX(max(avail.left(), avail.right() - self._link_picker_popup.width() - 8))
+            if global_pt.y() + 260 > avail.bottom():
+                above_pt = self.viewport().mapToGlobal(QPoint(rect.left(), rect.top()))
+                global_pt.setY(max(avail.top(), above_pt.y() - 260))
+        self._link_picker_popup.move(global_pt)
+        self._link_picker_popup.open_for_query(sel_text)
+
+    def _on_link_picker_note_chosen(self, chosen_title: str):
+        clean_t = (chosen_title or "").strip()
+        rng = self._pending_link_range
+        sel_text = (self._pending_link_text or "").strip()
+        self._pending_link_range = None
+        self._pending_link_text = ""
+        if not clean_t or rng is None:
+            return
+
+        s_pos, e_pos = rng
+        doc = self.document()
+        max_pos = max(0, doc.characterCount() - 1)
+        if s_pos < 0 or e_pos > max_pos or s_pos >= e_pos:
+            return
+
+        c = QTextCursor(doc)
+        c.beginEditBlock()
+        s_low = sel_text.lower()
+        t_low = clean_t.lower()
+        replace_entire = (s_low == t_low) or (
+            len(s_low) >= 3 and (s_low in t_low or t_low in s_low) and abs(len(s_low) - len(t_low)) <= 12
+        )
+        if replace_entire:
+            c.setPosition(s_pos)
+            c.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+            c.removeSelectedText()
+            c.insertText(f"[[{clean_t}]]", QTextCharFormat())
+        else:
+            c.setPosition(e_pos)
+            c.insertText(f" [[{clean_t}]]", QTextCharFormat())
+        c.endEditBlock()
+        self.setTextCursor(c)
+        self.setFocus()
+        self._on_internal_text_changed()
 
     def _on_selection_rsvp_clicked(self):
         cur = self.textCursor()
@@ -4762,7 +5768,7 @@ class ScientificNoteEditor(QTextEdit):
 
         block_commands = {
             "/formula", "/matrice", "/matrix", "/tabella", "/quote", "/callout",
-            "/todo", "/h1", "/h2", "/h3", "/code", "/bibtex", "/file",
+            "/todo", "/elenco", "/h1", "/h2", "/h3", "/code", "/bibtex", "/file",
         }
         if cmd in block_commands and cursor.block().text().strip() != "":
             cursor.insertBlock()
@@ -4787,6 +5793,9 @@ class ScientificNoteEditor(QTextEdit):
             self.setTextCursor(cursor)
         elif cmd == "/todo":
             self._apply_todo_block_at_cursor(cursor, "", checked=False)
+            self.setTextCursor(cursor)
+        elif cmd == "/elenco":
+            self._apply_bullet_block_at_cursor(cursor, "", indent_level=0)
             self.setTextCursor(cursor)
         elif cmd == "/code":
             self._insert_code_frame_at_cursor(cursor, "", lang="python")
@@ -4872,6 +5881,18 @@ class ScientificNoteEditor(QTextEdit):
         if self._is_studio_view:
             super().keyPressEvent(event)
             return
+
+        # 0-pre. Scorciatoia Grassetto rapido (Ctrl+B)
+        if (
+            key == Qt.Key.Key_B
+            and (mods & Qt.KeyboardModifier.ControlModifier)
+            and not (mods & Qt.KeyboardModifier.AltModifier)
+            and not (mods & Qt.KeyboardModifier.ShiftModifier)
+        ):
+            if self.textCursor().hasSelection():
+                self.toggle_bold_selection()
+                event.accept()
+                return
 
         # 0. Scorciatoia Play/Pausa Audio-Sync (Ctrl+Spazio) nelle sbobine
         if self._audio_sync_active and key == Qt.Key.Key_Space and (mods & Qt.KeyboardModifier.ControlModifier):
@@ -5052,16 +6073,33 @@ class ScientificNoteEditor(QTextEdit):
                     self.setTextCursor(exit_cur)
                 return
 
-        # 3b. Indentazione Tab / Shift+Tab nei blocchi To-Do
+        # 3b. Indentazione Tab / Shift+Tab nei blocchi To-Do ed Elenco Puntato
         block = cursor.block()
         b_kind = block.blockFormat().property(PROP_BLOCK_KIND)
-        if b_kind == "todo" and key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab) and not self.slash_popup.isVisible():
+        if b_kind in ("todo", "bullet") and key in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab) and not self.slash_popup.isVisible():
             is_back = (key == Qt.Key.Key_Backtab) or bool(mods & Qt.KeyboardModifier.ShiftModifier)
-            self._set_todo_indent(block, -1 if is_back else 1)
+            if b_kind == "todo":
+                self._set_todo_indent(block, -1 if is_back else 1)
+            else:
+                self._set_bullet_indent(block, -1 if is_back else 1)
             return
 
-        # 3c. Backspace all'inizio di un blocco speciale vuoto -> elimina il blocco / torna a paragrafo
+        # 3c. Backspace all'inizio di un blocco speciale -> de-indenta / torna a paragrafo
         if key == Qt.Key.Key_Backspace and not cursor.hasSelection() and b_kind:
+            if b_kind == "bullet" and cursor.atBlockStart():
+                cur_lvl = int(block.blockFormat().property(PROP_BULLET_INDENT) or 0)
+                if cur_lvl > 0:
+                    self._set_bullet_indent(block, -1)
+                    return
+                cursor.beginEditBlock()
+                cursor.setBlockFormat(QTextBlockFormat())
+                cursor.setCharFormat(QTextCharFormat())
+                block.setUserData(None)
+                cursor.endEditBlock()
+                self.setTextCursor(cursor)
+                self.viewport().update()
+                self._on_internal_text_changed()
+                return
             if b_kind == "todo" and cursor.atBlockStart():
                 cur_lvl = int(block.blockFormat().property(PROP_TODO_INDENT) or 0)
                 if cur_lvl > 0:
@@ -5090,8 +6128,35 @@ class ScientificNoteEditor(QTextEdit):
                     self._on_internal_text_changed()
                 return
 
-        # 4. Invio in blocco To-Do, Quote, Callout, Heading, File, AI Note (garantendo reset colore su testo normale!)
+        # 4. Invio in blocco To-Do, Elenco, Quote, Callout, Heading, File, AI Note
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (mods & Qt.KeyboardModifier.ShiftModifier):
+            if b_kind == "bullet":
+                b_txt = block.text().strip()
+                clean_fmt = QTextCharFormat()
+                clean_fmt.setFontStrikeOut(False)
+                clean_fmt.clearForeground()
+                if b_txt == "":
+                    cursor.beginEditBlock()
+                    cursor.setBlockFormat(QTextBlockFormat())
+                    cursor.setBlockCharFormat(clean_fmt)
+                    cursor.setCharFormat(clean_fmt)
+                    block.setUserData(None)
+                    cursor.endEditBlock()
+                    self.setTextCursor(cursor)
+                    self.setCurrentCharFormat(clean_fmt)
+                    self.viewport().update()
+                    self._on_internal_text_changed()
+                    return
+                else:
+                    cur_lvl = int(block.blockFormat().property(PROP_BULLET_INDENT) or 0)
+                    cursor.beginEditBlock()
+                    cursor.insertBlock()
+                    self._apply_bullet_block_at_cursor(cursor, "", indent_level=cur_lvl)
+                    cursor.endEditBlock()
+                    self.setTextCursor(cursor)
+                    self.setCurrentCharFormat(clean_fmt)
+                    self.viewport().update()
+                    return
             if b_kind == "todo":
                 b_txt = block.text().strip()
                 clean_fmt = QTextCharFormat()
@@ -5153,6 +6218,15 @@ class ScientificNoteEditor(QTextEdit):
                 cursor.removeSelectedText()
                 self._apply_quote_block_at_cursor(cursor, "")
                 self.setTextCursor(cursor)
+                return
+            if before_txt in ("-", "*"):
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, 1)
+                cursor.removeSelectedText()
+                self._apply_bullet_block_at_cursor(cursor, "", indent_level=0)
+                self.setTextCursor(cursor)
+                self.viewport().update()
+                self._on_internal_text_changed()
                 return
             if before_txt == "[]":
                 cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
