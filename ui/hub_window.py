@@ -118,11 +118,17 @@ from ui.theme_widgets import (
     _make_label,
     ScrollList,
     _make_card,
-    OrbBrandBadge,
     ThemeRevealOverlay,
     AuroraDivider,
     SlidingStackedWidget,
     AnimatedSegmentedBox,
+)
+from ui.orb_radial_menu import (
+    InAppVoiceOrbWidget,
+    OrbRadialMenuOverlay,
+    RADIAL_WORLD_ITEMS,
+    TopOrbAnchorWidget,
+    WORLD_BY_KEY,
 )
 from ui.icons import get_icon, get_pixmap, apply_win11_titlebar
 from ui.settings_dialog import HubSettingsDialog, GeminiKeyGuideDialog, GEMINI_AISTUDIO_URL
@@ -366,10 +372,15 @@ class FlowLocalHub(QMainWindow):
         self._sync_editor_typography()
         self._refresh_current_page()
 
-        # Scorciatoia globale Command Palette (Ctrl+K)
+        # Scorciatoia globale Command Palette (Ctrl+K) e cambio rapido mondi (Ctrl+1/2/3)
         self._cmd_palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         self._cmd_palette_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self._cmd_palette_shortcut.activated.connect(self._open_command_palette)
+
+        for seq, target_p in (("Ctrl+1", 1), ("Ctrl+2", 7), ("Ctrl+3", 0)):
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.setContext(Qt.ShortcutContext.WindowShortcut)
+            sc.activated.connect(lambda p=target_p: self._on_nav_clicked(p))
 
         # Sync iniziale e periodico Google Calendar & Cloud Account in background (se connesso)
         QTimer.singleShot(1500, self._startup_google_calendar_sync)
@@ -420,14 +431,47 @@ class FlowLocalHub(QMainWindow):
         self._refresh_system_status_pill()
         if hasattr(self, "_toast_manager"):
             self._toast_manager.reposition()
+        if hasattr(self, "orb_radial_menu"):
+            QTimer.singleShot(0, self.orb_radial_menu.sync_geometry)
+        if hasattr(self, "top_orb"):
+            QTimer.singleShot(0, self.top_orb.sync_geometry)
         if not self._startup_checks_done:
             self._startup_checks_done = True
             QTimer.singleShot(700, self._run_startup_health_checks)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, "orb_radial_menu"):
+            self.orb_radial_menu.sync_geometry()
+        if hasattr(self, "top_orb"):
+            self.top_orb.sync_geometry()
         if hasattr(self, "_toast_manager"):
             self._toast_manager.reposition()
+
+    def get_active_in_app_orb(self) -> Optional[InAppVoiceOrbWidget]:
+        """Restituisce l'unico vero Voice Orb in-app se FlowLocal è visibile e in primo piano."""
+        orb_w = getattr(self, "top_orb", None)
+        if orb_w is None or not self.isVisible() or self.isMinimized():
+            return None
+        try:
+            if QApplication.activeWindow() is self or self.isActiveWindow():
+                return orb_w
+            if sys.platform == "win32":
+                fg_hwnd = int(ctypes.windll.user32.GetForegroundWindow() or 0)
+                if fg_hwnd and fg_hwnd == int(self.winId()):
+                    return orb_w
+        except Exception:
+            pass
+        return None
+
+    def _on_top_orb_clicked(self):
+        if hasattr(self, "top_orb") and self.top_orb.is_dictating():
+            eng = getattr(self, "engine", None)
+            if eng is not None and hasattr(eng, "toggle_recording_click"):
+                eng.toggle_recording_click()
+                return
+        if hasattr(self, "orb_radial_menu"):
+            self.orb_radial_menu.toggle_immediate()
 
     def show_toast(
         self,
@@ -519,18 +563,18 @@ class FlowLocalHub(QMainWindow):
         main_layout.addWidget(self._build_top_bar())
         main_layout.addWidget(self._build_flowtype_subbar())
 
-        # Ordine spaziale direzionale (Top Bar: [0] FlowType -> [1] FlowNotes -> [2] FlowTime -> [3] Whis,
-        # più sub-viste interne Dettatura/Dizionario/Stili e Quaderno/Flashcard/Grafo)
+        # Ordine spaziale direzionale: FlowNotes (home) -> FlowTime (Calendario) -> FlowType (Trascrizione) -> Whis
         self.pages = SlidingStackedWidget(
             duration_ms=280,
             spatial_ranks={
-                0: 0,   # FlowType: Dettatura
-                5: 1,   # FlowType: Dizionario & Snippet
-                6: 2,   # FlowType: Stili & Prompt
-                1: 10,  # FlowNotes: Quaderno
-                2: 11,  # FlowNotes: Flashcard
-                3: 12,  # FlowNotes: Grafo
-                7: 20,  # FlowTime
+                1: 0,   # FlowNotes: Quaderno
+                2: 1,   # FlowNotes: Flashcard
+                3: 2,   # FlowNotes: Grafo
+                8: 3,   # FlowNotes: Focus & Esami
+                7: 10,  # FlowTime: Calendario
+                0: 20,  # FlowType: Trascrizione
+                5: 21,  # FlowType: Dizionario & Snippet
+                6: 22,  # FlowType: Stili & Prompt
                 4: 30,  # Whis
             },
         )
@@ -547,24 +591,51 @@ class FlowLocalHub(QMainWindow):
         self.pages.currentChanged.connect(self._sync_top_nav_state)
         main_layout.addWidget(self.pages, 1)
 
-        self._on_nav_clicked(0)
+        # Ventaglio radiale compatto + UNICO vero Voice Orb in primo piano all'apice
+        self.orb_radial_menu = OrbRadialMenuOverlay(
+            self,
+            anchor_widget=self.top_orb_anchor,
+            theme_key=self._current_theme,
+            is_dark=self._active_is_dark(),
+        )
+        self.top_orb = InAppVoiceOrbWidget(
+            self,
+            anchor_widget=self.top_orb_anchor,
+            is_dark=self._active_is_dark(),
+        )
+        self.in_app_orb_overlay = self.top_orb
+        self.orb_radial_menu.set_top_orb_widget(self.top_orb)
+        self.top_orb.set_radial_menu(self.orb_radial_menu)
+        self.top_orb.raise_()
+
+        self.top_orb_anchor.hoverEntered.connect(lambda: self.top_orb.set_hovered(True))
+        self.top_orb_anchor.hoverEntered.connect(self.orb_radial_menu.schedule_open)
+        self.top_orb_anchor.hoverLeft.connect(lambda: self.top_orb.set_hovered(False))
+        self.top_orb_anchor.hoverLeft.connect(self.orb_radial_menu.schedule_close)
+        self.top_orb_anchor.clicked.connect(self._on_top_orb_clicked)
+        self.orb_radial_menu.worldSelected.connect(self._on_nav_clicked)
+        self.orb_radial_menu.openProgressChanged.connect(self.top_orb.set_menu_open_factor)
+
+        self._active_world_key = "notes"
+        self._on_nav_clicked(1)
 
     def _build_top_bar(self) -> QFrame:
         top_bar = QFrame()
         top_bar.setObjectName("TopNavBar")
-        top_bar.setFixedHeight(52)
+        top_bar.setFixedHeight(56)
 
         layout = QHBoxLayout(top_bar)
-        layout.setContentsMargins(18, 6, 18, 6)
+        layout.setContentsMargins(16, 6, 16, 6)
         layout.setSpacing(10)
 
-        # A sinistra: solo Logo + FlowLocal (contenitore rigido per stabilità del menù centrale)
+        # A sinistra (Ignored + stretch 1 per centrare matematicamente l'Orb): FlowLocal + badge stato
         left_host = QWidget()
+        left_host.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         left_host.setStyleSheet("background: transparent;")
         left_box = QHBoxLayout(left_host)
         left_box.setContentsMargins(0, 0, 0, 0)
         left_box.setSpacing(8)
-        left_box.addWidget(OrbBrandBadge(24))
+
         title = QLabel("FlowLocal")
         title.setObjectName("AppTitle")
         title.setStyleSheet("font-size: 15px; font-weight: 700;")
@@ -577,49 +648,22 @@ class FlowLocalHub(QMainWindow):
         self.system_status_pill.clicked.connect(self._open_diagnostics_dialog)
         left_box.addWidget(self.system_status_pill)
         self._refresh_system_status_pill()
+        left_box.addStretch(1)
 
-        layout.addWidget(left_host)
+        layout.addWidget(left_host, 1)
 
-        layout.addStretch(1)
+        # Centro: segnaposto su cui vive l'unico vero Voice Orb in primo piano
+        self.top_orb_anchor = TopOrbAnchorWidget(size=44, parent=top_bar)
+        layout.addWidget(self.top_orb_anchor, 0, Qt.AlignmentFlag.AlignCenter)
 
-        # Al centro: Segmented Control a 4 pillole con pillola attiva scorrevole (FlowType | FlowNotes | FlowTime | Whis)
-        seg_box = AnimatedSegmentedBox(
-            box_object_name="TopSegmentBox",
-            pill_object_name="TopSlidingPill",
-            duration_ms=280,
-        )
-        self.top_segment_box = seg_box
-        seg_box.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        seg_layout = QHBoxLayout(seg_box)
-        seg_layout.setContentsMargins(4, 3, 4, 3)
-        seg_layout.setSpacing(4)
-
-        self.top_world_group = QButtonGroup(self)
-        self.top_world_group.setExclusive(True)
-
-        self.top_flowtype_btn = ThemedPushButton(" FlowType")
-        self.top_flownotes_btn = ThemedPushButton(" FlowNotes")
-        self.top_flowtime_btn = ThemedPushButton(" FlowTime")
-        self.top_whis_btn = ThemedPushButton(" Whis")
-
-        for idx, (btn, target_page, icon_name) in enumerate([
-            (self.top_flowtype_btn, 0, "mic"),
-            (self.top_flownotes_btn, 1, "notes"),
-            (self.top_flowtime_btn, 7, "calendar"),
-            (self.top_whis_btn, 4, "sparkles"),
-        ]):
-            btn.setObjectName("TopSegmentBtn")
-            btn.setCheckable(True)
-            btn.setIcon(get_icon(icon_name, theme_key=self._current_theme, role="text", size=14))
-            btn.setIconSize(QSize(14, 14))
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.clicked.connect(lambda _c=False, p=target_page: self._on_nav_clicked(p))
-            self.top_world_group.addButton(btn, idx)
-            seg_layout.addWidget(btn)
-            seg_box.register_button(btn)
-
-        layout.addWidget(seg_box)
-        layout.addStretch(1)
+        # A destra (Ignored + stretch 1): Pomodoro pill + Spotify + Whis + Lettura + Profilo + Novità + Impostazioni
+        right_host = QWidget()
+        right_host.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        right_host.setStyleSheet("background: transparent;")
+        right_row = QHBoxLayout(right_host)
+        right_row.setContentsMargins(0, 0, 0, 0)
+        right_row.setSpacing(6)
+        right_row.addStretch(1)
 
         # Mini-pillola Pomodoro attiva in background (visibile solo quando in corso / in pausa)
         self.pomo_top_pill = ThemedPushButton(" 25:00")
@@ -631,19 +675,22 @@ class FlowLocalHub(QMainWindow):
         self.pomo_top_pill.setStyleSheet("padding: 0 10px; font-size: 11px; min-height: 26px; font-weight: 600;")
         self.pomo_top_pill.clicked.connect(self._jump_to_flowtime_focus)
         self.pomo_top_pill.hide()
-        layout.addWidget(self.pomo_top_pill)
-
-        # A destra: Barra Spotify + Modalità Lettura + Badge Profilo Account + Rotellina Impostazioni
-        right_host = QWidget()
-        right_host.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        right_host.setStyleSheet("background: transparent;")
-        right_row = QHBoxLayout(right_host)
-        right_row.setContentsMargins(0, 0, 0, 0)
-        right_row.setSpacing(6)
+        right_row.addWidget(self.pomo_top_pill)
 
         self.spotify_bar = SpotifyMiniBar(self)
         self.spotify_bar.set_theme_mode(self._active_is_dark())
         right_row.addWidget(self.spotify_bar)
+
+        self.top_whis_btn = ThemedPushButton(" Whis")
+        self.top_whis_btn.setObjectName("FilterPill")
+        self.top_whis_btn.setCheckable(True)
+        self.top_whis_btn.setIcon(get_icon("sparkles", theme_key=self._current_theme, role="accent", size=13))
+        self.top_whis_btn.setIconSize(QSize(13, 13))
+        self.top_whis_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.top_whis_btn.setToolTip("Assistente Whis")
+        self.top_whis_btn.setStyleSheet("padding: 0 10px; font-size: 11px; min-height: 26px; font-weight: 600;")
+        self.top_whis_btn.clicked.connect(lambda: self._on_nav_clicked(4))
+        right_row.addWidget(self.top_whis_btn)
 
         self.reading_mode_btn = ThemedPushButton(" Lettura")
         self.reading_mode_btn.setObjectName("FilterPill")
@@ -686,7 +733,7 @@ class FlowLocalHub(QMainWindow):
         self.settings_btn.clicked.connect(self._on_open_settings_clicked)
         right_row.addWidget(self.settings_btn)
 
-        layout.addWidget(right_host)
+        layout.addWidget(right_host, 1)
 
         return top_bar
 
@@ -874,14 +921,22 @@ class FlowLocalHub(QMainWindow):
         if hasattr(self, "flowtype_subbar"):
             self.flowtype_subbar.setVisible(page_idx in (0, 5, 6))
 
-        if page_idx in (0, 5, 6) and hasattr(self, "top_flowtype_btn"):
-            self.top_flowtype_btn.setChecked(True)
-        elif page_idx in (1, 2, 3, 8) and hasattr(self, "top_flownotes_btn"):
-            self.top_flownotes_btn.setChecked(True)
-        elif page_idx == 7 and hasattr(self, "top_flowtime_btn"):
-            self.top_flowtime_btn.setChecked(True)
-        elif page_idx == 4 and hasattr(self, "top_whis_btn"):
-            self.top_whis_btn.setChecked(True)
+        if page_idx in (1, 2, 3, 8):
+            world_key = "notes"
+        elif page_idx == 7:
+            world_key = "calendar"
+        elif page_idx in (0, 5, 6):
+            world_key = "transcription"
+        else:
+            world_key = getattr(self, "_active_world_key", "notes")
+        self._active_world_key = world_key
+
+        if hasattr(self, "top_orb"):
+            self.top_orb.set_active_world(world_key)
+        if hasattr(self, "orb_radial_menu"):
+            self.orb_radial_menu.set_active_world(world_key)
+        if hasattr(self, "top_whis_btn"):
+            self.top_whis_btn.setChecked(page_idx == 4)
 
         if page_idx in self.nav_buttons_by_page:
             self.nav_buttons_by_page[page_idx].setChecked(True)
@@ -966,8 +1021,10 @@ class FlowLocalHub(QMainWindow):
             )
         )
         self._sync_editor_typography()
-        if hasattr(self, "top_segment_box"):
-            QTimer.singleShot(0, self.top_segment_box.sync_pill_geometry)
+        if hasattr(self, "top_orb"):
+            self.top_orb.set_theme(self._current_theme, p_sync, is_dark=is_dark)
+        if hasattr(self, "orb_radial_menu"):
+            self.orb_radial_menu.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "flowtype_subbar") and hasattr(self.flowtype_subbar, "sync_pill_geometry"):
             QTimer.singleShot(0, self.flowtype_subbar.sync_pill_geometry)
         self.setUpdatesEnabled(True)
@@ -1034,8 +1091,10 @@ class FlowLocalHub(QMainWindow):
                 p.get("title") if self._active_is_dark() or self._reading_mode else p.get("card_body"),
                 p.get("muted") or "#94A3B8",
             )
-        if hasattr(self, "top_segment_box"):
-            QTimer.singleShot(0, self.top_segment_box.sync_pill_geometry)
+        if hasattr(self, "top_orb"):
+            self.top_orb.set_theme(self._current_theme, p_sync, is_dark=is_dark)
+        if hasattr(self, "orb_radial_menu"):
+            self.orb_radial_menu.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "flowtype_subbar") and hasattr(self.flowtype_subbar, "sync_pill_geometry"):
             QTimer.singleShot(0, self.flowtype_subbar.sync_pill_geometry)
         self.setUpdatesEnabled(True)
@@ -1047,10 +1106,7 @@ class FlowLocalHub(QMainWindow):
         """Aggiorna le icone vettoriali della UI in base al tema QSS attivo."""
         tkey = getattr(self, "_current_theme", "obsidian")
         pairs = [
-            ("top_flowtype_btn", "mic", "text", 14),
-            ("top_flownotes_btn", "notes", "text", 14),
-            ("top_flowtime_btn", "calendar", "text", 14),
-            ("top_whis_btn", "sparkles", "text", 14),
+            ("top_whis_btn", "sparkles", "accent", 13),
             ("pomo_top_pill", "clock", "accent", 13),
             ("reading_mode_btn", "book", "subtitle", 13),
             ("whats_new_btn", "lightbulb", "subtitle", 15),

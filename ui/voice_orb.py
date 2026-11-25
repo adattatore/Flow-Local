@@ -12,7 +12,7 @@ import time
 import pyperclip
 import numpy as np
 import sounddevice as sd
-from typing import Callable, Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QMenu, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
@@ -167,6 +167,147 @@ def render_orb_icon_pixmap(size: int = 64, active: bool = True) -> QPixmap:
 
     p.end()
     return pixmap
+
+
+def paint_voice_orb_body(
+    painter: QPainter,
+    cx: float,
+    cy: float,
+    *,
+    core_radius: float,
+    levels: np.ndarray,
+    plasma_phase: float,
+    wave_envelope: float,
+    spinner_opacity: float,
+    spinner_angle: float,
+    current_color: QColor,
+    state: str,
+    is_active: bool,
+    is_locked: bool = False,
+    lock_start_time: float = 0.0,
+    orb_scale: float = 1.0,
+    max_wave_height: float = 20.0,
+    flame_pull_vectors: Optional[List[Tuple[float, float]]] = None,
+):
+    """Rendering canonico del Voice Orb (3 fuochi fluidi Catmull-Rom, onde vocali e comete)."""
+    avg_energy = float(np.mean(levels)) if len(levels) > 0 else 0.0
+    num_pts = len(levels) if len(levels) > 0 else 24
+
+    painter.save()
+    if orb_scale < 0.999 or orb_scale > 1.001:
+        painter.translate(cx, cy)
+        painter.scale(orb_scale, orb_scale)
+        painter.translate(-cx, -cy)
+
+    c_p1 = QColor(current_color)
+    c_p2 = QColor("#A855F7") if state != "STUDY_MODE" else QColor("#38BDF8")
+    c_p3 = QColor("#10B981") if state != "QWEN" else QColor("#38BDF8")
+
+    # Piccolo fondo scuro morbido al centro per leggibilità/contrasto su sfondi chiari
+    base_r = core_radius * 1.05
+    base_grad = QRadialGradient(cx, cy, base_r)
+    base_grad.setColorAt(0.0, QColor(8, 10, 16, 215))
+    base_grad.setColorAt(0.70, QColor(8, 10, 16, 150))
+    base_grad.setColorAt(1.0, QColor(8, 10, 16, 0))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(base_grad)
+    painter.drawEllipse(QPointF(cx, cy), base_r, base_r)
+
+    # I 3 fuochi fluidi indipendenti (si dissolvono dolcemente nelle 3 comete durante il caricamento)
+    flame_vis = max(0.0, 1.0 - spinner_opacity)
+    if flame_vis > 0.02:
+        eff_wave_h = max_wave_height * wave_envelope
+        speech_mix = min(1.0, avg_energy * 8.0) if is_active else 0.0
+        wobble_amp = 0.045 * (1.0 - speech_mix)
+        flame_layers = [
+            (c_p1, plasma_phase, 0, 1.00, int(195 * flame_vis)),
+            (c_p2, plasma_phase * 1.35 + 2.1, 8, 0.92, int(185 * flame_vis)),
+            (c_p3, -plasma_phase * 0.9 + 4.2, 16, 0.86, int(175 * flame_vis)),
+        ]
+
+        painter.save()
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+        for f_idx, (f_col, f_ang, band_offset, r_scale, f_alpha) in enumerate(flame_layers):
+            orbit_r = 2.4 * (1.0 - 0.5 * speech_mix)
+            pull_x, pull_y = (0.0, 0.0)
+            if flame_pull_vectors and f_idx < len(flame_pull_vectors):
+                pull_x, pull_y = flame_pull_vectors[f_idx]
+            fx = cx + orbit_r * math.cos(f_ang) + pull_x
+            fy = cy + orbit_r * math.sin(f_ang * 1.15) + pull_y
+
+            f_points = []
+            for i in range(num_pts):
+                theta = (2.0 * math.pi * i) / num_pts - (math.pi / 2.0)
+                raw_lvl = float(levels[(i + band_offset) % num_pts]) if len(levels) > 0 else 0.0
+                lvl = min(1.0, (raw_lvl ** 0.80) * 1.28)
+                wobble = 1.0 + wobble_amp * math.sin(theta * 2.0 + f_ang)
+                r_pt = (core_radius * 0.88 * r_scale * wobble) + (lvl * eff_wave_h * r_scale)
+                f_points.append(QPointF(fx + r_pt * math.cos(theta), fy + r_pt * math.sin(theta)))
+
+            f_path = create_smooth_closed_path(f_points)
+            pull_len = math.hypot(pull_x, pull_y)
+            f_grad = QRadialGradient(fx, fy, core_radius * r_scale + eff_wave_h + 2.0 + pull_len * 0.35)
+            c_hot = QColor(f_col)
+            c_hot.setAlpha(f_alpha)
+            c_mid = QColor(f_col)
+            c_mid.setAlpha(int(f_alpha * 0.72))
+            c_tip = QColor(f_col)
+            c_tip.setAlpha(0)
+            f_grad.setColorAt(0.0, c_hot)
+            f_grad.setColorAt(0.68, c_mid)
+            f_grad.setColorAt(1.0, c_tip)
+
+            painter.setBrush(f_grad)
+            painter.drawPath(f_path)
+        painter.restore()
+
+    # Timer Hands-Free (se bloccato)
+    if is_locked and is_active:
+        elapsed = int(time.time() - lock_start_time)
+        time_str = f"{elapsed // 60:02d}:{elapsed % 60:02d}"
+        painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
+        painter.setPen(QColor("#F8FAFC"))
+        painter.drawText(QRectF(cx - 18, cy - 7, 36, 14), Qt.AlignmentFlag.AlignCenter, time_str)
+
+    # Caricamento Whisper -> Qwen: i 3 fuochi diventano 3 fiammelle/comete che si rincorrono
+    if spinner_opacity > 0.02:
+        painter.save()
+        painter.setOpacity(spinner_opacity)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+        painter.setPen(Qt.PenStyle.NoPen)
+
+        ring_r = core_radius * 0.78
+        speed_mult = 1.25 if state == "QWEN" else 1.0
+        base_rad = math.radians(spinner_angle * speed_mult)
+        comet_colors = (c_p1, c_p2, c_p3)
+        trail_steps = 9
+
+        for idx, com_col in enumerate(comet_colors):
+            chase_offset = 0.34 * math.sin(base_rad * 1.35 + idx * 2.1)
+            head_ang = base_rad + idx * (2.0 * math.pi / 3.0) + chase_offset
+
+            for s in range(trail_steps, -1, -1):
+                t_frac = 1.0 - (s / trail_steps)
+                ang = head_ang - (s * 0.11)
+                px = cx + ring_r * math.cos(ang)
+                py = cy + ring_r * math.sin(ang)
+                rad = 1.2 + 2.8 * (t_frac ** 1.35)
+                alpha = int(215 * (t_frac ** 1.6))
+
+                g = QRadialGradient(px, py, rad * 1.55)
+                if s == 0:
+                    g.setColorAt(0.0, QColor(255, 255, 255, 235))
+                    g.setColorAt(0.45, QColor(com_col.red(), com_col.green(), com_col.blue(), 220))
+                    g.setColorAt(1.0, QColor(com_col.red(), com_col.green(), com_col.blue(), 0))
+                else:
+                    g.setColorAt(0.0, QColor(com_col.red(), com_col.green(), com_col.blue(), alpha))
+                    g.setColorAt(1.0, QColor(com_col.red(), com_col.green(), com_col.blue(), 0))
+                painter.setBrush(g)
+                painter.drawEllipse(QPointF(px, py), rad * 1.55, rad * 1.55)
+
+        painter.restore()
+
+    painter.restore()
 
 
 class WhisOrbBubble(QWidget):
@@ -468,6 +609,10 @@ class VoiceOrbOverlay(QWidget):
         self._press_time = 0.0
 
         # Signal bridge per chiamate esterne thread-safe
+        self._in_app_orb_provider: Optional[Callable[[], Optional[Any]]] = None
+        self._routed_to_in_app: bool = False
+        self._active_in_app_orb: Optional[Any] = None
+
         self.bridge = OrbSignalBridge()
         self.bridge.change_state.connect(self._set_state_slot)
         self.bridge.feed_audio_signal.connect(self._feed_audio_slot)
@@ -568,12 +713,38 @@ class VoiceOrbOverlay(QWidget):
             h
         )
 
+    def set_in_app_orb_provider(self, provider: Optional[Callable[[], Optional[Any]]]):
+        """Collega un provider che restituisce l'Orb in-app quando FlowLocal è la finestra attiva."""
+        self._in_app_orb_provider = provider
+
+    def _resolve_in_app_orb(self, prefer_sticky: bool = True) -> Optional[Any]:
+        if prefer_sticky and self._routed_to_in_app and self._active_in_app_orb is not None:
+            try:
+                p = self._active_in_app_orb.parentWidget()
+                if p is not None and p.isVisible():
+                    return self._active_in_app_orb
+            except Exception:
+                pass
+        if self._in_app_orb_provider is None:
+            return None
+        try:
+            return self._in_app_orb_provider()
+        except Exception:
+            return None
+
     def set_badge_text(self, text: str):
         self.bridge.set_badge_signal.emit(text)
 
     def _set_badge_slot(self, text: str):
         self.badge_text = text
         self._badge_show_until = (time.time() + 1.6) if text else 0.0
+        in_app = self._resolve_in_app_orb(prefer_sticky=True)
+        if self._routed_to_in_app and in_app is not None:
+            in_app.set_badge_text(text)
+            return
+        if in_app is not None and self.state == "IDLE":
+            in_app.set_badge_text(text)
+            return
         if self.state != "IDLE" or (self.toast_message and time.time() < self.toast_end_time):
             self._apply_geometry_for_state(self.state)
         self.update()
@@ -582,6 +753,12 @@ class VoiceOrbOverlay(QWidget):
         self.bridge.show_toast_signal.emit(message, duration_s)
 
     def _show_toast_slot(self, message: str, duration_s: float):
+        in_app = self._resolve_in_app_orb(prefer_sticky=True)
+        if in_app is not None:
+            self.last_activity_time = time.time()
+            self.hide()
+            in_app.show_toast(message, duration_s)
+            return
         if self.state == "IDLE":
             self._update_anchor_for_active_screen()
         self.toast_message = message
@@ -628,8 +805,16 @@ class VoiceOrbOverlay(QWidget):
         if screen:
             dpr = max(1.0, float(screen.devicePixelRatio()))
 
-        sx = float(self.anchor_x)
-        sy = float(self.anchor_y - (self.ACTIVE_H / 2.0) + 44.0)
+        in_app = self._resolve_in_app_orb(prefer_sticky=True)
+        if in_app is not None:
+            c = in_app.global_orb_center()
+            sx, sy = float(c.x()), float(c.y())
+            in_app.set_state("IDLE")
+            self._routed_to_in_app = False
+            self._active_in_app_orb = None
+        else:
+            sx = float(self.anchor_x)
+            sy = float(self.anchor_y - (self.ACTIVE_H / 2.0) + 44.0)
         ex = float(tx) / dpr
         ey = float(ty) / dpr
 
@@ -671,6 +856,25 @@ class VoiceOrbOverlay(QWidget):
         self.last_activity_time = time.time()
         self.ghost_opacity = 1.0
 
+        if new_state != "IDLE":
+            in_app = self._resolve_in_app_orb(prefer_sticky=not was_idle)
+            if in_app is not None:
+                self._routed_to_in_app = True
+                self._active_in_app_orb = in_app
+                self.hide()
+                if self.badge_text:
+                    in_app.set_badge_text(self.badge_text)
+                in_app.set_state(new_state)
+                return
+        elif self._routed_to_in_app:
+            in_app = self._active_in_app_orb
+            self._routed_to_in_app = False
+            self._active_in_app_orb = None
+            self.hide()
+            if in_app is not None:
+                in_app.set_state("IDLE")
+            return
+
         if new_state == "IDLE":
             is_toast = bool(self.toast_message and time.time() < self.toast_end_time)
             if not is_toast:
@@ -694,12 +898,18 @@ class VoiceOrbOverlay(QWidget):
         self.is_locked = locked
         if locked:
             self.lock_start_time = time.time()
+        if self._routed_to_in_app and self._active_in_app_orb is not None:
+            self._active_in_app_orb.set_locked(locked)
+            return
         self.update()
 
     def feed_audio(self, audio_chunk: np.ndarray):
         self.bridge.feed_audio_signal.emit(audio_chunk)
 
     def _feed_audio_slot(self, audio_chunk: np.ndarray):
+        if self._routed_to_in_app and self._active_in_app_orb is not None:
+            self._active_in_app_orb.feed_audio(audio_chunk)
+            return
         if self.state in ("LISTENING", "COMMAND_MODE", "STUDY_MODE"):
             self.analyzer.process_chunk(audio_chunk)
 
@@ -769,6 +979,11 @@ class VoiceOrbOverlay(QWidget):
         self.idle_breath += 0.04
         self.spinner_angle = (self.spinner_angle + 6.5) % 360
         self._shimmer_phase = (self._shimmer_phase + 0.032) % 1.0
+
+        if self._routed_to_in_app:
+            if self.isVisible():
+                self.hide()
+            return
 
         # Avanzamento animazione di volo verso il campo di input
         if self._launch_active:
@@ -1041,28 +1256,18 @@ class VoiceOrbOverlay(QWidget):
             avg_energy = float(np.mean(levels)) if len(levels) > 0 else 0.0
 
         core_radius = self.CORE_RADIUS + (avg_energy * 2.0 if (is_active or self._startup_active) else 0.0)
-
-        # Scale-in / scale-out fluido attorno al centro dell'Orb
         orb_scale = max(0.75, min(1.0, self._orb_scale if self._orb_scale > 0.01 else 1.0))
-        painter.save()
-        if orb_scale < 0.999:
-            painter.translate(cx, cy)
-            painter.scale(orb_scale, orb_scale)
-            painter.translate(-cx, -cy)
-
-        # Palette plasma condivisa: gli stessi fuochi interni diventano le onde quando parli
-        c_p1 = QColor(self.current_color)
-        c_p2 = QColor("#A855F7") if self.state != "STUDY_MODE" else QColor("#38BDF8")
-        c_p3 = QColor("#10B981") if self.state != "QWEN" else QColor("#38BDF8")
-
-        # =========================================================
-        # UNICO FLUIDO VIVO: I 3 FUOCHI SI ESPANDONO E DIVENTANO LE ONDE
-        # (Nessun contenitore nero che si espande attorno ai colori)
-        # =========================================================
-        num_pts = len(levels)
 
         # 1. Schizzo fluido di gocce colorate intorno all'Orb durante l'animazione di apertura
         if self._startup_active and self.wave_envelope > 0.01:
+            painter.save()
+            if orb_scale < 0.999:
+                painter.translate(cx, cy)
+                painter.scale(orb_scale, orb_scale)
+                painter.translate(-cx, -cy)
+            c_p1 = QColor(self.current_color)
+            c_p2 = QColor("#A855F7") if self.state != "STUDY_MODE" else QColor("#38BDF8")
+            c_p3 = QColor("#10B981") if self.state != "QWEN" else QColor("#38BDF8")
             splash_p = min(1.0, self._startup_t * 1.25)
             drop_alpha = int(210 * math.sin(math.pi * splash_p))
             if drop_alpha > 5:
@@ -1078,112 +1283,26 @@ class VoiceOrbOverlay(QWidget):
                     painter.setPen(Qt.PenStyle.NoPen)
                     painter.setBrush(dc)
                     painter.drawEllipse(QPointF(dx, dy), d_rad, d_rad)
-
-        # 2. Piccolo fondo scuro morbido al centro per leggibilità/contrasto su sfondi chiari
-        base_r = core_radius * 1.05
-        base_grad = QRadialGradient(cx, cy, base_r)
-        base_grad.setColorAt(0.0, QColor(8, 10, 16, 215))
-        base_grad.setColorAt(0.70, QColor(8, 10, 16, 150))
-        base_grad.setColorAt(1.0, QColor(8, 10, 16, 0))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(base_grad)
-        painter.drawEllipse(QPointF(cx, cy), base_r, base_r)
-
-        # 3. I 3 fuochi fluidi indipendenti (si dissolvono dolcemente nelle 3 comete durante il caricamento)
-        flame_vis = max(0.0, 1.0 - self.spinner_opacity)
-        if flame_vis > 0.02:
-            max_wave_height = 20.0 * self.wave_envelope
-            speech_mix = min(1.0, avg_energy * 8.0) if is_active else 0.0
-            wobble_amp = 0.045 * (1.0 - speech_mix)
-            flame_layers = [
-                (c_p1, self._plasma_phase, 0, 1.00, int(195 * flame_vis)),
-                (c_p2, self._plasma_phase * 1.35 + 2.1, 8, 0.92, int(185 * flame_vis)),
-                (c_p3, -self._plasma_phase * 0.9 + 4.2, 16, 0.86, int(175 * flame_vis)),
-            ]
-
-            painter.save()
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
-            for f_col, f_ang, band_offset, r_scale, f_alpha in flame_layers:
-                orbit_r = 2.4 * (1.0 - 0.5 * speech_mix)
-                fx = cx + orbit_r * math.cos(f_ang)
-                fy = cy + orbit_r * math.sin(f_ang * 1.15)
-
-                f_points = []
-                for i in range(num_pts):
-                    theta = (2.0 * math.pi * i) / num_pts - (math.pi / 2.0)
-                    raw_lvl = float(levels[(i + band_offset) % num_pts])
-                    lvl = min(1.0, (raw_lvl ** 0.80) * 1.28)
-                    wobble = 1.0 + wobble_amp * math.sin(theta * 2.0 + f_ang)
-                    r_pt = (core_radius * 0.88 * r_scale * wobble) + (lvl * max_wave_height * r_scale)
-                    f_points.append(QPointF(fx + r_pt * math.cos(theta), fy + r_pt * math.sin(theta)))
-
-                f_path = create_smooth_closed_path(f_points)
-                f_grad = QRadialGradient(fx, fy, core_radius * r_scale + max_wave_height + 2.0)
-                c_hot = QColor(f_col)
-                c_hot.setAlpha(f_alpha)
-                c_mid = QColor(f_col)
-                c_mid.setAlpha(int(f_alpha * 0.72))
-                c_tip = QColor(f_col)
-                c_tip.setAlpha(0)
-                f_grad.setColorAt(0.0, c_hot)
-                f_grad.setColorAt(0.68, c_mid)
-                f_grad.setColorAt(1.0, c_tip)
-
-                painter.setBrush(f_grad)
-                painter.drawPath(f_path)
             painter.restore()
 
-        # Timer Hands-Free (se bloccato)
-        if self.is_locked and is_active:
-            elapsed = int(time.time() - self.lock_start_time)
-            mins = elapsed // 60
-            secs = elapsed % 60
-            time_str = f"{mins:02d}:{secs:02d}"
-
-            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-            painter.setPen(QColor("#F8FAFC"))
-            painter.drawText(QRectF(cx - 18, cy - 7, 36, 14), Qt.AlignmentFlag.AlignCenter, time_str)
-
-        # 4. Caricamento Whisper -> Qwen: i 3 fuochi diventano 3 fiammelle/comete che si rincorrono
-        if self.spinner_opacity > 0.02:
-            painter.save()
-            painter.setOpacity(self.spinner_opacity)
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
-            painter.setPen(Qt.PenStyle.NoPen)
-
-            ring_r = core_radius * 0.78
-            speed_mult = 1.25 if self.state == "QWEN" else 1.0
-            base_rad = math.radians(self.spinner_angle * speed_mult)
-            comet_colors = (c_p1, c_p2, c_p3)
-            trail_steps = 9
-
-            for idx, com_col in enumerate(comet_colors):
-                chase_offset = 0.34 * math.sin(base_rad * 1.35 + idx * 2.1)
-                head_ang = base_rad + idx * (2.0 * math.pi / 3.0) + chase_offset
-
-                # Scia affusolata dietro la testa della cometa
-                for s in range(trail_steps, -1, -1):
-                    t_frac = 1.0 - (s / trail_steps)  # 0.0 coda -> 1.0 testa
-                    ang = head_ang - (s * 0.11)
-                    px = cx + ring_r * math.cos(ang)
-                    py = cy + ring_r * math.sin(ang)
-                    rad = 1.2 + 2.8 * (t_frac ** 1.35)
-                    alpha = int(215 * (t_frac ** 1.6))
-
-                    g = QRadialGradient(px, py, rad * 1.55)
-                    if s == 0:
-                        g.setColorAt(0.0, QColor(255, 255, 255, 235))
-                        g.setColorAt(0.45, QColor(com_col.red(), com_col.green(), com_col.blue(), 220))
-                        g.setColorAt(1.0, QColor(com_col.red(), com_col.green(), com_col.blue(), 0))
-                    else:
-                        g.setColorAt(0.0, QColor(com_col.red(), com_col.green(), com_col.blue(), alpha))
-                        g.setColorAt(1.0, QColor(com_col.red(), com_col.green(), com_col.blue(), 0))
-                    painter.setBrush(g)
-                    painter.drawEllipse(QPointF(px, py), rad * 1.55, rad * 1.55)
-
-            painter.restore()
-
-        painter.restore()
+        paint_voice_orb_body(
+            painter,
+            cx,
+            cy,
+            core_radius=core_radius,
+            levels=levels,
+            plasma_phase=self._plasma_phase,
+            wave_envelope=self.wave_envelope,
+            spinner_opacity=self.spinner_opacity,
+            spinner_angle=self.spinner_angle,
+            current_color=self.current_color,
+            state=self.state,
+            is_active=is_active or self._startup_active,
+            is_locked=self.is_locked,
+            lock_start_time=self.lock_start_time,
+            orb_scale=orb_scale,
+            max_wave_height=20.0,
+        )
 
         # =========================================================
         # 3. NOTIFICA TOAST DI APPRENDIMENTO (esce dall'Orb)

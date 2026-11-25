@@ -521,6 +521,8 @@ def main():
             hub = FlowLocalHub()
             hub.set_whis_agent(whis_hud.agent)
             hub.whis_hud = whis_hud
+            hub.voice_orb = orb
+            orb.set_in_app_orb_provider(hub.get_active_in_app_orb)
             hub.engine = engine
             engine.hub = hub
             hub.set_wake_listener(wake_listener)
