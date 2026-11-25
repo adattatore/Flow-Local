@@ -132,6 +132,7 @@ from ui.orb_radial_menu import (
 )
 from ui.icons import get_icon, get_pixmap, apply_win11_titlebar
 from ui.flownotes_ribbon import FlowNotesRibbonWidget
+from ui.floating_whis_chat import FloatingWhisChat
 from ui.settings_dialog import HubSettingsDialog, GeminiKeyGuideDialog, GEMINI_AISTUDIO_URL
 from core.gemini_client import (
     add_runtime_engine_listener,
@@ -373,10 +374,14 @@ class FlowLocalHub(QMainWindow):
         self._sync_editor_typography()
         self._refresh_current_page()
 
-        # Scorciatoia globale Command Palette (Ctrl+K) e cambio rapido mondi (Ctrl+1/2/3)
+        # Scorciatoia globale Command Palette (Ctrl+K) e toggle rapido Whis (Ctrl+Shift+W)
         self._cmd_palette_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
         self._cmd_palette_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
         self._cmd_palette_shortcut.activated.connect(self._open_command_palette)
+
+        self._floating_whis_shortcut = QShortcut(QKeySequence("Ctrl+Shift+W"), self)
+        self._floating_whis_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        self._floating_whis_shortcut.activated.connect(self._toggle_floating_whis)
 
         for seq, target_p in (("Ctrl+1", 1), ("Ctrl+2", 7), ("Ctrl+3", 0)):
             sc = QShortcut(QKeySequence(seq), self)
@@ -436,6 +441,8 @@ class FlowLocalHub(QMainWindow):
             QTimer.singleShot(0, self.orb_radial_menu.sync_geometry)
         if hasattr(self, "top_orb"):
             QTimer.singleShot(0, self.top_orb.sync_geometry)
+        if hasattr(self, "floating_whis"):
+            QTimer.singleShot(0, self.floating_whis.sync_parent_bounds)
         if not self._startup_checks_done:
             self._startup_checks_done = True
             QTimer.singleShot(700, self._run_startup_health_checks)
@@ -446,6 +453,8 @@ class FlowLocalHub(QMainWindow):
             self.orb_radial_menu.sync_geometry()
         if hasattr(self, "top_orb"):
             self.top_orb.sync_geometry()
+        if hasattr(self, "floating_whis"):
+            self.floating_whis.sync_parent_bounds()
         if hasattr(self, "_toast_manager"):
             self._toast_manager.reposition()
 
@@ -617,6 +626,19 @@ class FlowLocalHub(QMainWindow):
         self.orb_radial_menu.worldSelected.connect(self._on_nav_clicked)
         self.orb_radial_menu.openProgressChanged.connect(self.top_orb.set_menu_open_factor)
 
+        self.floating_whis = FloatingWhisChat(
+            agent=self.whis_agent,
+            theme_key=self._current_theme,
+            palette=self._active_palette(),
+            is_dark=self._active_is_dark(),
+            parent=self,
+        )
+        self.floating_whis.hide()
+        self.floating_whis.insertIntoNoteRequested.connect(self._on_floating_whis_insert_into_note)
+        self.floating_whis.replaceSelectionRequested.connect(self._on_floating_whis_replace_selection)
+        self.floating_whis.calendarDataChanged.connect(self._refresh_flowtime_page)
+        self.floating_whis.noteDataChanged.connect(self._refresh_notekeeper)
+
         self._active_world_key = "notes"
         self._on_nav_clicked(1)
 
@@ -681,17 +703,6 @@ class FlowLocalHub(QMainWindow):
         self.spotify_bar = SpotifyMiniBar(self)
         self.spotify_bar.set_theme_mode(self._active_is_dark())
         right_row.addWidget(self.spotify_bar)
-
-        self.top_whis_btn = ThemedPushButton(" Whis")
-        self.top_whis_btn.setObjectName("FilterPill")
-        self.top_whis_btn.setCheckable(True)
-        self.top_whis_btn.setIcon(get_icon("sparkles", theme_key=self._current_theme, role="accent", size=13))
-        self.top_whis_btn.setIconSize(QSize(13, 13))
-        self.top_whis_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.top_whis_btn.setToolTip("Assistente Whis")
-        self.top_whis_btn.setStyleSheet("padding: 0 10px; font-size: 11px; min-height: 26px; font-weight: 600;")
-        self.top_whis_btn.clicked.connect(lambda: self._on_nav_clicked(4))
-        right_row.addWidget(self.top_whis_btn)
 
         self.reading_mode_btn = ThemedPushButton(" Lettura")
         self.reading_mode_btn.setObjectName("FilterPill")
@@ -936,8 +947,8 @@ class FlowLocalHub(QMainWindow):
             self.top_orb.set_active_world(world_key)
         if hasattr(self, "orb_radial_menu"):
             self.orb_radial_menu.set_active_world(world_key)
-        if hasattr(self, "top_whis_btn"):
-            self.top_whis_btn.setChecked(page_idx == 4)
+        if hasattr(self, "floating_whis") and self.floating_whis.isVisible():
+            self.floating_whis.set_context(self._collect_whis_ui_context())
 
         if page_idx in self.nav_buttons_by_page:
             self.nav_buttons_by_page[page_idx].setChecked(True)
@@ -1034,6 +1045,8 @@ class FlowLocalHub(QMainWindow):
             self.orb_radial_menu.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "nk_ribbon"):
             self.nk_ribbon.set_theme(self._current_theme, p_sync, is_dark=is_dark)
+        if hasattr(self, "floating_whis"):
+            self.floating_whis.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "flowtype_subbar") and hasattr(self.flowtype_subbar, "sync_pill_geometry"):
             QTimer.singleShot(0, self.flowtype_subbar.sync_pill_geometry)
         self.setUpdatesEnabled(True)
@@ -1106,6 +1119,8 @@ class FlowLocalHub(QMainWindow):
             self.orb_radial_menu.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "nk_ribbon"):
             self.nk_ribbon.set_theme(self._current_theme, p_sync, is_dark=is_dark)
+        if hasattr(self, "floating_whis"):
+            self.floating_whis.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "flowtype_subbar") and hasattr(self.flowtype_subbar, "sync_pill_geometry"):
             QTimer.singleShot(0, self.flowtype_subbar.sync_pill_geometry)
         self.setUpdatesEnabled(True)
@@ -1117,7 +1132,6 @@ class FlowLocalHub(QMainWindow):
         """Aggiorna le icone vettoriali della UI in base al tema QSS attivo."""
         tkey = getattr(self, "_current_theme", "obsidian")
         pairs = [
-            ("top_whis_btn", "sparkles", "accent", 13),
             ("pomo_top_pill", "clock", "accent", 13),
             ("reading_mode_btn", "book", "subtitle", 13),
             ("whats_new_btn", "lightbulb", "subtitle", 15),
@@ -1130,6 +1144,7 @@ class FlowLocalHub(QMainWindow):
             ("nk_studio_btn", "book", "text", 14),
             ("nk_rsvp_btn", "lightning", "text", 14),
             ("nk_ask_whis_btn", "sparkles", "accent", 14),
+            ("ft_whis_btn", "sparkles", "accent", 14),
             ("ft_today_btn", "calendar", "text", 14),
             ("ft_save_btn", "save", "on_accent", 14),
             ("ft_delete_btn", "trash", "danger", 14),
@@ -1503,6 +1518,8 @@ class FlowLocalHub(QMainWindow):
             except Exception:
                 pass
         self.whis_agent = agent
+        if hasattr(self, "floating_whis"):
+            self.floating_whis.set_agent(agent)
         if self.whis_agent:
             try:
                 self.whis_agent.status_changed.connect(self._on_whis_status_changed)
@@ -2456,6 +2473,9 @@ class FlowLocalHub(QMainWindow):
             pane.summarizeRequested.connect(self._on_nk_summarize_clicked)
             pane.flashcardsRequested.connect(self._on_nk_extract_flashcards_clicked)
             pane.sendSelectionToSplitRequested.connect(self._on_nk_send_text_to_other_pane)
+            pane.askWhisSelectionRequested.connect(
+                lambda sel_txt, p=pane: self._on_nk_selection_ask_whis(p, sel_txt)
+            )
             pane.acquireLockRequested.connect(self._on_nk_acquire_group_lock)
             pane.publishGroupRequested.connect(self._on_nk_publish_group_note)
             pane.copyToLocalRequested.connect(self._on_nk_copy_group_to_local)
@@ -2708,6 +2728,8 @@ class FlowLocalHub(QMainWindow):
             self.nk_actions_strip.setVisible(False)
         self._sync_toolbar_from_active_pane()
         self._sync_workspace_highlight_from_tab(pane.active_tab())
+        if hasattr(self, "floating_whis") and self.floating_whis.isVisible():
+            self.floating_whis.set_context(self._collect_whis_ui_context())
 
     def _on_nk_breadcrumb_root_clicked(self):
         active_gid = getattr(self, "_nk_active_workspace_group_id", None)
@@ -2769,6 +2791,8 @@ class FlowLocalHub(QMainWindow):
             self.save_workspace_session_state()
         self._sync_toolbar_from_active_pane()
         self._sync_workspace_highlight_from_tab(tab)
+        if hasattr(self, "floating_whis") and self.floating_whis.isVisible():
+            self.floating_whis.set_context(self._collect_whis_ui_context())
 
     def save_workspace_session_state(self):
         """Salva le schede locali aperte (left/right pane) e lo stato Split View per ripristino all'avvio."""
@@ -5675,26 +5699,155 @@ class FlowLocalHub(QMainWindow):
             pane.close_tab(pane.current_tab_index)
             self._refresh_notekeeper()
 
-    def _on_nk_ask_whis_clicked(self):
-        title = self.nk_editor_title.text().strip()
-        subj = self.nk_editor_subject.text().strip() or "Generale"
-        top = self.nk_editor_topic.text().strip() or "Generale"
-        content = self.nk_editor_body.get_markdown_text().strip()
+    def _collect_whis_ui_context(self, explicit_selection: str = "") -> Dict[str, Any]:
+        """Raccoglie in modo sicuro il contesto dell'area di lavoro attiva per Whis."""
+        idx = self.pages.currentIndex() if hasattr(self, "pages") else 1
 
-        if content:
+        if idx in (1, 2, 3, 8):
+            title = self.nk_editor_title.text().strip() if hasattr(self, "nk_editor_title") else ""
+            subj = self.nk_editor_subject.text().strip() if hasattr(self, "nk_editor_subject") else "Generale"
+            top = self.nk_editor_topic.text().strip() if hasattr(self, "nk_editor_topic") else "Generale"
+            ntype = self.nk_editor_type.currentText().strip() if hasattr(self, "nk_editor_type") else "appunto"
+            editor = getattr(self, "nk_editor_body", None)
+
+            sel_text = (explicit_selection or "").strip()
+            note_excerpt = ""
+            has_audio_sync = False
+            if editor is not None:
+                if not sel_text:
+                    try:
+                        cur = editor.textCursor()
+                        if cur.hasSelection():
+                            sel_text = cur.selectedText().replace("\u2029", "\n").strip()
+                    except Exception:
+                        pass
+                try:
+                    note_excerpt = editor.get_markdown_text().strip()[:4000]
+                except Exception:
+                    pass
+                has_audio_sync = bool(getattr(editor, "_audio_sync_active", False))
+
+            return {
+                "workspace": "notes",
+                "note_title": title or "Appunto corrente",
+                "subject": subj or "Generale",
+                "topic": top or "Generale",
+                "note_type": ntype or "appunto",
+                "has_audio_sync": has_audio_sync,
+                "selected_text": sel_text[:3000],
+                "note_excerpt": note_excerpt,
+            }
+
+        if idx == 7:
+            date_str = self._selected_ft_date_str()
+            day_label = date_str
+            if hasattr(self, "ft_day_timeline") and hasattr(self.ft_day_timeline, "day_title_lbl"):
+                lbl_txt = self.ft_day_timeline.day_title_lbl.text().strip()
+                if lbl_txt:
+                    day_label = lbl_txt
+            view_mode = "week" if (hasattr(self, "ft_main_stack") and self.ft_main_stack.currentIndex() == 1) else "day"
+
+            day_events: List[Dict[str, Any]] = []
+            week_events: List[Dict[str, Any]] = []
+            day_notes: List[Dict[str, Any]] = []
+            upcoming_exams: List[Dict[str, Any]] = []
+
             try:
-                pyperclip.copy(content)
+                from core.calendar_sync import calendar_manager
+                day_events = calendar_manager.get_upcoming_events(days=1, target_date=date_str) or []
+                d_obj = dt_date.fromisoformat(date_str)
+                monday = d_obj - timedelta(days=d_obj.weekday())
+                sunday = monday + timedelta(days=6)
+                raw_week = db.get_calendar_events(start_date=monday.isoformat(), end_date=sunday.isoformat()) or []
+                week_events = [calendar_manager._format_db_event(r) for r in raw_week]
+            except Exception:
+                pass
+            try:
+                day_notes = db.get_notes_for_date(date_str) or []
+            except Exception:
+                pass
+            try:
+                upcoming_exams = db.get_exam_countdowns() or []
             except Exception:
                 pass
 
-        self.pages.setCurrentIndex(4)
-        if 4 in self.nav_buttons_by_page:
-            self.nav_buttons_by_page[4].setChecked(True)
-        self._refresh_current_page()
+            return {
+                "workspace": "calendar",
+                "selected_date": date_str,
+                "selected_date_label": day_label,
+                "view_mode": view_mode,
+                "day_events": day_events[:12],
+                "week_events": week_events[:20],
+                "day_notes": day_notes[:8],
+                "upcoming_exams": upcoming_exams[:8],
+            }
 
-        if hasattr(self, "whis_input"):
-            self.whis_input.setText(f"Spiegami questo appunto su {subj} - {top}: {title}")
-            self.whis_input.setFocus()
+        if idx in (0, 5, 6):
+            recent_tx = ""
+            try:
+                hist = db.get_history(limit=3) or []
+                lines = []
+                for row in hist:
+                    txt = str(row.get("refined_text") or row.get("raw_text") or "").strip()
+                    if txt:
+                        lines.append(txt)
+                recent_tx = "\n---\n".join(lines)[:2000]
+            except Exception:
+                pass
+            return {
+                "workspace": "transcription",
+                "active_mode": getattr(self, "_current_mode_name", "natural"),
+                "recent_transcript": recent_tx,
+            }
+
+        return {"workspace": "general"}
+
+    def _open_floating_whis(
+        self,
+        explicit_selection: str = "",
+        prefill: str = "",
+        auto_send: bool = False,
+    ):
+        if not hasattr(self, "floating_whis"):
+            return
+        ctx = self._collect_whis_ui_context(explicit_selection=explicit_selection)
+        self.floating_whis.open_floating(ui_context=ctx, prefill=prefill, auto_send=auto_send)
+
+    def _toggle_floating_whis(self):
+        if not hasattr(self, "floating_whis"):
+            return
+        ctx = self._collect_whis_ui_context()
+        self.floating_whis.toggle_floating(ui_context=ctx)
+
+    def _on_nk_selection_ask_whis(self, pane, sel_text: str):
+        if pane is not None and hasattr(self, "_on_nk_pane_activated"):
+            self._on_nk_pane_activated(pane)
+        self._open_floating_whis(explicit_selection=sel_text or "")
+
+    def _on_floating_whis_insert_into_note(self, text: str):
+        editor = getattr(self, "nk_editor_body", None)
+        if editor is None or not hasattr(editor, "insert_text_from_whis"):
+            return
+        if not editor.insert_text_from_whis(text):
+            self.show_toast(
+                "Apri una nota modificabile (non in sola lettura o Vista Studio) per inserire il testo.",
+                title="Whis",
+                kind="warning",
+            )
+
+    def _on_floating_whis_replace_selection(self, text: str):
+        editor = getattr(self, "nk_editor_body", None)
+        if editor is None or not hasattr(editor, "replace_selection_from_whis"):
+            return
+        if not editor.replace_selection_from_whis(text):
+            self.show_toast(
+                "Apri una nota modificabile (non in sola lettura o Vista Studio) per sostituire la selezione.",
+                title="Whis",
+                kind="warning",
+            )
+
+    def _on_nk_ask_whis_clicked(self):
+        self._open_floating_whis()
 
     def _on_nk_new_subject_clicked(self):
         active_gid = getattr(self, "_nk_active_workspace_group_id", None)
@@ -7569,6 +7722,12 @@ class FlowLocalHub(QMainWindow):
         top_ctrl.addWidget(self.ft_view_day_btn)
         top_ctrl.addWidget(self.ft_view_week_btn)
 
+        self.ft_whis_btn = _make_button(" Whis", "ghost")
+        self.ft_whis_btn.setIcon(get_icon("sparkles", theme_key=self._current_theme, role="accent", size=14))
+        self.ft_whis_btn.setToolTip("Chiedi a Whis sull'agenda e le scadenze (Ctrl+Shift+W)")
+        self.ft_whis_btn.clicked.connect(lambda: self._open_floating_whis())
+        top_ctrl.addWidget(self.ft_whis_btn)
+
         self.ft_today_btn = _make_button(" Oggi", "ghost")
         self.ft_today_btn.setIcon(get_icon("calendar", theme_key=self._current_theme, role="text", size=14))
         self.ft_today_btn.clicked.connect(self._on_ft_today_clicked)
@@ -7987,6 +8146,9 @@ class FlowLocalHub(QMainWindow):
         sel_date = self.ft_calendar.selectedDate()
         self._update_ft_calendar_highlights(sel_date.year(), sel_date.month())
         self._refresh_flowtime_lists()
+        if hasattr(self, "floating_whis") and self.floating_whis.isVisible():
+            if hasattr(self, "pages") and self.pages.currentIndex() == 7:
+                self.floating_whis.set_context(self._collect_whis_ui_context())
         if hasattr(self, "ft_main_stack"):
             if self.ft_main_stack.currentIndex() == 0 and hasattr(self, "ft_day_timeline"):
                 QTimer.singleShot(70, self.ft_day_timeline.scroll_to_focus)

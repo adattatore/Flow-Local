@@ -98,6 +98,12 @@ SCREEN_TRIGGER_KEYWORDS = re.compile(
     re.IGNORECASE
 )
 
+# Trigger esplicito per ricerca globale su altre note quando si è in una chat contestuale
+EXPLICIT_CROSS_NOTE_SEARCH_KEYWORDS = re.compile(
+    r"\b(altre\s+note|altri\s+appunti|nel\s+quaderno|in\s+tutte\s+le\s+note|cerca\s+nelle\s+note|tra\s+gli\s+appunti)\b",
+    re.IGNORECASE,
+)
+
 # Trigger per Azioni DB avanzate sul Quaderno di Studio (Crea, Unisci, Elimina, Modifica)
 NOTE_MERGE_KEYWORDS = re.compile(
     r'\b(?:unisci|fondi|aggrega)\b.*?\b(?:la\s+)?nota\b\s+(?:di|su|chiamata|intitolata)?\s*(.*?)\s+(?:a|con|ed?)\s+(?:quella|la\s+nota)\s+(?:di|su|chiamata|intitolata)?\s*(.*)$',
@@ -407,6 +413,131 @@ WHIS_SYSTEM_PROMPT = (
     "6. INTEGRAZIONE NATIVA CON GOOGLE CALENDAR E SISTEMA: FlowLocal è pienamente integrato con Google Calendar via API. "
     "Non dire MAI che non puoi interagire con calendari esterni o che l'utente deve farlo da solo: FlowLocal gestisce già creazione, cancellazione e consultazione dell'agenda."
 )
+
+
+def format_ui_context_block(ui_context: Optional[Dict[str, Any]]) -> str:
+    """Formatta in modo compatto e strutturato il contesto UI attivo (FlowNotes / FlowTime / FlowType)."""
+    if not ui_context or not isinstance(ui_context, dict):
+        return ""
+
+    workspace = str(ui_context.get("workspace") or "general").strip().lower()
+    lines: List[str] = []
+
+    if workspace == "notes":
+        title = str(ui_context.get("note_title") or "").strip()
+        subj = str(ui_context.get("subject") or "").strip()
+        topic = str(ui_context.get("topic") or "").strip()
+        note_type = str(ui_context.get("note_type") or "").strip()
+        has_audio_sync = bool(ui_context.get("has_audio_sync", False))
+        selected_text = str(ui_context.get("selected_text") or "").strip()[:3000]
+        note_excerpt = str(ui_context.get("note_excerpt") or "").strip()[:4000]
+
+        if any([title, subj, topic, note_type, has_audio_sync, selected_text, note_excerpt]):
+            lines.append("[CONTESTO ATTIVO FLOWNOTES]:")
+            if title:
+                lines.append(f"- Titolo nota: {title}")
+            meta_parts: List[str] = []
+            if subj:
+                meta_parts.append(f"Materia: {subj}")
+            if topic and topic != subj:
+                meta_parts.append(f"Argomento: {topic}")
+            if note_type:
+                meta_parts.append(f"Tipo: {note_type}")
+            if meta_parts:
+                lines.append("- " + " | ".join(meta_parts))
+            if has_audio_sync:
+                lines.append("- Audio/Sbobina sincronizzata: sì")
+            if selected_text:
+                lines.append("")
+                lines.append("[TESTO SELEZIONATO DALL'UTENTE]:")
+                lines.append(f"```\n{selected_text}\n```")
+            elif note_excerpt:
+                lines.append("")
+                lines.append("[ESTRATTO NOTA APERTA]:")
+                lines.append(f"```markdown\n{note_excerpt}\n```")
+
+    elif workspace == "calendar":
+        date_label = str(
+            ui_context.get("selected_date_label") or ui_context.get("selected_date") or ""
+        ).strip()
+        view_mode = str(ui_context.get("view_mode") or "day").strip().lower()
+        view_label = "Settimana" if view_mode == "week" else "Giorno"
+        day_events = ui_context.get("day_events") or []
+        week_events = ui_context.get("week_events") or []
+        day_notes = ui_context.get("day_notes") or []
+        upcoming_exams = ui_context.get("upcoming_exams") or []
+
+        lines.append("[CONTESTO ATTIVO FLOWTIME (CALENDARIO)]:")
+        if date_label:
+            lines.append(f"- Data selezionata: {date_label}")
+        lines.append(f"- Vista: {view_label}")
+
+        if day_events:
+            lines.append("- Impegni/To-Do del giorno:")
+            for ev in day_events[:12]:
+                if isinstance(ev, dict):
+                    t_str = str(ev.get("time") or ev.get("start_time") or ("To-Do" if ev.get("item_type") == "todo" else "Tutto il giorno")).strip()
+                    s_str = str(ev.get("summary") or ev.get("title") or ev.get("formatted") or "").strip()
+                    if s_str:
+                        lines.append(f"  • [{t_str}] {s_str}")
+                elif str(ev).strip():
+                    lines.append(f"  • {str(ev).strip()}")
+        else:
+            lines.append("- Impegni/To-Do del giorno: nessuno")
+
+        if week_events:
+            lines.append("- Impegni della settimana:")
+            for ev in week_events[:20]:
+                if isinstance(ev, dict):
+                    d_str = str(ev.get("event_date") or ev.get("date") or "").strip()
+                    t_str = str(ev.get("time") or ev.get("start_time") or "").strip()
+                    s_str = str(ev.get("summary") or ev.get("title") or "").strip()
+                    prefix = " ".join(p for p in (d_str, t_str) if p)
+                    if s_str:
+                        lines.append(f"  • {prefix + ': ' if prefix else ''}{s_str}")
+                elif str(ev).strip():
+                    lines.append(f"  • {str(ev).strip()}")
+
+        if day_notes:
+            lines.append("- Note collegate del giorno:")
+            for n in day_notes[:8]:
+                if isinstance(n, dict):
+                    nt = str(n.get("title") or "").strip()
+                    ns = str(n.get("subject") or "").strip()
+                    if nt:
+                        lines.append(f"  • {nt}" + (f" ({ns})" if ns else ""))
+                elif str(n).strip():
+                    lines.append(f"  • {str(n).strip()}")
+
+        if upcoming_exams:
+            lines.append("- Prossimi esami / scadenze:")
+            for ex in upcoming_exams[:8]:
+                if isinstance(ex, dict):
+                    ex_name = str(ex.get("subject") or ex.get("title") or ex.get("name") or "").strip()
+                    ex_date = str(ex.get("exam_date") or ex.get("date") or "").strip()
+                    if ex_name:
+                        lines.append(f"  • {ex_name}" + (f" — {ex_date}" if ex_date else ""))
+                elif str(ex).strip():
+                    lines.append(f"  • {str(ex).strip()}")
+
+    elif workspace == "transcription":
+        active_mode = str(ui_context.get("active_mode") or "").strip()
+        recent_tx = str(ui_context.get("recent_transcript") or "").strip()[:2000]
+        if active_mode or recent_tx:
+            lines.append("[CONTESTO ATTIVO FLOWTYPE]:")
+            if active_mode:
+                lines.append(f"- Modalità: {active_mode}")
+            if recent_tx:
+                lines.append("- Trascrizioni recenti:")
+                lines.append(f"```\n{recent_tx}\n```")
+
+    else:
+        summary = str(ui_context.get("summary") or ui_context.get("selected_text") or "").strip()[:2000]
+        if summary:
+            lines.append("[CONTESTO ATTIVO FLOWLOCAL]:")
+            lines.append(summary)
+
+    return "\n".join(lines).strip()
 
 
 class WhisAgent(QObject):
@@ -1211,10 +1342,11 @@ class WhisAgent(QObject):
         on_done: Optional[Callable[..., None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
         explicit_selection: Optional[str] = None,
-        on_metadata: Optional[Callable[[dict], None]] = None
+        on_metadata: Optional[Callable[[dict], None]] = None,
+        ui_context: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
-        Invia la richiesta in streaming a Ollama gestendo superpoteri (Screen OCR, Azioni DB, RAG),
+        Invia la richiesta in streaming a Ollama gestendo superpoteri (Screen OCR, Azioni DB, RAG, UI Context),
         il fallback del modello, lo stato in tempo reale e il salvataggio automatico.
         """
         self.set_status("Analisi richiesta...", user_prompt)
@@ -1223,8 +1355,14 @@ class WhisAgent(QObject):
             "clipboard": False,
             "rag_source": None,
             "note_action": False,
-            "calendar": False
+            "calendar": False,
+            "ui_context_workspace": None,
         }
+        ui_ctx_block = format_ui_context_block(ui_context)
+        if ui_ctx_block and isinstance(ui_context, dict):
+            metadata["ui_context_workspace"] = str(ui_context.get("workspace") or "general").strip().lower()
+            if explicit_selection is None and str(ui_context.get("selected_text") or "").strip():
+                explicit_selection = str(ui_context.get("selected_text") or "").strip()
 
         # 0. Intercettazione Follow-up interattivo FlowTime (titolo appuntamento in attesa)
         if self.pending_calendar_create:
@@ -1274,7 +1412,14 @@ class WhisAgent(QObject):
             return resp
 
         # 1. Deissi / Lettura Clipboard preliminare
-        prompt_with_context, clip_attached, clip_context = self.detect_and_attach_clipboard(user_prompt, explicit_selection)
+        if ui_ctx_block and not explicit_selection and not re.search(
+            r'\b(clipboard|appunti di windows|quello che ho copiato|cosa ho copiato)\b',
+            user_prompt,
+            re.IGNORECASE,
+        ):
+            prompt_with_context, clip_attached, clip_context = user_prompt, False, ""
+        else:
+            prompt_with_context, clip_attached, clip_context = self.detect_and_attach_clipboard(user_prompt, explicit_selection)
         if clip_attached:
             metadata["clipboard"] = True
             self.set_status("Lettura Clipboard...", user_prompt)
@@ -1314,11 +1459,20 @@ class WhisAgent(QObject):
             metadata["screen_ocr"] = True
             prompt_with_context = prompt_with_screen
 
-        # 4. SUPERPOTERE RAG SUGLI APPUNTI: cerca note/slide per domande di studio
-        prompt_with_rag, rag_source, _ = self.detect_and_attach_rag(user_prompt)
-        if rag_source:
-            metadata["rag_source"] = rag_source
-            prompt_with_context = prompt_with_rag
+        # 4. SUPERPOTERE RAG SUGLI APPUNTI: cerca note/slide solo se NON c'è ui_context o se l'utente chiede altre note
+        should_run_rag = (not ui_ctx_block) or bool(EXPLICIT_CROSS_NOTE_SEARCH_KEYWORDS.search(user_prompt or ""))
+        if should_run_rag:
+            prompt_with_rag, rag_source, _ = self.detect_and_attach_rag(user_prompt)
+            active_note_title = str((ui_context or {}).get("note_title") or "").strip().lower() if isinstance(ui_context, dict) else ""
+            if rag_source:
+                if not (ui_ctx_block and active_note_title and rag_source.strip().lower() == active_note_title):
+                    metadata["rag_source"] = rag_source
+                    prompt_with_context = prompt_with_rag
+
+        if ui_ctx_block:
+            # Se la clipboard ha duplicato la stessa selezione già inclusa in ui_ctx_block, usa user_prompt pulito
+            prompt_tail = user_prompt if (clip_attached and clip_context == (explicit_selection or "").strip()) else prompt_with_context
+            prompt_with_context = f"{ui_ctx_block}\n\n[Richiesta dell'utente]:\n{prompt_tail}"
 
         # Notifica immediata metadata per l'HUD (badge schermo, fonte, appunti)
         if on_metadata:
@@ -1327,13 +1481,31 @@ class WhisAgent(QObject):
         selected_model = self.select_model(user_prompt)
 
         system_content = WHIS_SYSTEM_PROMPT
+        if ui_ctx_block:
+            has_selected_text = bool(isinstance(ui_context, dict) and str(ui_context.get("selected_text") or "").strip())
+            system_content += (
+                "\n\nCONTESTO DI LAVORO ATTIVO IN FLOWLOCAL:\n"
+                "Hai già visibilità diretta sul contesto attivo dell'utente allegato qui sotto. "
+                "Rispondi direttamente in italiano sfruttando esclusivamente quel contesto, senza inventare o citare altre note non pertinenti. "
+            )
+            if has_selected_text:
+                system_content += (
+                    "L'utente ha selezionato uno specifico brano in `[TESTO SELEZIONATO DALL'UTENTE]`. "
+                    "Lavora ESCLUSIVAMENTE su quel brano: NON introdurre altri argomenti, NON commentare altre note o funzionalità, "
+                    "e se ti viene chiesto di migliorare, correggere o riscrivere, restituisci SOLO il testo rifinito in Markdown/LaTeX pulito senza preamboli né commenti finali."
+                )
+            else:
+                system_content += (
+                    "Se ti viene chiesto di riscrivere, riassumere, correggere o redigere testo destinato alla nota, "
+                    "restituisci direttamente Markdown/LaTeX pulito e pronto all'inserimento senza preamboli inutili."
+                )
         if metadata.get("screen_ocr"):
             system_content = (
                 "ATTENZIONE: HAI ACCESSO VISIVO NATIVO (MULTIMODALE VISION + OCR LOCALE) ALLO SCHERMO DELL'UTENTE. "
                 "È ASSOLUTAMENTE VIETATO dire 'Non posso vedere il tuo schermo' o 'Sono un modello testuale'. "
                 "Qui sotto trovi l'immagine dello schermo, il titolo della finestra attiva e il testo estratto dall'OCR: "
                 "usali direttamente per rispondere con precisione a cosa sta guardando l'utente!\n\n"
-                + WHIS_SYSTEM_PROMPT
+                + system_content
             )
 
         messages = [{"role": "system", "content": system_content}]
@@ -1470,8 +1642,15 @@ class WhisAgent(QObject):
 
         complete_text = "".join(full_response).strip()
 
-        # Aggiorna la memoria della sessione
-        self.history.append({"role": "user", "content": prompt_with_context})
+        # Aggiorna la memoria della sessione (evitando di duplicare blocchi ui_context enormi nei turni successivi)
+        history_user_entry = prompt_with_context
+        if ui_ctx_block:
+            sel_snip = str((ui_context or {}).get("selected_text") or "").strip()[:300]
+            if sel_snip:
+                history_user_entry = f"[Selezione: {sel_snip}]\n{user_prompt}"
+            else:
+                history_user_entry = user_prompt
+        self.history.append({"role": "user", "content": history_user_entry})
         self.history.append({"role": "assistant", "content": complete_text})
         if len(self.history) > 10:
             self.history = self.history[-10:]
@@ -1516,11 +1695,18 @@ class WhisStreamWorker(QThread):
     metadata_detected = pyqtSignal(dict)      # (metadata: {"screen_ocr": bool, "rag_source": str, "clipboard": bool})
     error_occurred = pyqtSignal(str)
 
-    def __init__(self, agent: WhisAgent, user_prompt: str, explicit_selection: Optional[str] = None):
+    def __init__(
+        self,
+        agent: WhisAgent,
+        user_prompt: str,
+        explicit_selection: Optional[str] = None,
+        ui_context: Optional[Dict[str, Any]] = None,
+    ):
         super().__init__()
         self.agent = agent
         self.user_prompt = user_prompt
         self.explicit_selection = explicit_selection
+        self.ui_context = ui_context
 
     def run(self):
         try:
@@ -1530,7 +1716,8 @@ class WhisStreamWorker(QThread):
                 on_done=lambda full_text, model, *args: self.finished_response.emit(full_text, model),
                 on_error=lambda err: self.error_occurred.emit(err),
                 explicit_selection=self.explicit_selection,
-                on_metadata=lambda meta: self.metadata_detected.emit(meta)
+                on_metadata=lambda meta: self.metadata_detected.emit(meta),
+                ui_context=self.ui_context,
             )
         except Exception as e:
             self.error_occurred.emit(str(e))

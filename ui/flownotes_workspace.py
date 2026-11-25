@@ -1981,6 +1981,7 @@ class EditorPane(QWidget):
     summarizeRequested = pyqtSignal()
     flashcardsRequested = pyqtSignal()
     sendSelectionToSplitRequested = pyqtSignal(str)
+    askWhisSelectionRequested = pyqtSignal(str)
     acquireLockRequested = pyqtSignal(object)
     publishGroupRequested = pyqtSignal(object)
     copyToLocalRequested = pyqtSignal(object)
@@ -2311,6 +2312,7 @@ class EditorPane(QWidget):
         self.editor_body.studioViewChanged.connect(self.studioViewChanged.emit)
         self.editor_body.rsvpRequested.connect(self.rsvpRequested.emit)
         self.editor_body.sendSelectionToSplitRequested.connect(self.sendSelectionToSplitRequested.emit)
+        self.editor_body.askWhisSelectionRequested.connect(self.askWhisSelectionRequested.emit)
         self.editor_body.wikilinkClicked.connect(self.wikilinkOpenRequested.emit)
 
         for w in (self, self.editor_title, self.editor_body, self.editor_subject, self.editor_topic, self.tab_bar_widget):

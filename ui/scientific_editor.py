@@ -2997,6 +2997,7 @@ class _SelectionFloatingToolbar(QFrame):
     highlightClicked = pyqtSignal(str)
     colorClicked = pyqtSignal(str)
     aiCorrectClicked = pyqtSignal()
+    askWhisClicked = pyqtSignal()
     linkNoteClicked = pyqtSignal()
     rsvpClicked = pyqtSignal()
     captureSelectionRequested = pyqtSignal()
@@ -3040,6 +3041,10 @@ class _SelectionFloatingToolbar(QFrame):
         self._ai_btn.clicked.connect(self.aiCorrectClicked.emit)
         lay.addWidget(self._ai_btn)
 
+        self._whis_btn = _make_tool_btn("✦ Whis", "Chiedi a Whis sul testo selezionato")
+        self._whis_btn.clicked.connect(self.askWhisClicked.emit)
+        lay.addWidget(self._whis_btn)
+
         self._link_btn = _make_tool_btn("🔗 Collega", "Collega ad un'altra nota ([[...]])")
         self._link_btn.clicked.connect(self.linkNoteClicked.emit)
         lay.addWidget(self._link_btn)
@@ -3057,6 +3062,7 @@ class _SelectionFloatingToolbar(QFrame):
             self._highlight_btn,
             self._color_btn,
             self._ai_btn,
+            self._whis_btn,
             self._link_btn,
             self._rsvp_btn,
         ]
@@ -3154,6 +3160,7 @@ class ScientificNoteEditor(QTextEdit):
     togglePlayRequested = pyqtSignal()
     rsvpRequested = pyqtSignal(int, bool)  # (start_block_idx, selection_only)
     sendSelectionToSplitRequested = pyqtSignal(str)
+    askWhisSelectionRequested = pyqtSignal(str)
     wikilinkClicked = pyqtSignal(str)  # titolo nota cliccato con Ctrl+Click su [[Titolo]]
 
     def __init__(self, parent: Optional[QWidget] = None, dark_mode: bool = True, reading_mode: bool = False):
@@ -3222,6 +3229,7 @@ class ScientificNoteEditor(QTextEdit):
         self._selection_toolbar.highlightClicked.connect(self._on_selection_highlight_clicked)
         self._selection_toolbar.colorClicked.connect(self._on_selection_color_clicked)
         self._selection_toolbar.aiCorrectClicked.connect(self._on_selection_ai_correct_clicked)
+        self._selection_toolbar.askWhisClicked.connect(self._on_selection_whis_clicked)
         self._selection_toolbar.linkNoteClicked.connect(self._on_selection_link_note_clicked)
         self._selection_toolbar.rsvpClicked.connect(self._on_selection_rsvp_clicked)
         self._selection_toolbar.hide()
@@ -5673,6 +5681,95 @@ class ScientificNoteEditor(QTextEdit):
         self.setTextCursor(new_cur)
         self._on_internal_text_changed()
         self._show_discrete_toast("✓ Testo corretto con AI (Ctrl+Z per annullare)")
+
+    def _on_selection_whis_clicked(self):
+        if self._is_studio_view:
+            return
+        rng = self._resolve_selection_range()
+        if rng is None:
+            return
+        s_pos, e_pos = rng
+        c = QTextCursor(self.document())
+        c.setPosition(s_pos)
+        c.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+        sel_text = c.selectedText().replace("\u2029", "\n").strip()
+        if not sel_text:
+            return
+        self._saved_selection_range = rng
+        self._selection_toolbar.hide()
+        self.askWhisSelectionRequested.emit(sel_text)
+
+    def _insert_whis_lines_at_cursor(self, cur: QTextCursor, clean_text: str):
+        lines = clean_text.split("\n")
+        for idx, line_txt in enumerate(lines):
+            if idx > 0:
+                cur.insertBlock()
+            if line_txt:
+                self._insert_inline_formatted_text(cur, line_txt)
+
+    def insert_text_from_whis(self, text: str) -> bool:
+        """Inserisce testo generato da Whis al cursore in formato WYSIWYG (singolo step Undo)."""
+        if self._is_studio_view or self.isReadOnly():
+            return False
+        clean_text = (text or "").replace("\r\n", "\n").strip()
+        if not clean_text:
+            return False
+
+        cur = self.textCursor()
+        if cur.hasSelection():
+            cur.setPosition(max(cur.selectionStart(), cur.selectionEnd()))
+        need_space = False
+        if cur.positionInBlock() > 0:
+            prev_ch = cur.block().text()[cur.positionInBlock() - 1]
+            if prev_ch and not prev_ch.isspace() and clean_text[0] not in ".,;:!?)]}\n":
+                need_space = True
+        cur.beginEditBlock()
+        if need_space:
+            cur.insertText(" ", QTextCharFormat())
+        self._insert_whis_lines_at_cursor(cur, clean_text)
+        cur.endEditBlock()
+        self.setTextCursor(cur)
+        self._on_internal_text_changed()
+        self._show_discrete_toast("✓ Inserito da Whis (Ctrl+Z per annullare)")
+        return True
+
+    def replace_selection_from_whis(self, text: str) -> bool:
+        """Sostituisce la selezione corrente (o salvata) con il testo generato da Whis in WYSIWYG."""
+        if self._is_studio_view or self.isReadOnly():
+            return False
+        clean_text = (text or "").replace("\r\n", "\n").strip()
+        if not clean_text:
+            return False
+
+        rng = self._resolve_selection_range()
+        if rng is None:
+            return self.insert_text_from_whis(clean_text)
+
+        s_pos, e_pos = rng
+        doc = self.document()
+        max_pos = max(0, doc.characterCount() - 1)
+        s_pos = max(0, min(s_pos, max_pos))
+        e_pos = max(0, min(e_pos, max_pos))
+        if e_pos <= s_pos:
+            return self.insert_text_from_whis(clean_text)
+
+        cur = QTextCursor(doc)
+        cur.beginEditBlock()
+        cur.setPosition(s_pos)
+        cur.setPosition(e_pos, QTextCursor.MoveMode.KeepAnchor)
+        cur.removeSelectedText()
+        self._insert_whis_lines_at_cursor(cur, clean_text)
+        end_pos = cur.position()
+        cur.endEditBlock()
+
+        self._saved_selection_range = (s_pos, end_pos)
+        sel_cur = QTextCursor(doc)
+        sel_cur.setPosition(s_pos)
+        sel_cur.setPosition(end_pos, QTextCursor.MoveMode.KeepAnchor)
+        self.setTextCursor(sel_cur)
+        self._on_internal_text_changed()
+        self._show_discrete_toast("✓ Selezione sostituita da Whis (Ctrl+Z per annullare)")
+        return True
 
     def _on_selection_link_note_clicked(self):
         if self._is_studio_view:
