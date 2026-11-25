@@ -2027,6 +2027,10 @@ class FlowLocalHub(QMainWindow):
         self.nk_tree.deleteFolderRequested.connect(self._on_nk_delete_folder)
         self.nk_tree.toggleNoteStudiedRequested.connect(self._on_nk_toggle_studied)
         self.nk_tree.toggleNoteFavoriteRequested.connect(self._on_nk_toggle_favorite)
+        self.nk_tree.trashNoteRequested.connect(self._on_nk_trash_note)
+        self.nk_tree.restoreNoteRequested.connect(self._on_nk_restore_note)
+        self.nk_tree.permanentDeleteNoteRequested.connect(self._on_nk_permanent_delete_note)
+        self.nk_tree.emptyTrashRequested.connect(self._on_nk_empty_trash)
         self.nk_tree.nodeLeftClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=False))
         self.nk_tree.nodeMiddleClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
         self.nk_tree.nodeDoubleClicked.connect(lambda data: self._open_nk_tree_node(data, in_new_tab=True))
@@ -2278,6 +2282,8 @@ class FlowLocalHub(QMainWindow):
             pane.nodeDroppedFromTree.connect(self._on_nk_node_dropped_from_tree)
             pane.wikilinkOpenRequested.connect(self._open_note_by_wikilink_title)
             pane.noteIdOpenRequested.connect(self._load_note_into_nk_editor)
+            pane.restoreTrashedNoteRequested.connect(self._on_nk_restore_note)
+            pane.permanentDeleteTrashedNoteRequested.connect(self._on_nk_permanent_delete_note)
             pane.breadcrumb.rootClicked.connect(self._on_nk_breadcrumb_root_clicked)
             pane.breadcrumb.subjectClicked.connect(self._on_nk_breadcrumb_subject_clicked)
 
@@ -2681,6 +2687,8 @@ class FlowLocalHub(QMainWindow):
             self._open_all_todos_dialog()
             return
         if kind == "note":
+            self._load_note_into_nk_editor(int(data[1]), pane=target_pane, in_new_tab=in_new_tab)
+        elif kind == "trashed_note":
             self._load_note_into_nk_editor(int(data[1]), pane=target_pane, in_new_tab=in_new_tab)
         elif kind == "group_board":
             self._open_group_board_in_pane(target_pane, int(data[1]), in_new_tab=in_new_tab)
@@ -3188,6 +3196,40 @@ class FlowLocalHub(QMainWindow):
             for n in orphan_notes:
                 self.nk_tree.addTopLevelItem(self._make_note_leaf_item(n, p, max_len=32))
 
+        # 4. Cestino ispezionabile in fondo all'albero
+        trashed_notes = db.get_trashed_study_notes(profile=prof_filter, search_query=sq)
+        trash_item = QTreeWidgetItem(["Cestino"])
+        trash_item.setData(0, Qt.ItemDataRole.UserRole, ("trash_root",))
+        trash_item.setData(0, ROLE_NODE_DATA, ("trash_root",))
+        trash_item.setData(0, ROLE_IS_FOLDER, True)
+        trash_item.setData(0, ROLE_LOCKED_FOLDER, True)
+        trash_item.setData(0, ROLE_COUNT, len(trashed_notes))
+        trash_item.setIcon(
+            0,
+            get_icon(
+                "trash",
+                theme_key=self._current_theme,
+                role="danger" if trashed_notes else "subtitle",
+                size=15,
+            ),
+        )
+        trash_item.setFont(0, f_top)
+        trash_item.setForeground(0, QBrush(QColor(p["title"] if trashed_notes else p["subtitle"])))
+        trash_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        for tn in trashed_notes:
+            clean_t = strip_markdown_syntax((tn.get("title") or "Senza titolo").replace("Nota: ", "").strip()) or "Senza titolo"
+            t_leaf = QTreeWidgetItem([f"🗑 {clean_t[:30]}"])
+            t_leaf.setData(0, Qt.ItemDataRole.UserRole, ("trashed_note", tn["id"]))
+            t_leaf.setData(0, ROLE_NODE_DATA, ("trashed_note", tn["id"]))
+            t_leaf.setData(0, ROLE_IS_FOLDER, False)
+            t_leaf.setToolTip(0, f"{clean_t} (nel Cestino)")
+            t_leaf.setForeground(0, QBrush(QColor(p["subtitle"])))
+            t_leaf.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            trash_item.addChild(t_leaf)
+        self.nk_tree.addTopLevelItem(trash_item)
+        if sq and trashed_notes:
+            trash_item.setExpanded(True)
+
         self.nk_tree.blockSignals(False)
         self._refresh_nk_notes_list()
 
@@ -3509,6 +3551,99 @@ class FlowLocalHub(QMainWindow):
         if tab is None or tab.workspace_type != "local" or tab.note_id is None:
             return
         self._on_nk_toggle_favorite(int(tab.note_id))
+
+    def _on_nk_trash_note(self, note_id: int):
+        nid = int(note_id)
+        note = db.get_study_note_by_id(nid)
+        if not note:
+            return
+        db.trash_study_note(nid)
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is not None:
+                pane.close_tabs_for_note_id(nid)
+        if getattr(self, "_nk_selected_note_id", None) == nid:
+            self._nk_selected_note_id = None
+        self._refresh_notekeeper()
+        self.save_workspace_session_state()
+        title_lbl = (note.get("title") or "Nota").strip()
+        self.show_toast(
+            f"'{title_lbl}' spostata nel Cestino.",
+            title="Cestino",
+            level="info",
+            action_label="Annulla",
+            on_action=lambda target_id=nid: self._on_nk_restore_note(target_id),
+        )
+
+    def _on_nk_restore_note(self, note_id: int):
+        nid = int(note_id)
+        note = db.get_study_note_by_id(nid)
+        if not note:
+            return
+        db.restore_study_note(nid)
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is None:
+                continue
+            for idx, tab in enumerate(pane.tabs):
+                if tab.workspace_type == "local" and tab.note_id is not None and int(tab.note_id) == nid:
+                    tab.is_trashed = False
+                    pane.tab_bar_widget.update_tab_title(idx, tab)
+                    if idx == pane.current_tab_index:
+                        pane._render_tab(tab)
+        self._refresh_notekeeper()
+        self._sync_toolbar_from_active_pane()
+        self.save_workspace_session_state()
+        title_lbl = (note.get("title") or "Nota").strip()
+        self.show_toast(f"'{title_lbl}' ripristinata dal Cestino.", title="Nota ripristinata", level="success")
+
+    def _on_nk_permanent_delete_note(self, note_id: int):
+        nid = int(note_id)
+        note = db.get_study_note_by_id(nid)
+        title_lbl = (note.get("title") or "questa nota").strip() if note else "questa nota"
+        reply = QMessageBox.question(
+            self,
+            "Elimina definitivamente",
+            f"Vuoi eliminare definitivamente '{title_lbl}' e tutte le eventuali flashcard e relazioni associate?\n"
+            "Questa operazione non può essere annullata.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is not None:
+                pane.close_tabs_for_note_id(nid)
+        db.delete_study_note(nid)
+        if getattr(self, "_nk_selected_note_id", None) == nid:
+            self._nk_selected_note_id = None
+        self._refresh_notekeeper()
+        self.save_workspace_session_state()
+        self.show_toast(f"'{title_lbl}' eliminata definitivamente.", title="Cestino", level="warning")
+
+    def _on_nk_empty_trash(self):
+        trashed = db.get_trashed_study_notes()
+        if not trashed:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Svuota Cestino",
+            f"Eliminare definitivamente tutte le {len(trashed)} note presenti nel Cestino?\n"
+            "Questa operazione non può essere annullata.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        for tn in trashed:
+            nid = int(tn["id"])
+            for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+                if pane is not None:
+                    pane.close_tabs_for_note_id(nid)
+            if getattr(self, "_nk_selected_note_id", None) == nid:
+                self._nk_selected_note_id = None
+        removed = db.empty_trash()
+        self._refresh_notekeeper()
+        self.save_workspace_session_state()
+        self.show_toast(f"Cestino svuotato ({removed} note eliminate).", title="Cestino", level="warning")
 
     def _open_note_by_wikilink_title(self, title: str):
         """Apre la nota locale corrispondente a un [[wikilink]] (o ne propone la creazione)."""
@@ -3966,6 +4101,7 @@ class FlowLocalHub(QMainWindow):
             content_markdown=note.get("content_markdown") or "",
             is_dirty=False,
             is_favorite=bool(note.get("is_favorite")),
+            is_trashed=bool(note.get("trashed")),
             auto_title_done=bool(title_txt and title_txt.lower() not in ("nuova nota", "appunto senza titolo", "senza titolo")),
             created_by_name=note.get("created_by_name") or "",
             created_by_email=note.get("created_by_email") or "",

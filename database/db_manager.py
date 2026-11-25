@@ -1689,6 +1689,78 @@ class DatabaseManager:
         except Exception:
             pass
 
+    def trash_study_note(self, note_id: int) -> None:
+        """Sposta una nota nel Cestino (trashed = 1) aggiornando updated_at."""
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def _write():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE study_notes SET trashed = 1, updated_at = ? WHERE id = ?",
+                (now_utc, int(note_id)),
+            )
+            conn.commit()
+
+        self._run_write_with_retry(_write)
+
+    def restore_study_note(self, note_id: int) -> None:
+        """Ripristina una nota dal Cestino (trashed = 0) aggiornando updated_at."""
+        now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        def _write():
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE study_notes SET trashed = 0, updated_at = ? WHERE id = ?",
+                (now_utc, int(note_id)),
+            )
+            conn.commit()
+
+        self._run_write_with_retry(_write)
+
+    def get_trashed_study_notes(
+        self,
+        profile: Optional[str] = None,
+        search_query: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Restituisce le note nel Cestino (trashed = 1), filtrate opzionalmente per profilo e ricerca."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        query = """
+            SELECT id, title, content_markdown, note_type, tags, parent_note_id,
+                   profile, subject, topic, audio_path, folder_id, is_studied,
+                   COALESCE(is_favorite, 0) AS is_favorite, created_at, updated_at, trashed,
+                   created_by_name, created_by_email, created_by_avatar,
+                   last_edited_by_name, last_edited_by_email, last_edited_at_utc
+            FROM study_notes
+            WHERE COALESCE(trashed, 0) = 1
+              AND parent_note_id IS NULL
+              AND note_type != 'Flashcard'
+        """
+        params: List[Any] = []
+        if profile and profile.strip() not in ("", "Tutti", "Tutti i profili"):
+            query += " AND profile = ?"
+            params.append(profile.strip())
+        sq = (search_query or "").strip()
+        if sq:
+            like = f"%{sq}%"
+            query += " AND (title LIKE ? OR content_markdown LIKE ? OR subject LIKE ? OR topic LIKE ?)"
+            params.extend([like, like, like, like])
+        query += " ORDER BY COALESCE(updated_at, created_at) DESC, id DESC"
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+    def empty_trash(self) -> int:
+        """Elimina definitivamente tutte le note nel Cestino e restituisce il conteggio rimosso."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM study_notes WHERE COALESCE(trashed, 0) = 1")
+        ids = [int(row["id"]) for row in cursor.fetchall()]
+        for nid in ids:
+            self.delete_study_note(nid)
+        return len(ids)
+
     # --- GRAFO DELLA CONOSCENZA & NOTE COLLEGATE (OBSIDIAN STYLE) ---
     def add_note_link(self, source_id: int, target_id: int, reason: str = "") -> Optional[int]:
         """Aggiunge o aggiorna una connessione tra due note. Non ammette auto-connessioni."""

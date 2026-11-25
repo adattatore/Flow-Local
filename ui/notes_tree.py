@@ -194,6 +194,10 @@ class SamsungNotesTreeWidget(QTreeWidget):
     deleteFolderRequested = pyqtSignal(int)        # folder_id
     toggleNoteStudiedRequested = pyqtSignal(int)   # note_id
     toggleNoteFavoriteRequested = pyqtSignal(int)  # note_id
+    trashNoteRequested = pyqtSignal(int)           # note_id
+    restoreNoteRequested = pyqtSignal(int)         # note_id
+    permanentDeleteNoteRequested = pyqtSignal(int) # note_id
+    emptyTrashRequested = pyqtSignal()
     openInNewTabRequested = pyqtSignal(object)     # node_data tuple
     openInSplitRequested = pyqtSignal(object)      # node_data tuple
     nodeLeftClicked = pyqtSignal(object)           # node_data tuple
@@ -284,7 +288,7 @@ class SamsungNotesTreeWidget(QTreeWidget):
             item = self.itemAt(event.pos())
             if item is not None:
                 data = item.data(0, ROLE_NODE_DATA)
-                if data and data[0] in ("note", "group_note", "group_board"):
+                if data and data[0] in ("note", "trashed_note", "group_note", "group_board"):
                     self.nodeMiddleClicked.emit(data)
                     event.accept()
                     return
@@ -317,7 +321,7 @@ class SamsungNotesTreeWidget(QTreeWidget):
             item = self.itemAt(event.pos())
             if dist < QApplication.startDragDistance() and item is not None and item is self._left_press_item:
                 data = item.data(0, ROLE_NODE_DATA)
-                if data and data[0] in ("note", "group_note", "group_board", "todos"):
+                if data and data[0] in ("note", "trashed_note", "group_note", "group_board", "todos"):
                     self.nodeLeftClicked.emit(data)
             self._left_press_pos = None
             self._left_press_item = None
@@ -345,7 +349,7 @@ class SamsungNotesTreeWidget(QTreeWidget):
             item = self.itemAt(event.pos())
             if item is not None:
                 data = item.data(0, ROLE_NODE_DATA)
-                if data and data[0] in ("note", "group_note", "group_board"):
+                if data and data[0] in ("note", "trashed_note", "group_note", "group_board"):
                     self.nodeDoubleClicked.emit(data)
                     event.accept()
                     return
@@ -412,6 +416,8 @@ class SamsungNotesTreeWidget(QTreeWidget):
             menu.addSeparator()
             act_fav = menu.addAction(get_icon("star", role="warning", size=14), "Aggiungi / Rimuovi dai Preferiti")
             act_st = menu.addAction(get_icon("check", role="success", size=14), "Segna / Rimuovi Studiata")
+            menu.addSeparator()
+            act_trash = menu.addAction(get_icon("trash", role="danger", size=14), "Sposta nel Cestino")
             chosen = menu.exec(global_pos)
             if chosen == act_tab:
                 self.openInNewTabRequested.emit(data)
@@ -421,6 +427,27 @@ class SamsungNotesTreeWidget(QTreeWidget):
                 self.toggleNoteFavoriteRequested.emit(note_id)
             elif chosen == act_st:
                 self.toggleNoteStudiedRequested.emit(note_id)
+            elif chosen == act_trash:
+                self.trashNoteRequested.emit(note_id)
+        elif data[0] == "trash_root":
+            act_empty = menu.addAction(get_icon("trash", role="danger", size=14), "Svuota Cestino")
+            act_empty.setEnabled(item.childCount() > 0)
+            chosen = menu.exec(global_pos)
+            if chosen == act_empty:
+                self.emptyTrashRequested.emit()
+        elif data[0] == "trashed_note":
+            note_id = int(data[1])
+            act_inspect = menu.addAction(get_icon("file", size=14), "Ispeziona nota")
+            menu.addSeparator()
+            act_restore = menu.addAction(get_icon("refresh", role="success", size=14), "Ripristina nota")
+            act_perm_del = menu.addAction(get_icon("trash", role="danger", size=14), "Elimina definitivamente")
+            chosen = menu.exec(global_pos)
+            if chosen == act_inspect:
+                self.nodeLeftClicked.emit(data)
+            elif chosen == act_restore:
+                self.restoreNoteRequested.emit(note_id)
+            elif chosen == act_perm_del:
+                self.permanentDeleteNoteRequested.emit(note_id)
         elif data[0] in ("group_note", "group_board"):
             act_tab = menu.addAction(get_icon("plus", size=14), "Apri in nuova scheda")
             act_split = menu.addAction(get_icon("split_h", size=14), "Affianca a destra (Split View)")

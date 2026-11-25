@@ -3139,6 +3139,16 @@ class ScientificNoteEditor(QTextEdit):
                     c_cur.insertText(val)
         return table
 
+    def _heading_char_format(self, level: int = 1) -> QTextCharFormat:
+        scale = max(0.8, min(1.5, self._font_scale_pct / 100.0))
+        size_map = {1: 15.5, 2: 13.5, 3: 12.0, 4: 11.5}
+        pt_size = size_map.get(level, 11.5)
+        cf = QTextCharFormat()
+        cf.setFontWeight(QFont.Weight.Bold if level <= 2 else QFont.Weight.DemiBold)
+        cf.setFontPointSize(round(pt_size * scale, 1))
+        cf.setForeground(QColor("#F8FAFC" if self._dark_mode else "#0F172A"))
+        return cf
+
     def _apply_heading_block_at_cursor(self, cursor: QTextCursor, level: int = 1, text: str = ""):
         bf = QTextBlockFormat()
         bf.setTopMargin(12 if level == 1 else (9 if level == 2 else 6))
@@ -3148,13 +3158,8 @@ class ScientificNoteEditor(QTextEdit):
         cursor.setBlockFormat(bf)
         cursor.block().setUserData(BlockUserData(kind))
 
-        scale = max(0.8, min(1.5, self._font_scale_pct / 100.0))
-        size_map = {1: 15.5, 2: 13.5, 3: 12.0, 4: 11.5}
-        pt_size = size_map.get(level, 11.5)
-        cf = QTextCharFormat()
-        cf.setFontWeight(QFont.Weight.Bold if level <= 2 else QFont.Weight.DemiBold)
-        cf.setFontPointSize(round(pt_size * scale, 1))
-        cf.setForeground(QColor("#F8FAFC" if self._dark_mode else "#0F172A"))
+        cf = self._heading_char_format(level)
+        cursor.setBlockCharFormat(cf)
         cursor.setCharFormat(cf)
         if text:
             cursor.insertText(text, cf)
@@ -4114,6 +4119,7 @@ class ScientificNoteEditor(QTextEdit):
         if source.hasText():
             plain = source.text()
             if plain:
+                norm_plain = plain.replace("\r\n", "\n").replace("\r", "\n")
                 cur = self.textCursor()
                 blk_kind = cur.block().blockFormat().property(PROP_BLOCK_KIND)
                 cur.beginEditBlock()
@@ -4121,10 +4127,52 @@ class ScientificNoteEditor(QTextEdit):
                     cur.insertText(plain)
                 elif cur.currentFrame() is not None and cur.currentFrame().frameFormat().hasProperty(PROP_FRAME_KIND):
                     cur.insertText(plain)
+                elif blk_kind in ("h1", "h2", "h3", "h4"):
+                    lvl = int(blk_kind[1])
+                    h_cf = self._heading_char_format(lvl)
+                    lines = norm_plain.split("\n")
+                    first_line = re.sub(r"^#{1,4}\s+", "", lines[0])
+                    cur.setBlockCharFormat(h_cf)
+                    cur.insertText(first_line, h_cf)
+                    for extra_line in lines[1:]:
+                        cur.insertBlock()
+                        cur.setBlockFormat(QTextBlockFormat())
+                        cur.setBlockCharFormat(QTextCharFormat())
+                        cur.setCharFormat(QTextCharFormat())
+                        cur.block().setUserData(None)
+                        hm = re.match(r"^(#{1,4})\s+(.*)$", extra_line)
+                        if hm:
+                            self._apply_heading_block_at_cursor(cur, level=len(hm.group(1)), text=hm.group(2))
+                        else:
+                            clean_cf = QTextCharFormat()
+                            clean_cf.clearForeground()
+                            cur.insertText(extra_line, clean_cf)
+                    cur.endEditBlock()
+                    self.setTextCursor(cur)
+                    self.setCurrentCharFormat(h_cf if len(lines) == 1 else QTextCharFormat())
+                    return
                 else:
-                    clean_cf = QTextCharFormat()
-                    clean_cf.clearForeground()
-                    cur.insertText(plain, clean_cf)
+                    is_empty_start = cur.atBlockStart() and cur.block().text() == ""
+                    if is_empty_start and ("\n" in norm_plain or re.match(r"^#{1,4}\s+", norm_plain)):
+                        lines = norm_plain.split("\n")
+                        for idx, ln in enumerate(lines):
+                            if idx > 0:
+                                cur.insertBlock()
+                                cur.setBlockFormat(QTextBlockFormat())
+                                cur.setBlockCharFormat(QTextCharFormat())
+                                cur.setCharFormat(QTextCharFormat())
+                                cur.block().setUserData(None)
+                            hm = re.match(r"^(#{1,4})\s+(.*)$", ln)
+                            if hm and cur.atBlockStart() and cur.block().text() == "":
+                                self._apply_heading_block_at_cursor(cur, level=len(hm.group(1)), text=hm.group(2))
+                            else:
+                                clean_cf = QTextCharFormat()
+                                clean_cf.clearForeground()
+                                cur.insertText(ln, clean_cf)
+                    else:
+                        clean_cf = QTextCharFormat()
+                        clean_cf.clearForeground()
+                        cur.insertText(plain, clean_cf)
                 cur.endEditBlock()
                 self.setTextCursor(cur)
                 return
@@ -5087,16 +5135,17 @@ class ScientificNoteEditor(QTextEdit):
                 self.setTextCursor(cursor)
                 return
 
-        # 5. Auto-conversione "> " -> Quote, "[] " -> To-Do, "# "/"## "/"### " -> H1/H2/H3
+        # 5. Auto-conversione "> " -> Quote, "[] " -> To-Do, "# "/"## "/"### "/"#### " -> H1/H2/H3/H4
         if key == Qt.Key.Key_Space and not b_kind:
             before_txt = block.text()[: cursor.positionInBlock()]
-            if before_txt in ("#", "##", "###"):
+            if before_txt in ("#", "##", "###", "####"):
                 lvl = len(before_txt)
                 cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
                 cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor, len(before_txt))
                 cursor.removeSelectedText()
                 self._apply_heading_block_at_cursor(cursor, level=lvl, text="")
                 self.setTextCursor(cursor)
+                self.setCurrentCharFormat(self._heading_char_format(lvl))
                 return
             if before_txt == ">":
                 cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)

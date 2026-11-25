@@ -69,6 +69,7 @@ class TabContext:
     is_studio_view: bool = False
     is_new_empty: bool = False
     is_favorite: bool = False
+    is_trashed: bool = False
     auto_title_done: bool = False
     created_by_name: str = ""
     created_by_email: str = ""
@@ -81,6 +82,8 @@ class TabContext:
         base = (self.title or "Nuova nota").strip()
         if len(base) > max_len:
             base = base[: max_len - 1].rstrip() + "…"
+        if self.is_trashed:
+            return f"[CESTINO] {base}"
         dirty_mark = " *" if self.is_dirty else ""
         if self.workspace_type in ("group", "board") and self.group_rec:
             gname = (self.group_rec.get("group_name") or "GRP").strip()
@@ -841,7 +844,7 @@ class BreadcrumbBar(QWidget):
         subj = tab.subject or "Generale"
         title = tab.title or "Nuova nota"
         self._current_subject = subj
-        self.root_btn.setText("Il mio Quaderno")
+        self.root_btn.setText("Cestino" if tab.is_trashed else "Il mio Quaderno")
         self.sep_1.setVisible(True)
         self.subj_btn.setText(subj)
         self.subj_btn.setVisible(True)
@@ -851,7 +854,7 @@ class BreadcrumbBar(QWidget):
         self.btn_acquire_lock.setVisible(False)
         self.btn_publish_group.setVisible(False)
         self.btn_copy_local.setVisible(False)
-        self.btn_publish_local.setVisible(True)
+        self.btn_publish_local.setVisible(not tab.is_trashed)
 
 
 class GroupBoardWidget(QWidget):
@@ -1075,6 +1078,8 @@ class EditorPane(QWidget):
     nodeDroppedFromTree = pyqtSignal(object, object)  # node_data, target_pane
     wikilinkOpenRequested = pyqtSignal(str)  # titolo nota da [[wikilink]]
     noteIdOpenRequested = pyqtSignal(int)    # apertura nota da pannello Backlinks
+    restoreTrashedNoteRequested = pyqtSignal(int)
+    permanentDeleteTrashedNoteRequested = pyqtSignal(int)
 
     def __init__(
         self,
@@ -1147,6 +1152,38 @@ class EditorPane(QWidget):
         ed_lay = QVBoxLayout(self.editor_page)
         ed_lay.setContentsMargins(12, 10, 12, 6)
         ed_lay.setSpacing(6)
+
+        self.trash_banner = QFrame()
+        self.trash_banner.setObjectName("NKTrashBanner")
+        self.trash_banner.setStyleSheet(
+            "QFrame#NKTrashBanner { background-color: rgba(239, 68, 68, 0.12); "
+            "border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 8px; }"
+        )
+        tb_lay = QHBoxLayout(self.trash_banner)
+        tb_lay.setContentsMargins(10, 6, 10, 6)
+        tb_lay.setSpacing(8)
+        self._trash_banner_lbl = QLabel("Questa nota è nel Cestino (sola lettura)")
+        self._trash_banner_lbl.setWordWrap(True)
+        self._trash_banner_lbl.setStyleSheet(
+            "background: transparent; border: none; color: #FCA5A5; font-size: 12px; font-weight: 600;"
+            if is_dark else
+            "background: transparent; border: none; color: #B91C1C; font-size: 12px; font-weight: 600;"
+        )
+        tb_lay.addWidget(self._trash_banner_lbl, 1)
+        self._trash_restore_btn = QPushButton("Ripristina")
+        self._trash_restore_btn.setObjectName("NKToolbarPill")
+        self._trash_restore_btn.setFixedHeight(26)
+        self._trash_restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._trash_restore_btn.clicked.connect(self._on_trash_restore_clicked)
+        tb_lay.addWidget(self._trash_restore_btn)
+        self._trash_perm_del_btn = QPushButton("Elimina definitivamente")
+        self._trash_perm_del_btn.setObjectName("NKToolbarPill")
+        self._trash_perm_del_btn.setFixedHeight(26)
+        self._trash_perm_del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._trash_perm_del_btn.clicked.connect(self._on_trash_perm_delete_clicked)
+        tb_lay.addWidget(self._trash_perm_del_btn)
+        self.trash_banner.hide()
+        ed_lay.addWidget(self.trash_banner)
 
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -1384,6 +1421,11 @@ class EditorPane(QWidget):
             self.editor_title.set_dark_mode(is_dark)
         if hasattr(self, "btn_auto_title"):
             self.btn_auto_title.setIcon(get_icon("magic", theme_key=theme_key, role="accent", size=14))
+        if hasattr(self, "_trash_banner_lbl"):
+            col_tr = "#FCA5A5" if is_dark else "#B91C1C"
+            self._trash_banner_lbl.setStyleSheet(
+                f"background: transparent; border: none; color: {col_tr}; font-size: 12px; font-weight: 600;"
+            )
         self.set_active_pane(self._is_active_pane)
 
     def active_tab(self) -> Optional[TabContext]:
@@ -1403,6 +1445,45 @@ class EditorPane(QWidget):
         tab.content_markdown = self.editor_body.get_markdown_text()
         tab.is_studio_view = bool(self.editor_body.is_studio_view)
 
+    def _on_trash_restore_clicked(self):
+        tab = self.active_tab()
+        if tab and tab.note_id is not None:
+            self.restoreTrashedNoteRequested.emit(int(tab.note_id))
+
+    def _on_trash_perm_delete_clicked(self):
+        tab = self.active_tab()
+        if tab and tab.note_id is not None:
+            self.permanentDeleteTrashedNoteRequested.emit(int(tab.note_id))
+
+    def close_tabs_for_note_id(self, note_id: int):
+        """Chiude tutte le schede locali associate a note_id senza autosave o conferme."""
+        target_id = int(note_id)
+        matching = [
+            i for i, t in enumerate(self.tabs)
+            if t.workspace_type == "local" and t.note_id is not None and int(t.note_id) == target_id
+        ]
+        if not matching:
+            return
+        self._autosave_timer.stop()
+        for idx in reversed(matching):
+            self.tabs.pop(idx)
+            if self.current_tab_index == idx:
+                self.current_tab_index = -1
+            elif self.current_tab_index > idx:
+                self.current_tab_index -= 1
+        if not self.tabs:
+            self.current_tab_index = -1
+            self.tab_bar_widget.sync_tabs([], -1)
+            self.breadcrumb.update_from_tab(None)
+            self.lastTabClosed.emit(self)
+            self.activeTabChanged.emit(None)
+            return
+        if self.current_tab_index < 0 or self.current_tab_index >= len(self.tabs):
+            self.current_tab_index = max(0, min(matching[0], len(self.tabs) - 1))
+        self.tab_bar_widget.sync_tabs(self.tabs, self.current_tab_index)
+        self._render_tab(self.tabs[self.current_tab_index])
+        self.activeTabChanged.emit(self.tabs[self.current_tab_index])
+
     def open_tab(self, ctx: TabContext, in_new_tab: bool = False):
         # 1. Se la stessa nota/bacheca è già aperta in una scheda, passa a quella
         key = ctx.identity_key()
@@ -1414,7 +1495,11 @@ class EditorPane(QWidget):
                     existing.group_note_item = ctx.group_note_item
                     existing.lock_info = ctx.lock_info
                     existing.is_locked_by_me = ctx.is_locked_by_me
+                elif ctx.workspace_type == "local":
+                    existing.is_trashed = ctx.is_trashed
+                    existing.is_favorite = ctx.is_favorite
                 self.switch_to_tab(i)
+                self.tab_bar_widget.update_tab_title(i, existing)
                 return
 
         cur = self.active_tab()
@@ -1654,12 +1739,16 @@ class EditorPane(QWidget):
             else:
                 self.editor_author_lbl.setVisible(False)
 
-            # Read-only enforcement per note di gruppo senza lock
-            is_ro = (tab.workspace_type == "group" and not tab.is_locked_by_me)
+            # Read-only enforcement per note di gruppo senza lock o note nel Cestino
+            self.trash_banner.setVisible(bool(tab.is_trashed))
+            is_ro = (tab.workspace_type == "group" and not tab.is_locked_by_me) or bool(tab.is_trashed)
             self.editor_body.setReadOnly(is_ro)
             self.editor_title.setReadOnly(is_ro)
-            self.editor_subject.setReadOnly(tab.workspace_type == "group")
-            self.editor_topic.setReadOnly(tab.workspace_type == "group")
+            self.editor_subject.setReadOnly(tab.workspace_type == "group" or bool(tab.is_trashed))
+            self.editor_topic.setReadOnly(tab.workspace_type == "group" or bool(tab.is_trashed))
+            self.editor_type.setEnabled(not tab.is_trashed)
+            self.editor_profile.setEnabled(not tab.is_trashed)
+            self.btn_auto_title.setEnabled(not tab.is_trashed)
 
             if tab.workspace_type == "local" and tab.note_id and self._audio_sync_loader:
                 sync_data = self._audio_sync_loader(tab.note_id)
@@ -1677,6 +1766,9 @@ class EditorPane(QWidget):
                 badge_txt = "Modifica con Lock attivo" if tab.is_locked_by_me else "Sola lettura (Acquisisci Lock per modificare)"
                 self.set_autosave_badge(True, badge_txt)
                 self.refresh_backlinks(None, "")
+            elif tab.is_trashed:
+                self.set_autosave_badge(True, "Nel Cestino (Sola lettura)")
+                self.refresh_backlinks(tab.note_id, tab.title)
             else:
                 self.set_autosave_badge(not tab.is_dirty)
                 self.refresh_backlinks(tab.note_id, tab.title)
@@ -1726,7 +1818,7 @@ class EditorPane(QWidget):
         if self._loading_note or self.editor_body.is_studio_view:
             return
         tab = self.active_tab()
-        if tab is None or tab.workspace_type == "board":
+        if tab is None or tab.workspace_type == "board" or tab.is_trashed:
             return
         tab.is_dirty = True
         tab.is_new_empty = False
@@ -1831,7 +1923,7 @@ class EditorPane(QWidget):
         if self._loading_note:
             return
         tab = self.active_tab()
-        if tab is None or tab.workspace_type != "local":
+        if tab is None or tab.workspace_type != "local" or tab.is_trashed:
             return
         raw_title = self.editor_title.text().strip()
         content = self.editor_body.get_markdown_text().strip()
