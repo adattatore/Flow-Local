@@ -227,11 +227,14 @@ def _hex_to_colorref(hex_color: str) -> int:
 
 def apply_win11_titlebar(widget: QWidget, theme_key: str, reading_mode: bool = False) -> None:
     """Sincronizza il colore della barra del titolo nativa Windows 11 con il tema QSS attivo."""
-    if sys.platform != "win32" or widget is None:
+    if sys.platform != "win32" or widget is None or not widget.isWindow():
         return
     try:
+        from PyQt6.QtWidgets import QApplication
         from ui.themes import _THEME_PALETTES, _is_dark_theme
 
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings, True)
+        widget.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors, True)
         hwnd = int(widget.winId())
         if not hwnd:
             return

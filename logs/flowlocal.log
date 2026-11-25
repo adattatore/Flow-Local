@@ -184,3 +184,9 @@
 2026-11-25 13:47:46 [INFO] FlowLocal: FlowLocal v3.3.0 avviato su Windows (11, Python 3.12.13)
 2026-11-25 13:47:49 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
 2026-11-25 13:47:49 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"
+2026-11-25 15:09:55 [INFO] FlowLocal: FlowLocal v3.3.0 avviato su Windows (11, Python 3.12.13)
+2026-11-25 15:09:58 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
+2026-11-25 15:09:58 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"
+2026-11-25 15:24:18 [INFO] FlowLocal: FlowLocal v3.3.0 avviato su Windows (11, Python 3.12.13)
+2026-11-25 15:24:21 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
+2026-11-25 15:24:21 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"

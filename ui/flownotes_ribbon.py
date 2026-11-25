@@ -87,7 +87,8 @@ class _RibbonGroupWidget(QWidget):
 
     def __init__(self, caption: str, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.setAutoFillBackground(False)
         root = QVBoxLayout(self)
         root.setContentsMargins(6, 3, 6, 2)
         root.setSpacing(2)
@@ -189,7 +190,7 @@ class FlowNotesRibbonWidget(QWidget):
         self._palette: Dict[str, str] = dict(palette or {})
         self._is_dark = bool(is_dark)
         self._collapsed = True
-        self._full_width_mode = False
+        self._full_width_mode = True
         self._active_group_color: Optional[str] = None
         self._groups: List[Dict[str, Any]] = []
         self._current_tab_ctx: Any = None
@@ -233,7 +234,7 @@ class FlowNotesRibbonWidget(QWidget):
         self.btn_width_quick.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_width_quick.setCheckable(True)
         self.btn_width_quick.setFixedSize(26, 24)
-        self.btn_width_quick.setToolTip("Alterna colonna di lettura centrata o larghezza piena")
+        self.btn_width_quick.setToolTip("Centra colonna di lettura (760–840px) oppure allinea il testo a sinistra")
         self.btn_width_quick.clicked.connect(self._on_prose_width_toggled)
         tab_lay.addWidget(self.btn_width_quick)
 
@@ -274,7 +275,8 @@ class FlowNotesRibbonWidget(QWidget):
     # -----------------------------------------------------------------
     def _new_page(self) -> Tuple[QWidget, QHBoxLayout]:
         w = QWidget(self.stack)
-        w.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        w.setAutoFillBackground(False)
         lay = QHBoxLayout(w)
         lay.setContentsMargins(2, 0, 2, 0)
         lay.setSpacing(2)
@@ -672,13 +674,22 @@ class FlowNotesRibbonWidget(QWidget):
         self.btn_flashcards.setMinimumWidth(62)
         self.btn_flashcards.clicked.connect(self.flashcardsRequested.emit)
 
+        for b in (self.btn_studio_view, self.btn_rsvp, self.btn_flashcards):
+            grp_learn.body_layout.addWidget(b)
+        page_lay.addWidget(grp_learn)
+        self._add_group_divider(page_lay)
+
+        grp_audio = _RibbonGroupWidget("Audio & Sbobina", self.ribbon_card)
+        self.btn_sbobina = self._make_large_btn("Sbobina", "mic", "Sbobina un file audio o una lezione")
+        self.btn_sbobina.clicked.connect(self.sbobinaRequested.emit)
+
         self.btn_marker = self._make_large_btn("Marcatore", "clock", "Inserisci marcatore audio [HH:MM:SS]")
         self.btn_marker.setMinimumWidth(66)
         self.btn_marker.clicked.connect(self.timestampMarkerRequested.emit)
 
-        for b in (self.btn_studio_view, self.btn_rsvp, self.btn_flashcards, self.btn_marker):
-            grp_learn.body_layout.addWidget(b)
-        page_lay.addWidget(grp_learn)
+        for b in (self.btn_sbobina, self.btn_marker):
+            grp_audio.body_layout.addWidget(b)
+        page_lay.addWidget(grp_audio)
         self._add_group_divider(page_lay)
 
         grp_ws = _RibbonGroupWidget("Workspace", self.ribbon_card)
@@ -708,9 +719,9 @@ class FlowNotesRibbonWidget(QWidget):
         self.btn_focus.clicked.connect(self.focusModeRequested.emit)
 
         self.btn_full_width = self._make_large_btn(
-            "Ampiezza",
+            "Centrato",
             "split_h",
-            "Alterna colonna centrata (760–840px) o larghezza piena",
+            "Centra colonna di lettura (760–840px) oppure allinea il testo a sinistra",
             checkable=True,
         )
         self.btn_full_width.setMinimumWidth(62)
@@ -759,14 +770,11 @@ class FlowNotesRibbonWidget(QWidget):
         page_lay.addWidget(grp_whis)
         self._add_group_divider(page_lay)
 
-        grp_audio = _RibbonGroupWidget("Audio & Sbobina", self.ribbon_card)
-        b_sbo = self._make_large_btn("Sbobina", "mic", "Sbobina un file audio o una lezione")
-        b_sbo.clicked.connect(self.sbobinaRequested.emit)
+        grp_docs = _RibbonGroupWidget("Documenti", self.ribbon_card)
         b_imp = self._make_large_btn("Importa", "download", "Importa PDF, Slide o Immagini")
         b_imp.clicked.connect(self.importSlideRequested.emit)
-        grp_audio.body_layout.addWidget(b_sbo)
-        grp_audio.body_layout.addWidget(b_imp)
-        page_lay.addWidget(grp_audio)
+        grp_docs.body_layout.addWidget(b_imp)
+        page_lay.addWidget(grp_docs)
         page_lay.addStretch(1)
 
     # -----------------------------------------------------------------
@@ -928,16 +936,18 @@ class FlowNotesRibbonWidget(QWidget):
             if self._collapsed:
                 self.set_collapsed(False)
 
-    def _on_prose_width_toggled(self, checked: bool):
-        self.set_full_width_checked(bool(checked))
-        self.proseWidthToggled.emit(bool(checked))
+    def _on_prose_width_toggled(self, centered: bool):
+        full_w = not bool(centered)
+        self.set_full_width_checked(full_w)
+        self.proseWidthToggled.emit(full_w)
 
-    def set_full_width_checked(self, checked: bool):
-        self._full_width_mode = bool(checked)
+    def set_full_width_checked(self, full_width: bool):
+        self._full_width_mode = bool(full_width)
+        centered = not self._full_width_mode
         for b in (getattr(self, "btn_full_width", None), getattr(self, "btn_width_quick", None)):
             if b is not None:
                 b.blockSignals(True)
-                b.setChecked(self._full_width_mode)
+                b.setChecked(centered)
                 b.blockSignals(False)
         self._refresh_width_quick_icon()
 
@@ -1124,7 +1134,7 @@ class FlowNotesRibbonWidget(QWidget):
 
     def _refresh_width_quick_icon(self):
         if hasattr(self, "btn_width_quick"):
-            role = "accent" if self._full_width_mode else "subtitle"
+            role = "accent" if (not self._full_width_mode) else "subtitle"
             self.btn_width_quick.setIcon(get_icon("expand", theme_key=self._theme_key, role=role, size=12))
 
     def _refresh_color_split_icons(self):

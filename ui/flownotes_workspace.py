@@ -954,9 +954,10 @@ class Win11TabBar(QWidget):
         self.setObjectName("NKWin11TabStrip")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setAcceptDrops(True)
+        self.setMinimumHeight(38)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(8, 6, 8, 0)
+        lay.setContentsMargins(8, 4, 8, 0)
         lay.setSpacing(4)
 
         self.tab_bar = QTabBar(self)
@@ -966,21 +967,24 @@ class Win11TabBar(QWidget):
         self.tab_bar.setUsesScrollButtons(True)
         self.tab_bar.setDrawBase(False)
         self.tab_bar.setElideMode(Qt.TextElideMode.ElideRight)
+        self.tab_bar.setMinimumHeight(32)
+        self.tab_bar.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tab_bar.currentChanged.connect(self.tabSelected.emit)
         self.tab_bar.tabMoved.connect(self.tabMoved.emit)
         self.tab_bar.customContextMenuRequested.connect(self._on_context_menu)
         self.tab_bar.installEventFilter(self)
-        lay.addWidget(self.tab_bar, 1)
+        lay.addWidget(self.tab_bar, 0, Qt.AlignmentFlag.AlignBottom)
 
         self.new_tab_btn = QPushButton(self)
         self.new_tab_btn.setObjectName("NKNewTabBtn")
         self.new_tab_btn.setFixedSize(28, 28)
         self.new_tab_btn.setIcon(get_icon("plus", theme_key=theme_key, role="subtitle", size=14))
-        self.new_tab_btn.setToolTip("Nuova scheda (Ctrl+N)")
+        self.new_tab_btn.setToolTip("Nuova nota in una nuova scheda (Ctrl+N)")
         self.new_tab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.new_tab_btn.clicked.connect(self.newTabRequested.emit)
-        lay.addWidget(self.new_tab_btn)
+        lay.addWidget(self.new_tab_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        lay.addStretch(1)
 
     def set_theme(self, theme_key: str, palette: Dict[str, str], is_dark: Optional[bool] = None):
         self._theme_key = theme_key
@@ -1008,7 +1012,7 @@ class Win11TabBar(QWidget):
             f"QTabBar#NKWin11TabBar::tab {{ "
             f"background-color: transparent; color: {fg}; border: 1px solid transparent; "
             f"border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; "
-            f"padding: 7px 8px 7px 12px; margin-right: 2px; min-width: 110px; max-width: 220px; font-size: 12px; }}"
+            f"padding: 5px 8px 6px 12px; min-height: 20px; margin-right: 2px; min-width: 110px; max-width: 220px; font-size: 12px; }}"
             f"QTabBar#NKWin11TabBar::tab:hover {{ background-color: {tab_hv}; color: {sel_fg}; }}"
             f"QTabBar#NKWin11TabBar::tab:selected {{ "
             f"background-color: {sel_bg}; color: {sel_fg}; border: 1px solid {bd}; "
@@ -1016,7 +1020,7 @@ class Win11TabBar(QWidget):
         )
         self.new_tab_btn.setStyleSheet(
             f"QPushButton#NKNewTabBtn {{ background: transparent; border: none; border-radius: 6px; "
-            f"min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; padding: 0px; margin-bottom: 3px; }}"
+            f"min-width: 28px; max-width: 28px; min-height: 28px; max-height: 28px; padding: 0px; margin: 0px; }}"
             f"QPushButton#NKNewTabBtn:hover {{ background-color: {btn_hv}; }}"
         )
 
@@ -2027,7 +2031,7 @@ class EditorPane(QWidget):
         self._last_snapshot_ts: float = 0.0
         self._is_active_pane: bool = (pane_id == "left")
         self._split_mode: bool = False
-        self._full_width_mode: bool = False
+        self._full_width_mode: bool = True
         self._autosave_thread = None
 
         root = QVBoxLayout(self)
@@ -2046,7 +2050,7 @@ class EditorPane(QWidget):
         self.tab_bar_widget.tabSelected.connect(self.switch_to_tab)
         self.tab_bar_widget.tabCloseRequested.connect(self.close_tab)
         self.tab_bar_widget.tabMoved.connect(self._on_tab_moved)
-        self.tab_bar_widget.newTabRequested.connect(self.open_new_empty_tab)
+        self.tab_bar_widget.newTabRequested.connect(self._on_new_tab_button_clicked)
         self.tab_bar_widget.splitTabRequested.connect(lambda idx: self.splitTabRequested.emit(self, idx))
         self.tab_bar_widget.duplicateTabRequested.connect(self.duplicate_tab)
         self.tab_bar_widget.closeOtherTabsRequested.connect(self.close_other_tabs)
@@ -2362,6 +2366,9 @@ class EditorPane(QWidget):
         self._full_width_mode = bool(full_width)
         self._sync_reading_column_margins()
 
+    def set_centered_prose_mode(self, centered: bool):
+        self.set_full_width_mode(not bool(centered))
+
     def _sync_reading_column_margins(self):
         target_w = 760 if self._reading_mode else 840
         avail_w = self.width()
@@ -2577,6 +2584,12 @@ class EditorPane(QWidget):
             self._render_tab(ctx)
 
         self.activeTabChanged.emit(self.active_tab())
+
+    def _on_new_tab_button_clicked(self):
+        cur = self.active_tab()
+        subject = cur.subject if (cur is not None and cur.workspace_type == "local" and cur.subject) else "Generale"
+        profile = cur.profile if (cur is not None and cur.profile) else "Alessandro"
+        self.open_new_empty_tab(subject=subject, topic="Generale", profile=profile)
 
     def open_new_empty_tab(self, subject: str = "Generale", topic: str = "Generale", profile: str = "Alessandro"):
         ctx = TabContext(

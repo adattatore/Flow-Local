@@ -424,6 +424,7 @@ def create_svg_icon(svg_inner: str, color: str, size: int = 16) -> QIcon:
 
 
 def main():
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings, True)
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setWindowIcon(create_app_icon())

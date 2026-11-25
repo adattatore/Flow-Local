@@ -275,6 +275,7 @@ class FlowLocalHub(QMainWindow):
 
     def __init__(self, on_device_changed: Optional[Callable] = None, engine=None):
         super().__init__()
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings, True)
         self._ollama_detected: Optional[bool] = None
         self._account_avatar_pixmap: Optional[QPixmap] = None
         self._account_avatar_url_loaded: str = ""
@@ -2587,10 +2588,10 @@ class FlowLocalHub(QMainWindow):
 
         main_vbox.addWidget(nk_container, 1)
 
-        # Ripristina preferenza ampiezza colonna lettura
-        raw_fw = QSettings("FlowLocal", "Hub").value("editor_full_width", False)
-        full_w = str(raw_fw).lower() in ("true", "1", "yes") if not isinstance(raw_fw, bool) else raw_fw
-        self._apply_nk_prose_width(full_w, persist=False)
+        # Ripristina preferenza colonna di lettura centrata (default allineato a sinistra)
+        raw_centered = QSettings("FlowLocal", "Hub").value("editor_centered_prose", False)
+        centered = str(raw_centered).lower() in ("true", "1", "yes") if not isinstance(raw_centered, bool) else raw_centered
+        self._apply_nk_prose_width(not centered, persist=False)
 
         self._nk_selected_note_id = None
         self._nk_current_filter_subject = None
@@ -2751,7 +2752,7 @@ class FlowLocalHub(QMainWindow):
     def _apply_nk_prose_width(self, full_width: bool, persist: bool = True):
         fw = bool(full_width)
         if persist:
-            QSettings("FlowLocal", "Hub").setValue("editor_full_width", fw)
+            QSettings("FlowLocal", "Hub").setValue("editor_centered_prose", not fw)
         if hasattr(self, "nk_ribbon"):
             self.nk_ribbon.set_full_width_checked(fw)
         for pane_attr in ("nk_pane_left", "nk_pane_right"):
