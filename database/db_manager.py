@@ -377,11 +377,16 @@ class DatabaseManager:
                 drive_folder_id TEXT DEFAULT '',
                 local_fallback_path TEXT DEFAULT '',
                 role TEXT DEFAULT 'member',
+                color TEXT DEFAULT '#6366F1',
                 last_sync_at TIMESTAMP DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_flow_groups_folder ON flow_groups(drive_folder_id);")
+        cursor.execute("PRAGMA table_info(flow_groups);")
+        fg_cols = {row["name"] for row in cursor.fetchall()}
+        if "color" not in fg_cols:
+            cursor.execute("ALTER TABLE flow_groups ADD COLUMN color TEXT DEFAULT '#6366F1';")
 
         conn.commit()
         self._init_fts5_index()
@@ -2680,27 +2685,39 @@ class DatabaseManager:
         drive_folder_id: str = "",
         local_fallback_path: str = "",
         role: str = "member",
+        color: str = "#6366F1",
     ) -> int:
         conn = self._get_connection()
         cursor = conn.cursor()
         fid = (drive_folder_id or "").strip()
         lpath = (local_fallback_path or "").strip()
+        clean_color = (color or "#6366F1").strip() or "#6366F1"
         if fid:
             cursor.execute("SELECT id FROM flow_groups WHERE drive_folder_id = ?", (fid,))
             existing = cursor.fetchone()
             if existing:
                 cursor.execute(
-                    "UPDATE flow_groups SET group_name = ?, local_fallback_path = ?, role = ? WHERE id = ?",
-                    ((group_name or "Gruppo").strip(), lpath, role or "member", int(existing["id"])),
+                    "UPDATE flow_groups SET group_name = ?, local_fallback_path = ?, role = ?, color = ? WHERE id = ?",
+                    ((group_name or "Gruppo").strip(), lpath, role or "member", clean_color, int(existing["id"])),
                 )
                 conn.commit()
                 return int(existing["id"])
+        elif lpath:
+            cursor.execute("SELECT id FROM flow_groups WHERE local_fallback_path = ?", (lpath,))
+            existing_loc = cursor.fetchone()
+            if existing_loc:
+                cursor.execute(
+                    "UPDATE flow_groups SET group_name = ?, role = ?, color = ? WHERE id = ?",
+                    ((group_name or "Gruppo").strip(), role or "member", clean_color, int(existing_loc["id"])),
+                )
+                conn.commit()
+                return int(existing_loc["id"])
         cursor.execute(
             """
-            INSERT INTO flow_groups (group_name, drive_folder_id, local_fallback_path, role)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO flow_groups (group_name, drive_folder_id, local_fallback_path, role, color)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            ((group_name or "Gruppo").strip(), fid, lpath, role or "member"),
+            ((group_name or "Gruppo").strip(), fid, lpath, role or "member", clean_color),
         )
         conn.commit()
         return int(cursor.lastrowid)
@@ -2726,6 +2743,28 @@ class DatabaseManager:
             (int(group_id),),
         )
         conn.commit()
+
+    def update_flow_group_color(self, group_id: int, color: str) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        clean_color = (color or "#6366F1").strip() or "#6366F1"
+        cursor.execute(
+            "UPDATE flow_groups SET color = ? WHERE id = ?",
+            (clean_color, int(group_id)),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def update_flow_group_role(self, group_id: int, role: str) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        clean_role = (role or "user").strip() or "user"
+        cursor.execute(
+            "UPDATE flow_groups SET role = ? WHERE id = ?",
+            (clean_role, int(group_id)),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
 
     def search_notes_fts(
         self,

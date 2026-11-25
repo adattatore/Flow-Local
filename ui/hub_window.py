@@ -136,6 +136,7 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from ui.flownotes_workspace import (
     EditorPane,
+    GroupDiscordRail,
     JoinOrCreateGroupDialog,
     TabContext,
     WorkspaceSwitcherButton,
@@ -166,6 +167,56 @@ from ui.study_widgets import (
     SpotifyMiniBar,
     TimeMachineDialog,
 )
+
+
+class _GroupBoardLoadWorker(QThread):
+    """Worker asincrono non bloccante per caricare bacheca e note di un FlowGroup."""
+
+    loaded = pyqtSignal(int, int, dict, object, bool)  # req_id, group_id, board_data, open_board_pane, in_new_tab
+    failed = pyqtSignal(int, int, str, object)         # req_id, group_id, err_msg, open_board_pane
+
+    def __init__(
+        self,
+        request_id: int,
+        group_rec: Dict[str, Any],
+        author_name: str,
+        open_board_pane: Optional[EditorPane] = None,
+        in_new_tab: bool = False,
+        parent: Optional[QWidget] = None,
+    ):
+        super().__init__(parent)
+        self._req_id = int(request_id)
+        self._group_rec = dict(group_rec or {})
+        self._group_id = int(self._group_rec.get("id") or 0)
+        self._author_name = author_name or "Studente"
+        self._open_board_pane = open_board_pane
+        self._in_new_tab = bool(in_new_tab)
+
+    def run(self):
+        try:
+            from core.flow_groups import FlowGroupsManager, flow_groups as _fg_singleton
+            mgr = FlowGroupsManager(
+                credentials_path=_fg_singleton.credentials_path,
+                token_path=_fg_singleton.token_path,
+            )
+            board_data = mgr.get_group_board_data(
+                self._group_rec,
+                current_author=self._author_name,
+            )
+            self.loaded.emit(
+                self._req_id,
+                self._group_id,
+                board_data,
+                self._open_board_pane,
+                self._in_new_tab,
+            )
+        except Exception as exc:
+            self.failed.emit(
+                self._req_id,
+                self._group_id,
+                str(exc),
+                self._open_board_pane,
+            )
 
 
 class FlowLocalHub(QMainWindow):
@@ -214,6 +265,10 @@ class FlowLocalHub(QMainWindow):
 
         self._nk_last_snapshot_ts: float = 0.0
         self._nk_dirty_for_snapshot: bool = False
+        self._nk_group_board_cache: Dict[int, Dict[str, Any]] = {}
+        self._nk_group_load_req_id: int = 0
+        self._nk_group_load_workers: List[_GroupBoardLoadWorker] = []
+        self._nk_loading_group_ids: set = set()
 
         self.setWindowTitle("FlowLocal Hub")
         self.resize(1120, 680)
@@ -894,6 +949,8 @@ class FlowLocalHub(QMainWindow):
                 pane.set_theme(self._current_theme, is_dark, self._reading_mode, p_sync)
         if hasattr(self, "nk_workspace_switcher"):
             self.nk_workspace_switcher.set_theme(self._current_theme, p_sync)
+        if hasattr(self, "nk_group_rail"):
+            self.nk_group_rail.set_theme(self._current_theme, p_sync, is_dark=is_dark)
         if hasattr(self, "nk_split_btn"):
             self.nk_split_btn.setIcon(get_icon("split_h", theme_key=self._current_theme, role="subtitle", size=15))
         if hasattr(self, "nk_send_to_split_btn"):
@@ -1937,10 +1994,10 @@ class FlowLocalHub(QMainWindow):
         self.sbobina_progress_box.hide()
         main_vbox.addWidget(self.sbobina_progress_box)
 
-        # ---------------- LAYOUT FLOWNOTES A 2 COLONNE STILE NOTION ----------------
+        # ---------------- LAYOUT FLOWNOTES A 2 COLONNE STILE NOTION + RAIL GRUPPI A DESTRA ----------------
         nk_container = QFrame()
         nk_container.setObjectName("NotekeeperContainer")
-        nk_container_layout = QVBoxLayout(nk_container)
+        nk_container_layout = QHBoxLayout(nk_container)
         nk_container_layout.setContentsMargins(0, 0, 0, 0)
         nk_container_layout.setSpacing(0)
 
@@ -2284,6 +2341,9 @@ class FlowLocalHub(QMainWindow):
             pane.noteIdOpenRequested.connect(self._load_note_into_nk_editor)
             pane.restoreTrashedNoteRequested.connect(self._on_nk_restore_note)
             pane.permanentDeleteTrashedNoteRequested.connect(self._on_nk_permanent_delete_note)
+            pane.changeGroupColorRequested.connect(self._on_nk_change_group_color_from_board)
+            pane.changeMemberRoleRequested.connect(self._on_nk_change_member_role)
+            pane.updateGroupPermissionsRequested.connect(self._on_nk_update_group_permissions)
             pane.breadcrumb.rootClicked.connect(self._on_nk_breadcrumb_root_clicked)
             pane.breadcrumb.subjectClicked.connect(self._on_nk_breadcrumb_subject_clicked)
 
@@ -2324,9 +2384,25 @@ class FlowLocalHub(QMainWindow):
                 handle.setCursor(Qt.CursorShape.SplitHCursor)
         splitter.splitterMoved.connect(lambda _pos, _idx: self._sync_nk_panel_toggles())
 
-        # Layout a 2 colonne di default: Sidebar Unica 280px + Editor Gigante ~80%
+        # Layout a 2 colonne di default: Sidebar Unica 280px + Editor Gigante ~80% + Rail Gruppi stile Discord a destra
         splitter.setSizes([280, 0, 920])
         nk_container_layout.addWidget(splitter, 1)
+
+        self.nk_group_rail = GroupDiscordRail(
+            theme_key=self._current_theme,
+            is_dark=self._active_is_dark(),
+            parent=nk_container,
+        )
+        self.nk_group_rail.set_theme(self._current_theme, self._active_palette(), is_dark=self._active_is_dark())
+        self.nk_group_rail.workspaceSelected.connect(self._on_nk_workspace_selected)
+        self.nk_group_rail.joinOrCreateRequested.connect(self._on_nk_join_or_create_group)
+        self.nk_group_rail.changeGroupColorRequested.connect(self._on_nk_change_group_color)
+        self.nk_group_rail.openGroupBoardRequested.connect(
+            lambda gid: self._open_group_board_in_pane(self._active_nk_pane(), gid, in_new_tab=True)
+        )
+        self.nk_group_rail.removeGroupRequested.connect(self._on_nk_remove_group)
+        nk_container_layout.addWidget(self.nk_group_rail, 0)
+
         main_vbox.addWidget(nk_container, 1)
 
         self._nk_selected_note_id = None
@@ -2566,9 +2642,11 @@ class FlowLocalHub(QMainWindow):
 
     def _on_nk_workspace_selected(self, group_id: Optional[int]):
         self._nk_active_workspace_group_id = int(group_id) if group_id is not None else None
-        self._refresh_notekeeper()
-        if self._nk_active_workspace_group_id is not None:
-            self._open_group_board_in_pane(self._active_nk_pane(), self._nk_active_workspace_group_id)
+        if self._nk_active_workspace_group_id is None:
+            self._refresh_notekeeper()
+            return
+        self._refresh_notekeeper(auto_fetch=False)
+        self._open_group_board_in_pane(self._active_nk_pane(), self._nk_active_workspace_group_id)
 
     def _on_nk_join_or_create_group(self):
         dlg = JoinOrCreateGroupDialog(
@@ -2579,8 +2657,9 @@ class FlowLocalHub(QMainWindow):
         )
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_group:
             gid = int(dlg.result_group["id"])
+            self._nk_group_board_cache.pop(gid, None)
             self._nk_active_workspace_group_id = gid
-            self._refresh_notekeeper()
+            self._refresh_notekeeper(auto_fetch=False)
             self._open_group_board_in_pane(self._active_nk_pane(), gid)
 
     def _on_nk_remove_group(self, group_id: int):
@@ -2594,39 +2673,231 @@ class FlowLocalHub(QMainWindow):
         if ans != QMessageBox.StandardButton.Yes:
             return
         db.delete_flow_group(int(group_id))
+        self._nk_group_board_cache.pop(int(group_id), None)
         if self._nk_active_workspace_group_id == int(group_id):
             self._nk_active_workspace_group_id = None
         self._refresh_notekeeper()
 
+    @staticmethod
+    def _build_placeholder_board_data(group_rec: Dict[str, Any]) -> Dict[str, Any]:
+        lpath = (group_rec.get("local_fallback_path") or "").strip()
+        role_raw = str(group_rec.get("role") or "user").strip().lower()
+        cur_role = "admin" if role_raw in ("admin", "owner", "amministratore") else "user"
+        return {
+            "group_id": int(group_rec["id"]),
+            "group_name": group_rec.get("group_name") or "Gruppo",
+            "color": group_rec.get("color") or "#6366F1",
+            "mode": "local" if lpath else "drive",
+            "source": lpath or (group_rec.get("drive_folder_id") or ""),
+            "members": [],
+            "members_detailed": [],
+            "permissions": {},
+            "current_user_role": cur_role,
+            "is_admin": (cur_role == "admin"),
+            "subjects": ["Generale"],
+            "notes": [],
+            "active_locks": [],
+            "updated_at_utc": "",
+            "is_loading": True,
+        }
+
+    def _request_group_board_async(
+        self,
+        group_rec: Dict[str, Any],
+        open_board_pane: Optional[EditorPane] = None,
+        in_new_tab: bool = False,
+        force: bool = False,
+    ):
+        gid = int(group_rec.get("id") or 0)
+        if not gid:
+            return
+        if not force and gid in self._nk_loading_group_ids and open_board_pane is None:
+            return
+        self._nk_group_load_req_id += 1
+        req_id = self._nk_group_load_req_id
+        self._nk_loading_group_ids.add(gid)
+
+        worker = _GroupBoardLoadWorker(
+            req_id,
+            group_rec,
+            self._nk_author_name(),
+            open_board_pane=open_board_pane,
+            in_new_tab=in_new_tab,
+            parent=self,
+        )
+        self._nk_group_load_workers.append(worker)
+        worker.loaded.connect(self._on_group_board_async_loaded)
+        worker.failed.connect(self._on_group_board_async_failed)
+        worker.finished.connect(lambda w=worker, g_id=gid: self._cleanup_group_board_worker(w, g_id))
+        worker.start()
+
+    def _cleanup_group_board_worker(self, worker: _GroupBoardLoadWorker, group_id: int):
+        if worker in self._nk_group_load_workers:
+            self._nk_group_load_workers.remove(worker)
+        still_loading = any(
+            getattr(w, "_group_id", None) == int(group_id) and w.isRunning()
+            for w in self._nk_group_load_workers
+        )
+        if not still_loading:
+            self._nk_loading_group_ids.discard(int(group_id))
+        worker.deleteLater()
+
+    def _on_group_board_async_loaded(
+        self,
+        req_id: int,
+        group_id: int,
+        board_data: dict,
+        open_board_pane: Optional[EditorPane],
+        in_new_tab: bool,
+    ):
+        gid = int(group_id)
+        self._nk_loading_group_ids.discard(gid)
+        self._nk_group_board_cache[gid] = dict(board_data or {})
+
+        fresh_g = self._get_flow_group_by_id(gid)
+        all_g = db.get_flow_groups()
+        if hasattr(self, "nk_group_rail"):
+            self.nk_group_rail.set_state(all_g, self._nk_active_workspace_group_id)
+        if hasattr(self, "nk_workspace_switcher"):
+            self.nk_workspace_switcher.set_state(all_g, self._nk_active_workspace_group_id)
+
+        sq = self.nk_search_input.text().strip() if hasattr(self, "nk_search_input") else ""
+        if self._nk_active_workspace_group_id == gid and fresh_g is not None:
+            self._refresh_group_tree(fresh_g, self._active_palette(), sq, board_data=board_data, auto_fetch=False)
+
+        new_col = board_data.get("color")
+        new_role = board_data.get("current_user_role")
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is None:
+                continue
+            pane.refresh_group_metadata(gid, color=new_col, role=new_role)
+            tab = pane.active_tab()
+            if tab and tab.workspace_type == "board" and tab.group_id and int(tab.group_id) == gid:
+                pane.board_widget.populate(board_data)
+
+        if open_board_pane is not None and req_id == self._nk_group_load_req_id and fresh_g is not None:
+            cur_tab = open_board_pane.active_tab()
+            already_showing = bool(
+                cur_tab and cur_tab.workspace_type == "board" and cur_tab.group_id and int(cur_tab.group_id) == gid
+            )
+            if not already_showing:
+                open_board_pane.board_widget.populate(board_data)
+                ctx = TabContext(
+                    workspace_type="board",
+                    group_id=gid,
+                    group_rec=fresh_g,
+                    title=f"Bacheca · {fresh_g.get('group_name')}",
+                )
+                open_board_pane.open_tab(ctx, in_new_tab=in_new_tab)
+
+    def _on_group_board_async_failed(
+        self,
+        req_id: int,
+        group_id: int,
+        err_msg: str,
+        open_board_pane: Optional[EditorPane],
+    ):
+        gid = int(group_id)
+        self._nk_loading_group_ids.discard(gid)
+        if self._nk_active_workspace_group_id == gid and gid not in self._nk_group_board_cache:
+            if hasattr(self, "nk_tree"):
+                self.nk_tree.blockSignals(True)
+                self.nk_tree.clear()
+                err_item = QTreeWidgetItem([f"Errore lettura gruppo: {err_msg}"])
+                err_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self.nk_tree.addTopLevelItem(err_item)
+                self.nk_tree.blockSignals(False)
+        if open_board_pane is not None and req_id == self._nk_group_load_req_id:
+            if hasattr(self, "show_toast"):
+                self.show_toast(f"Impossibile aggiornare la bacheca del gruppo: {err_msg}", level="warning")
+
     def _open_group_board_in_pane(self, pane: EditorPane, group_id: int, in_new_tab: bool = False):
-        groups = {int(g["id"]): g for g in db.get_flow_groups()}
-        g = groups.get(int(group_id))
+        g = self._get_flow_group_by_id(int(group_id))
         if not g:
             return
-        try:
-            board_data = flow_groups.get_group_board_data(g, current_author=self._nk_author_name())
-        except Exception as exc:
-            QMessageBox.warning(self, "FlowGroups", f"Impossibile caricare la bacheca del gruppo:\n{exc}")
-            return
+        gid = int(group_id)
+        cached = self._nk_group_board_cache.get(gid)
+        board_data = cached if cached is not None else self._build_placeholder_board_data(g)
         pane.board_widget.populate(board_data)
         ctx = TabContext(
             workspace_type="board",
-            group_id=int(group_id),
+            group_id=gid,
             group_rec=g,
             title=f"Bacheca · {g.get('group_name')}",
         )
         pane.open_tab(ctx, in_new_tab=in_new_tab)
+        self._request_group_board_async(g, open_board_pane=pane, in_new_tab=in_new_tab, force=True)
 
     def _on_nk_refresh_group_board(self, pane: EditorPane):
         tab = pane.active_tab()
         if tab and tab.group_id:
-            try:
-                board_data = flow_groups.get_group_board_data(tab.group_rec or {}, current_author=self._nk_author_name())
-                pane.board_widget.populate(board_data)
-            except Exception as exc:
-                QMessageBox.warning(self, "FlowGroups", str(exc))
-            if self._nk_active_workspace_group_id == tab.group_id:
-                self._refresh_notekeeper()
+            gid = int(tab.group_id)
+            g = self._get_flow_group_by_id(gid) or (tab.group_rec or {})
+            self._nk_group_board_cache.pop(gid, None)
+            self._request_group_board_async(g, open_board_pane=pane, in_new_tab=False, force=True)
+
+    def _get_flow_group_by_id(self, group_id: int) -> Optional[Dict[str, Any]]:
+        for g in db.get_flow_groups():
+            if int(g["id"]) == int(group_id):
+                return g
+        return None
+
+    def _refresh_open_group_tabs_and_boards(self, group_id: int, color: Optional[str] = None, role: Optional[str] = None):
+        gid = int(group_id)
+        self._nk_group_board_cache.pop(gid, None)
+        fresh_g = self._get_flow_group_by_id(gid)
+        open_board_pane: Optional[EditorPane] = None
+        for pane in (getattr(self, "nk_pane_left", None), getattr(self, "nk_pane_right", None)):
+            if pane is None:
+                continue
+            pane.refresh_group_metadata(gid, color=color, role=role)
+            tab = pane.active_tab()
+            if tab and tab.workspace_type == "board" and tab.group_id and int(tab.group_id) == gid:
+                open_board_pane = pane
+        groups = db.get_flow_groups()
+        if hasattr(self, "nk_workspace_switcher"):
+            self.nk_workspace_switcher.set_state(groups, self._nk_active_workspace_group_id)
+        if hasattr(self, "nk_group_rail"):
+            self.nk_group_rail.set_state(groups, self._nk_active_workspace_group_id)
+        if fresh_g is not None and (open_board_pane is not None or self._nk_active_workspace_group_id == gid):
+            self._request_group_board_async(fresh_g, open_board_pane=open_board_pane, in_new_tab=False, force=True)
+
+    def _on_nk_change_group_color(self, group_id: int, color_hex: str):
+        g = self._get_flow_group_by_id(int(group_id))
+        if not g:
+            return
+        try:
+            new_col = flow_groups.update_group_color(g, color_hex, author=self._nk_author_name())
+        except Exception as exc:
+            QMessageBox.warning(self, "FlowGroups", str(exc))
+            return
+        self._refresh_open_group_tabs_and_boards(int(group_id), color=new_col)
+
+    def _on_nk_change_group_color_from_board(self, _pane: EditorPane, group_id: int, color_hex: str):
+        self._on_nk_change_group_color(int(group_id), color_hex)
+
+    def _on_nk_change_member_role(self, _pane: EditorPane, group_id: int, member_id: str, new_role: str):
+        g = self._get_flow_group_by_id(int(group_id))
+        if not g:
+            return
+        try:
+            flow_groups.set_member_role(g, member_id, new_role, author=self._nk_author_name())
+        except Exception as exc:
+            QMessageBox.warning(self, "FlowGroups — Ruoli", str(exc))
+            return
+        fresh_g = self._get_flow_group_by_id(int(group_id))
+        resolved_role = (fresh_g or {}).get("role")
+        self._refresh_open_group_tabs_and_boards(int(group_id), role=resolved_role)
+
+    def _on_nk_update_group_permissions(self, _pane: EditorPane, group_id: int, permissions: dict):
+        g = self._get_flow_group_by_id(int(group_id))
+        if not g:
+            return
+        try:
+            flow_groups.update_group_permissions(g, permissions, author=self._nk_author_name())
+        except Exception as exc:
+            QMessageBox.warning(self, "FlowGroups — Permessi", str(exc))
+        self._refresh_open_group_tabs_and_boards(int(group_id))
 
     def _on_nk_open_group_note_from_board(self, pane: EditorPane, item: dict):
         tab = pane.active_tab()
@@ -3036,7 +3307,7 @@ class FlowLocalHub(QMainWindow):
         )
         return leaf
 
-    def _refresh_notekeeper(self):
+    def _refresh_notekeeper(self, auto_fetch: bool = True):
         """Ricarica l'albero gerarchico (Quaderno Locale oppure FlowGroup attivo)."""
         if not hasattr(self, "nk_tree"):
             return
@@ -3047,6 +3318,8 @@ class FlowLocalHub(QMainWindow):
             self._nk_active_workspace_group_id = None
         if hasattr(self, "nk_workspace_switcher"):
             self.nk_workspace_switcher.set_state(groups, active_gid)
+        if hasattr(self, "nk_group_rail"):
+            self.nk_group_rail.set_state(groups, active_gid)
 
         p = self._active_palette()
         if hasattr(self.nk_tree, "set_theme_palette"):
@@ -3056,7 +3329,7 @@ class FlowLocalHub(QMainWindow):
         if active_gid is not None:
             g = next((x for x in groups if int(x["id"]) == int(active_gid)), None)
             if g is not None:
-                self._refresh_group_tree(g, p, sq)
+                self._refresh_group_tree(g, p, sq, auto_fetch=auto_fetch)
                 return
 
         prof_text = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Tutti i profili"
@@ -3233,8 +3506,15 @@ class FlowLocalHub(QMainWindow):
         self.nk_tree.blockSignals(False)
         self._refresh_nk_notes_list()
 
-    def _refresh_group_tree(self, group_rec: Dict[str, Any], p: Dict[str, str], sq: str = ""):
-        """Popola l'albero della sidebar con Bacheca & Stato Sbobine e le materie/note del FlowGroup."""
+    def _refresh_group_tree(
+        self,
+        group_rec: Dict[str, Any],
+        p: Dict[str, str],
+        sq: str = "",
+        board_data: Optional[Dict[str, Any]] = None,
+        auto_fetch: bool = True,
+    ):
+        """Popola l'albero della sidebar usando la cache del FlowGroup e caricando da rete in background."""
         from ui.notes_tree import ROLE_STATUS_ICON
         gid = int(group_rec["id"])
         self.nk_tree.blockSignals(True)
@@ -3254,17 +3534,19 @@ class FlowLocalHub(QMainWindow):
         board_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         self.nk_tree.addTopLevelItem(board_item)
 
-        try:
-            board_data = flow_groups.get_group_board_data(group_rec, current_author=self._nk_author_name())
-        except Exception as exc:
-            err_item = QTreeWidgetItem([f"Errore lettura gruppo: {exc}"])
-            err_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.nk_tree.addTopLevelItem(err_item)
+        data = board_data if board_data is not None else self._nk_group_board_cache.get(gid)
+        if data is None:
+            loading_item = QTreeWidgetItem(["Caricamento note del gruppo..."])
+            loading_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            loading_item.setForeground(0, QBrush(QColor(p.get("subtitle") or p["text"])))
+            self.nk_tree.addTopLevelItem(loading_item)
             self.nk_tree.blockSignals(False)
+            if auto_fetch:
+                self._request_group_board_async(group_rec, open_board_pane=None, in_new_tab=False)
             return
 
-        subjects = board_data.get("subjects") or ["Generale"]
-        notes = board_data.get("notes") or []
+        subjects = data.get("subjects") or ["Generale"]
+        notes = data.get("notes") or []
         by_subj: Dict[str, List[Dict[str, Any]]] = {s: [] for s in subjects}
         for n in notes:
             s = n.get("subject") or "Generale"

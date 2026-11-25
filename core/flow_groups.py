@@ -45,6 +45,149 @@ DRIVE_SCOPES = GOOGLE_ACCOUNT_SCOPES
 LOCK_TTL_SECONDS = 1800  # 30 minuti
 HISTORY_MAX_VERSIONS = 15
 
+DEFAULT_GROUP_COLOR = "#6366F1"
+GROUP_COLOR_PALETTE = [
+    "#6366F1",
+    "#3B82F6",
+    "#10B981",
+    "#F59E0B",
+    "#EF4444",
+    "#8B5CF6",
+    "#EC4899",
+    "#14B8A6",
+    "#F97316",
+    "#06B6D4",
+]
+DEFAULT_GROUP_PERMISSIONS: Dict[str, bool] = {
+    "users_can_delete_own": True,
+    "users_can_delete_any": False,
+    "users_can_set_maintenance": True,
+    "users_can_manage_bots": False,
+}
+
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def normalize_hex_color(color: Optional[str], default: str = DEFAULT_GROUP_COLOR) -> str:
+    """Valida e normalizza un colore esadecimale #RRGGBB."""
+    c = (color or "").strip()
+    if _HEX_COLOR_RE.match(c):
+        return c.upper()
+    d = (default or DEFAULT_GROUP_COLOR).strip()
+    return d.upper() if _HEX_COLOR_RE.match(d) else DEFAULT_GROUP_COLOR
+
+
+def normalize_role(role: Optional[str]) -> str:
+    """Normalizza i ruoli legacy ('owner'/'member') nei ruoli v3 ('admin'/'user')."""
+    r = (role or "").strip().lower()
+    if r in ("admin", "owner", "amministratore"):
+        return "admin"
+    return "user"
+
+
+def normalize_group_manifest(
+    raw: Optional[Dict[str, Any]],
+    group_name: str = "Gruppo",
+    fallback_color: str = DEFAULT_GROUP_COLOR,
+) -> Dict[str, Any]:
+    """Normalizza un group_manifest.json (v1/v2/v3) allo schema v3 preservando campi extra."""
+    data: Dict[str, Any] = dict(raw) if isinstance(raw, dict) else {}
+    clean_name = (data.get("group_name") or group_name or "Gruppo").strip() or "Gruppo"
+    clean_color = normalize_hex_color(data.get("color"), fallback_color)
+
+    created_by = str(data.get("created_by") or "").strip()
+    created_by_email = str(data.get("created_by_email") or "").strip()
+
+    normalized_members: List[Dict[str, str]] = []
+    seen_emails: Dict[str, int] = {}
+    seen_names: Dict[str, int] = {}
+
+    def _add_or_merge_member(name: str, email: str, role: str, joined_at: str = ""):
+        n_clean = (name or "").strip()
+        e_clean = (email or "").strip()
+        if not n_clean and not e_clean:
+            return
+        r_norm = normalize_role(role)
+        e_key = e_clean.lower()
+        n_key = n_clean.lower()
+
+        idx: Optional[int] = None
+        if e_key and e_key in seen_emails:
+            idx = seen_emails[e_key]
+        elif n_key and n_key in seen_names:
+            idx = seen_names[n_key]
+
+        if idx is not None:
+            existing = normalized_members[idx]
+            if not existing["name"] and n_clean:
+                existing["name"] = n_clean
+            if not existing["email"] and e_clean:
+                existing["email"] = e_clean
+            if r_norm == "admin":
+                existing["role"] = "admin"
+            if not existing["joined_at_utc"] and joined_at:
+                existing["joined_at_utc"] = joined_at
+            if existing["email"]:
+                seen_emails[existing["email"].lower()] = idx
+            if existing["name"]:
+                seen_names[existing["name"].lower()] = idx
+            return
+
+        new_idx = len(normalized_members)
+        entry = {
+            "name": n_clean or e_clean,
+            "email": e_clean,
+            "role": r_norm,
+            "joined_at_utc": (joined_at or "").strip(),
+        }
+        normalized_members.append(entry)
+        if e_key:
+            seen_emails[e_key] = new_idx
+        if n_key:
+            seen_names[n_key] = new_idx
+
+    raw_members = data.get("members") or []
+    if isinstance(raw_members, list):
+        for item in raw_members:
+            if isinstance(item, dict):
+                _add_or_merge_member(
+                    str(item.get("name") or ""),
+                    str(item.get("email") or ""),
+                    str(item.get("role") or "user"),
+                    str(item.get("joined_at_utc") or ""),
+                )
+            elif isinstance(item, str) and item.strip():
+                is_creator = bool(created_by and item.strip().lower() == created_by.lower())
+                _add_or_merge_member(item.strip(), "", "admin" if is_creator else "user", "")
+
+    if created_by or created_by_email:
+        _add_or_merge_member(created_by or created_by_email, created_by_email, "admin", str(data.get("updated_at_utc") or ""))
+
+    raw_perms = data.get("permissions") if isinstance(data.get("permissions"), dict) else {}
+    perms = dict(DEFAULT_GROUP_PERMISSIONS)
+    for k, default_v in DEFAULT_GROUP_PERMISSIONS.items():
+        if k in raw_perms:
+            perms[k] = bool(raw_perms[k])
+        else:
+            perms[k] = bool(default_v)
+
+    subjs = data.get("subjects")
+    if not isinstance(subjs, list) or not subjs:
+        subjs = ["Generale"]
+    notes_meta = data.get("notes_meta") if isinstance(data.get("notes_meta"), dict) else {}
+
+    data["schema_version"] = 3
+    data["group_name"] = clean_name
+    data["color"] = clean_color
+    data["created_by"] = created_by
+    data["created_by_email"] = created_by_email
+    data["subjects"] = list(subjs)
+    data["members"] = normalized_members
+    data["permissions"] = perms
+    data["notes_meta"] = notes_meta
+    data["updated_at_utc"] = str(data.get("updated_at_utc") or "")
+    return data
+
 _USER_CREDS_PATH = str(get_user_data_path("credentials.json"))
 _BUNDLED_CREDS_PATH = str(get_resource_path("credentials.json"))
 DEFAULT_CREDENTIALS_PATH = _USER_CREDS_PATH if os.path.exists(_USER_CREDS_PATH) else _BUNDLED_CREDS_PATH
@@ -367,20 +510,36 @@ class FlowGroupsManager:
         author: str = "Studente",
         local_fallback_path: str = "",
         share_link: bool = True,
+        color: str = DEFAULT_GROUP_COLOR,
     ) -> Dict[str, Any]:
         clean_name = (group_name or "FlowGroup").strip()
+        clean_color = normalize_hex_color(color, DEFAULT_GROUP_COLOR)
         subj_list = [s.strip() for s in (subjects or ["Generale"]) if s.strip()] or ["Generale"]
         ident = self._current_author_identity(author)
-        manifest = {
-            "schema_version": 2,
-            "group_name": clean_name,
-            "created_by": ident["name"],
-            "created_by_email": ident["email"],
-            "subjects": subj_list,
-            "members": [ident["name"]],
-            "notes_meta": {},
-            "updated_at_utc": _utc_iso(),
-        }
+        now_iso = _utc_iso()
+        manifest = normalize_group_manifest(
+            {
+                "schema_version": 3,
+                "group_name": clean_name,
+                "color": clean_color,
+                "created_by": ident["name"],
+                "created_by_email": ident["email"],
+                "subjects": subj_list,
+                "members": [
+                    {
+                        "name": ident["name"],
+                        "email": ident["email"],
+                        "role": "admin",
+                        "joined_at_utc": now_iso,
+                    }
+                ],
+                "permissions": dict(DEFAULT_GROUP_PERMISSIONS),
+                "notes_meta": {},
+                "updated_at_utc": now_iso,
+            },
+            group_name=clean_name,
+            fallback_color=clean_color,
+        )
 
         drive_folder_id = ""
         web_link = ""
@@ -425,7 +584,8 @@ class FlowGroupsManager:
             group_name=clean_name,
             drive_folder_id=drive_folder_id,
             local_fallback_path=lpath,
-            role="owner",
+            role="admin",
+            color=clean_color,
         )
         return {
             "id": gid,
@@ -433,6 +593,8 @@ class FlowGroupsManager:
             "drive_folder_id": drive_folder_id,
             "local_fallback_path": lpath,
             "share_link": web_link,
+            "color": clean_color,
+            "role": "admin",
         }
 
     def join_group(
@@ -440,10 +602,15 @@ class FlowGroupsManager:
         folder_id_or_url: str = "",
         group_name: str = "",
         local_fallback_path: str = "",
+        author: str = "Studente",
     ) -> Dict[str, Any]:
         lpath = (local_fallback_path or "").strip()
         fid = extract_drive_folder_id(folder_id_or_url)
         resolved_name = (group_name or "").strip()
+        resolved_color = DEFAULT_GROUP_COLOR
+        resolved_role = "user"
+        ident = self._current_author_identity(author)
+        loaded_manifest: Optional[Dict[str, Any]] = None
 
         if lpath:
             if not os.path.isdir(lpath):
@@ -453,7 +620,19 @@ class FlowGroupsManager:
                 try:
                     with open(manifest_path, "r", encoding="utf-8") as f:
                         m = json.load(f)
-                    resolved_name = resolved_name or m.get("group_name") or os.path.basename(lpath)
+                    loaded_manifest = normalize_group_manifest(m, group_name=resolved_name or os.path.basename(lpath))
+                    resolved_name = resolved_name or loaded_manifest.get("group_name") or os.path.basename(lpath)
+                    resolved_color = loaded_manifest["color"]
+                    resolved_role = self.get_member_role(
+                        loaded_manifest,
+                        email=ident["email"],
+                        name=ident["name"],
+                        local_fallback_role="user",
+                    )
+                    self._ensure_member_in_manifest(loaded_manifest, ident, default_role=resolved_role)
+                    loaded_manifest["updated_at_utc"] = _utc_iso()
+                    with open(manifest_path, "w", encoding="utf-8") as wf:
+                        json.dump(loaded_manifest, wf, ensure_ascii=False, indent=2)
                 except Exception:
                     pass
             resolved_name = resolved_name or os.path.basename(lpath) or "Gruppo Locale"
@@ -471,7 +650,15 @@ class FlowGroupsManager:
                     m_item = self._find_drive_item(service, "group_manifest.json", parent_id=fid)
                     if m_item:
                         m_data = json.loads(self._download_drive_text(service, m_item["id"]))
-                        resolved_name = m_data.get("group_name") or resolved_name
+                        loaded_manifest = normalize_group_manifest(m_data, group_name=resolved_name or "Gruppo")
+                        resolved_name = resolved_name or loaded_manifest.get("group_name") or resolved_name
+                        resolved_color = loaded_manifest["color"]
+                        resolved_role = self.get_member_role(
+                            loaded_manifest,
+                            email=ident["email"],
+                            name=ident["name"],
+                            local_fallback_role="user",
+                        )
                 except Exception:
                     pass
             resolved_name = resolved_name or f"Gruppo {fid[:8]}"
@@ -482,9 +669,17 @@ class FlowGroupsManager:
             group_name=resolved_name,
             drive_folder_id=fid,
             local_fallback_path=lpath,
-            role="member",
+            role=resolved_role,
+            color=resolved_color,
         )
-        return {"id": gid, "group_name": resolved_name, "drive_folder_id": fid, "local_fallback_path": lpath}
+        return {
+            "id": gid,
+            "group_name": resolved_name,
+            "drive_folder_id": fid,
+            "local_fallback_path": lpath,
+            "color": resolved_color,
+            "role": resolved_role,
+        }
 
     # ------------------------------------------------------------------
     # LOCK DISTRIBUITO UTC (TTL 30 MIN)
@@ -673,13 +868,24 @@ class FlowGroupsManager:
                 target_file = os.path.join(target_dir, md_name)
 
                 manifest_path = os.path.join(lpath, "group_manifest.json")
-                manifest = {"schema_version": 2, "group_name": group_rec.get("group_name"), "subjects": [subj_dir], "notes_meta": {}}
+                raw_manifest: Dict[str, Any] = {
+                    "schema_version": 3,
+                    "group_name": group_rec.get("group_name"),
+                    "color": group_rec.get("color") or DEFAULT_GROUP_COLOR,
+                    "subjects": [subj_dir],
+                    "notes_meta": {},
+                }
                 if os.path.exists(manifest_path):
                     try:
                         with open(manifest_path, "r", encoding="utf-8") as mf:
-                            manifest = json.load(mf)
+                            raw_manifest = json.load(mf)
                     except Exception:
                         pass
+                manifest = normalize_group_manifest(
+                    raw_manifest,
+                    group_name=group_rec.get("group_name") or "Gruppo",
+                    fallback_color=group_rec.get("color") or DEFAULT_GROUP_COLOR,
+                )
 
                 prev_meta: Dict[str, str] = {}
                 if os.path.exists(target_file):
@@ -712,10 +918,11 @@ class FlowGroupsManager:
                 subjs = set(manifest.get("subjects") or [])
                 subjs.add(subj_dir)
                 manifest["subjects"] = sorted(subjs)
-                members = list(manifest.get("members") or [])
-                if ident["name"] and ident["name"] not in members:
-                    members.append(ident["name"])
-                manifest["members"] = members
+                self._ensure_member_in_manifest(
+                    manifest,
+                    ident,
+                    default_role=normalize_role(group_rec.get("role") or "user"),
+                )
                 notes_meta = manifest.get("notes_meta") if isinstance(manifest.get("notes_meta"), dict) else {}
                 notes_meta[rel_key] = final_meta
                 manifest["notes_meta"] = notes_meta
@@ -731,12 +938,23 @@ class FlowGroupsManager:
                 hist_id = self._ensure_drive_folder(service, ".history", parent_id=fid)
 
                 m_item = self._find_drive_item(service, "group_manifest.json", parent_id=fid)
-                manifest = {"schema_version": 2, "group_name": group_rec.get("group_name"), "subjects": [subj_dir], "notes_meta": {}}
+                raw_manifest = {
+                    "schema_version": 3,
+                    "group_name": group_rec.get("group_name"),
+                    "color": group_rec.get("color") or DEFAULT_GROUP_COLOR,
+                    "subjects": [subj_dir],
+                    "notes_meta": {},
+                }
                 if m_item:
                     try:
-                        manifest = json.loads(self._download_drive_text(service, m_item["id"]))
+                        raw_manifest = json.loads(self._download_drive_text(service, m_item["id"]))
                     except Exception:
                         pass
+                manifest = normalize_group_manifest(
+                    raw_manifest,
+                    group_name=group_rec.get("group_name") or "Gruppo",
+                    fallback_color=group_rec.get("color") or DEFAULT_GROUP_COLOR,
+                )
 
                 prev_meta = {}
                 existing_md = self._find_drive_item(service, md_name, parent_id=subj_id)
@@ -771,10 +989,11 @@ class FlowGroupsManager:
                 subjs = set(manifest.get("subjects") or [])
                 subjs.add(subj_dir)
                 manifest["subjects"] = sorted(subjs)
-                members = list(manifest.get("members") or [])
-                if ident["name"] and ident["name"] not in members:
-                    members.append(ident["name"])
-                manifest["members"] = members
+                self._ensure_member_in_manifest(
+                    manifest,
+                    ident,
+                    default_role=normalize_role(group_rec.get("role") or "user"),
+                )
                 notes_meta = manifest.get("notes_meta") if isinstance(manifest.get("notes_meta"), dict) else {}
                 notes_meta[rel_key] = final_meta
                 manifest["notes_meta"] = notes_meta
@@ -794,13 +1013,238 @@ class FlowGroupsManager:
             db.update_flow_group_sync(int(group_rec["id"]))
         return {"subject": subj_dir, "filename": md_name, "updated_at_utc": now_iso, **final_meta}
 
+    @staticmethod
+    def _ensure_member_in_manifest(
+        manifest: Dict[str, Any],
+        ident: Dict[str, str],
+        default_role: str = "user",
+    ) -> Dict[str, Any]:
+        """Aggiunge o aggiorna un membro nel manifest senza declassare un admin esistente."""
+        name = (ident.get("name") or "").strip()
+        email = (ident.get("email") or "").strip()
+        if not name and not email:
+            return manifest
+        members = manifest.get("members")
+        if not isinstance(members, list):
+            members = []
+            manifest["members"] = members
+
+        e_low = email.lower()
+        n_low = name.lower()
+        for m in members:
+            if not isinstance(m, dict):
+                continue
+            m_email = (m.get("email") or "").strip().lower()
+            m_name = (m.get("name") or "").strip().lower()
+            if (e_low and m_email and e_low == m_email) or (n_low and m_name and n_low == m_name):
+                if not m.get("name") and name:
+                    m["name"] = name
+                if not m.get("email") and email:
+                    m["email"] = email
+                if normalize_role(m.get("role")) != "admin" and normalize_role(default_role) == "admin":
+                    m["role"] = "admin"
+                return manifest
+
+        members.append({
+            "name": name or email,
+            "email": email,
+            "role": normalize_role(default_role),
+            "joined_at_utc": _utc_iso(),
+        })
+        return manifest
+
+    def _save_group_manifest(
+        self,
+        group_rec: Dict[str, Any],
+        manifest: Dict[str, Any],
+        interactive: bool = False,
+    ) -> None:
+        lpath = (group_rec.get("local_fallback_path") or "").strip()
+        payload = json.dumps(manifest, ensure_ascii=False, indent=2)
+        if lpath:
+            os.makedirs(lpath, exist_ok=True)
+            with open(os.path.join(lpath, "group_manifest.json"), "w", encoding="utf-8") as mf:
+                mf.write(payload)
+            return
+
+        fid = (group_rec.get("drive_folder_id") or "").strip()
+        service = self.get_drive_service(interactive=interactive)
+        if not service or not fid:
+            raise RuntimeError("Google Drive non connesso.")
+        self._upsert_drive_text(
+            service,
+            "group_manifest.json",
+            fid,
+            payload,
+            mime_type="application/json",
+        )
+
+    def get_member_role(
+        self,
+        manifest: Dict[str, Any],
+        email: str = "",
+        name: str = "",
+        local_fallback_role: str = "user",
+    ) -> str:
+        """Risolve il ruolo ('admin' | 'user') di un utente rispetto al manifest."""
+        e_low = (email or "").strip().lower()
+        n_low = (name or "").strip().lower()
+        c_email = (manifest.get("created_by_email") or "").strip().lower()
+        c_name = (manifest.get("created_by") or "").strip().lower()
+        if (e_low and c_email and e_low == c_email) or (n_low and c_name and n_low == c_name):
+            return "admin"
+
+        members = manifest.get("members") or []
+        if e_low:
+            for m in members:
+                if isinstance(m, dict) and (m.get("email") or "").strip().lower() == e_low:
+                    return normalize_role(m.get("role"))
+        if n_low:
+            for m in members:
+                if isinstance(m, dict):
+                    if (m.get("name") or "").strip().lower() == n_low:
+                        return normalize_role(m.get("role"))
+                elif isinstance(m, str) and m.strip().lower() == n_low:
+                    return "admin" if (c_name and n_low == c_name) else "user"
+
+        return normalize_role(local_fallback_role)
+
+    def is_admin(
+        self,
+        group_rec: Dict[str, Any],
+        manifest: Optional[Dict[str, Any]] = None,
+        author: str = "",
+    ) -> bool:
+        mf = manifest if manifest is not None else self.read_group_manifest(group_rec)
+        ident = self._current_author_identity(author)
+        role = self.get_member_role(
+            mf,
+            email=ident["email"],
+            name=ident["name"],
+            local_fallback_role=group_rec.get("role") or "user",
+        )
+        return role == "admin"
+
+    def can_delete_note(
+        self,
+        group_rec: Dict[str, Any],
+        note_meta: Optional[Dict[str, Any]] = None,
+        manifest: Optional[Dict[str, Any]] = None,
+        author: str = "",
+    ) -> bool:
+        mf = manifest if manifest is not None else self.read_group_manifest(group_rec)
+        if self.is_admin(group_rec, mf, author=author):
+            return True
+        perms = mf.get("permissions") if isinstance(mf.get("permissions"), dict) else DEFAULT_GROUP_PERMISSIONS
+        if perms.get("users_can_delete_any"):
+            return True
+        if perms.get("users_can_delete_own") and isinstance(note_meta, dict):
+            ident = self._current_author_identity(author)
+            cur_email = (ident.get("email") or "").strip().lower()
+            cur_name = (ident.get("name") or "").strip().lower()
+            cb_email = (note_meta.get("created_by_email") or "").strip().lower()
+            cb_name = (note_meta.get("created_by_name") or "").strip().lower()
+            if cur_email and cb_email and cur_email == cb_email:
+                return True
+            if cur_name and cb_name and cur_name == cb_name:
+                return True
+        return False
+
+    def update_group_color(
+        self,
+        group_rec: Dict[str, Any],
+        color_hex: str,
+        author: str = "",
+    ) -> str:
+        clean_color = normalize_hex_color(color_hex)
+        manifest = self.read_group_manifest(group_rec)
+        if not self.is_admin(group_rec, manifest, author=author):
+            raise PermissionError("Solo un Amministratore può cambiare il colore del gruppo.")
+        manifest["color"] = clean_color
+        manifest["updated_at_utc"] = _utc_iso()
+        self._save_group_manifest(group_rec, manifest, interactive=True)
+        if group_rec.get("id"):
+            db.update_flow_group_color(int(group_rec["id"]), clean_color)
+        return clean_color
+
+    def set_member_role(
+        self,
+        group_rec: Dict[str, Any],
+        target_identifier: str,
+        new_role: str,
+        author: str = "",
+    ) -> Dict[str, Any]:
+        manifest = self.read_group_manifest(group_rec)
+        if not self.is_admin(group_rec, manifest, author=author):
+            raise PermissionError("Solo un Amministratore può modificare i ruoli dei membri.")
+        target_key = (target_identifier or "").strip().lower()
+        if not target_key:
+            raise ValueError("Identificativo membro non valido.")
+        target_role = normalize_role(new_role)
+        members = manifest.get("members") or []
+        found_idx: Optional[int] = None
+        for idx, m in enumerate(members):
+            if not isinstance(m, dict):
+                continue
+            m_email = (m.get("email") or "").strip().lower()
+            m_name = (m.get("name") or "").strip().lower()
+            if target_key in (m_email, m_name):
+                found_idx = idx
+                break
+        if found_idx is None:
+            raise ValueError(f"Membro non trovato nel gruppo: {target_identifier}")
+
+        current_role = normalize_role(members[found_idx].get("role"))
+        if current_role == "admin" and target_role != "admin":
+            admin_count = sum(
+                1 for m in members if isinstance(m, dict) and normalize_role(m.get("role")) == "admin"
+            )
+            if admin_count <= 1:
+                raise ValueError("Il gruppo deve avere almeno un Amministratore.")
+
+        members[found_idx]["role"] = target_role
+        manifest["updated_at_utc"] = _utc_iso()
+        self._save_group_manifest(group_rec, manifest, interactive=True)
+
+        ident = self._current_author_identity(author)
+        cur_keys = {k for k in (ident["email"].lower(), ident["name"].lower()) if k}
+        if target_key in cur_keys and group_rec.get("id"):
+            db.update_flow_group_role(int(group_rec["id"]), target_role)
+        return manifest
+
+    def update_group_permissions(
+        self,
+        group_rec: Dict[str, Any],
+        permissions: Dict[str, bool],
+        author: str = "",
+    ) -> Dict[str, bool]:
+        manifest = self.read_group_manifest(group_rec)
+        if not self.is_admin(group_rec, manifest, author=author):
+            raise PermissionError("Solo un Amministratore può modificare i permessi del gruppo.")
+        cur_perms = dict(DEFAULT_GROUP_PERMISSIONS)
+        if isinstance(manifest.get("permissions"), dict):
+            for k in DEFAULT_GROUP_PERMISSIONS:
+                if k in manifest["permissions"]:
+                    cur_perms[k] = bool(manifest["permissions"][k])
+        for k in DEFAULT_GROUP_PERMISSIONS:
+            if k in permissions:
+                cur_perms[k] = bool(permissions[k])
+        manifest["permissions"] = cur_perms
+        manifest["updated_at_utc"] = _utc_iso()
+        self._save_group_manifest(group_rec, manifest, interactive=True)
+        return dict(cur_perms)
+
     def read_group_manifest(self, group_rec: Dict[str, Any]) -> Dict[str, Any]:
-        """Legge group_manifest.json dal gruppo (Locale o Drive)."""
-        default_manifest: Dict[str, Any] = {
-            "schema_version": 1,
+        """Legge group_manifest.json dal gruppo (Locale o Drive) e lo normalizza allo schema v3."""
+        fallback_color = normalize_hex_color(group_rec.get("color"), DEFAULT_GROUP_COLOR)
+        raw_manifest: Dict[str, Any] = {
+            "schema_version": 3,
             "group_name": group_rec.get("group_name") or "Gruppo",
+            "color": fallback_color,
             "subjects": ["Generale"],
             "members": [],
+            "permissions": dict(DEFAULT_GROUP_PERMISSIONS),
+            "notes_meta": {},
             "updated_at_utc": "",
         }
         lpath = (group_rec.get("local_fallback_path") or "").strip()
@@ -811,23 +1255,44 @@ class FlowGroupsManager:
                     with open(manifest_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     if isinstance(data, dict):
-                        default_manifest.update(data)
+                        raw_manifest.update(data)
                 except Exception:
                     pass
-            return default_manifest
+        else:
+            fid = (group_rec.get("drive_folder_id") or "").strip()
+            service = self.get_drive_service(interactive=False)
+            if service and fid:
+                try:
+                    m_item = self._find_drive_item(service, "group_manifest.json", parent_id=fid)
+                    if m_item:
+                        data = json.loads(self._download_drive_text(service, m_item["id"]))
+                        if isinstance(data, dict):
+                            raw_manifest.update(data)
+                except Exception:
+                    pass
 
-        fid = (group_rec.get("drive_folder_id") or "").strip()
-        service = self.get_drive_service(interactive=False)
-        if service and fid:
+        manifest = normalize_group_manifest(
+            raw_manifest,
+            group_name=group_rec.get("group_name") or "Gruppo",
+            fallback_color=fallback_color,
+        )
+        if group_rec.get("id"):
             try:
-                m_item = self._find_drive_item(service, "group_manifest.json", parent_id=fid)
-                if m_item:
-                    data = json.loads(self._download_drive_text(service, m_item["id"]))
-                    if isinstance(data, dict):
-                        default_manifest.update(data)
+                gid = int(group_rec["id"])
+                if normalize_hex_color(group_rec.get("color")) != manifest["color"]:
+                    db.update_flow_group_color(gid, manifest["color"])
+                ident = self._current_author_identity()
+                resolved_role = self.get_member_role(
+                    manifest,
+                    email=ident["email"],
+                    name=ident["name"],
+                    local_fallback_role=group_rec.get("role") or "user",
+                )
+                if normalize_role(group_rec.get("role")) != resolved_role:
+                    db.update_flow_group_role(gid, resolved_role)
             except Exception:
                 pass
-        return default_manifest
+        return manifest
 
     def create_group_subject(self, group_rec: Dict[str, Any], subject_name: str) -> str:
         """Crea una nuova cartella materia/canale nel gruppo e aggiorna group_manifest.json."""
@@ -1000,11 +1465,29 @@ class FlowGroupsManager:
                 if not entry.startswith(".") and os.path.isdir(os.path.join(lpath, entry)):
                     subj_set.add(entry)
         active_locks = [n for n in notes if n.get("lock_info")]
+        ident = self._current_author_identity(current_author)
+        cur_role = self.get_member_role(
+            manifest,
+            email=ident["email"],
+            name=ident["name"],
+            local_fallback_role=group_rec.get("role") or "user",
+        )
+        members_detailed = manifest.get("members") or []
+        members_names = [
+            (m.get("name") or m.get("email") or "Membro") if isinstance(m, dict) else str(m)
+            for m in members_detailed
+        ]
         return {
+            "group_id": group_rec.get("id"),
             "group_name": group_rec.get("group_name") or manifest.get("group_name") or "Gruppo",
+            "color": manifest.get("color") or DEFAULT_GROUP_COLOR,
             "mode": "local" if lpath else "drive",
             "source": lpath or (group_rec.get("drive_folder_id") or ""),
-            "members": manifest.get("members") or [],
+            "members": members_names,
+            "members_detailed": members_detailed,
+            "permissions": dict(manifest.get("permissions") or DEFAULT_GROUP_PERMISSIONS),
+            "current_user_role": cur_role,
+            "is_admin": (cur_role == "admin"),
             "subjects": sorted(subj_set) or ["Generale"],
             "notes": notes,
             "active_locks": active_locks,
