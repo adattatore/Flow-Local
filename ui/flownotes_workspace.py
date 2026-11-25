@@ -394,7 +394,8 @@ class WorkspaceSwitcherButton(QPushButton):
         self._groups: List[Dict[str, Any]] = []
 
         self.setObjectName("NKWorkspaceSwitcher")
-        self.setMinimumHeight(36)
+        self.setMinimumHeight(32)
+        self.setMaximumHeight(32)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clicked.connect(self._open_menu)
         self._refresh_button_label()
@@ -407,14 +408,13 @@ class WorkspaceSwitcherButton(QPushButton):
 
     def _apply_style(self):
         p = self._palette
-        bg = p.get("card_bg") or p.get("input_bg") or "rgba(148, 163, 184, 0.08)"
-        hover = p.get("nav_hover") or p.get("btn_hover_bg") or "rgba(148, 163, 184, 0.16)"
-        border = p.get("card_border") or p.get("border") or "#334155"
+        hover = p.get("nav_hover") or p.get("btn_hover_bg") or "rgba(148, 163, 184, 0.12)"
         fg = p.get("title") or p.get("text") or "#F8FAFC"
         self.setStyleSheet(
             f"QPushButton#NKWorkspaceSwitcher {{ "
-            f"background-color: {bg}; color: {fg}; border: 1px solid {border}; "
-            f"border-radius: 8px; padding: 6px 10px; text-align: left; font-weight: 600; font-size: 12.5px; }}"
+            f"background-color: transparent; color: {fg}; border: 1px solid transparent; "
+            f"border-radius: 7px; padding: 4px 8px; text-align: left; font-weight: 700; font-size: 13px; "
+            f"min-height: 30px; max-height: 32px; }}"
             f"QPushButton#NKWorkspaceSwitcher:hover {{ background-color: {hover}; }}"
         )
 
@@ -426,7 +426,7 @@ class WorkspaceSwitcherButton(QPushButton):
     def _refresh_button_label(self):
         if self._active_group_id is None:
             self.setIcon(get_icon("notes", theme_key=self._theme_key, role="accent", size=15))
-            self.setText("  Il mio Quaderno (Locale)  ▾")
+            self.setText("  Il mio Quaderno  ▾")
             self.setToolTip("Workspace attivo: Il mio Quaderno (Database SQLite locale)")
             return
         g = next((x for x in self._groups if int(x["id"]) == int(self._active_group_id)), None)
@@ -598,7 +598,7 @@ class GroupDiscordRail(QFrame):
 
         self.setObjectName("NKGroupDiscordRail")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setFixedWidth(64)
+        self.setFixedWidth(58)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 10, 0, 10)
@@ -607,7 +607,7 @@ class GroupDiscordRail(QFrame):
 
         # Bottone Quaderno Locale (centrato con pillola laterale)
         loc_row = QWidget(self)
-        loc_row.setFixedWidth(62)
+        loc_row.setFixedWidth(56)
         loc_lay = QHBoxLayout(loc_row)
         loc_lay.setContentsMargins(2, 0, 2, 0)
         loc_lay.setSpacing(2)
@@ -622,13 +622,13 @@ class GroupDiscordRail(QFrame):
         loc_lay.addWidget(self.local_btn)
         loc_lay.addStretch(1)
         self.local_pill = QFrame(loc_row)
-        self.local_pill.setFixedSize(4, 28)
+        self.local_pill.setFixedSize(3, 24)
         loc_lay.addWidget(self.local_pill)
         root.addWidget(loc_row, 0, Qt.AlignmentFlag.AlignHCenter)
 
         # Tasto Grafo piccolo e discreto appena sotto la cartella locale
         graph_row = QWidget(self)
-        graph_row.setFixedWidth(62)
+        graph_row.setFixedWidth(56)
         graph_row.setStyleSheet("background: transparent;")
         graph_lay = QHBoxLayout(graph_row)
         graph_lay.setContentsMargins(2, 0, 2, 0)
@@ -643,13 +643,13 @@ class GroupDiscordRail(QFrame):
         graph_lay.addWidget(self.graph_btn)
         graph_lay.addStretch(1)
         graph_spacer = QWidget(graph_row)
-        graph_spacer.setFixedSize(4, 16)
+        graph_spacer.setFixedSize(3, 16)
         graph_spacer.setStyleSheet("background: transparent;")
         graph_lay.addWidget(graph_spacer)
         root.addWidget(graph_row, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self._top_sep = QFrame(self)
-        self._top_sep.setFixedSize(32, 1)
+        self._top_sep.setFixedSize(28, 1)
         root.addWidget(self._top_sep, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self.groups_scroll = QScrollArea(self)
@@ -670,7 +670,7 @@ class GroupDiscordRail(QFrame):
 
         # Bottone "+" posizionato subito sotto all'elenco gruppi (stile Discord)
         self._add_row = QWidget(self.groups_inner)
-        self._add_row.setFixedWidth(62)
+        self._add_row.setFixedWidth(56)
         self._add_row.setStyleSheet("background: transparent;")
         add_lay = QHBoxLayout(self._add_row)
         add_lay.setContentsMargins(2, 0, 2, 0)
@@ -685,7 +685,7 @@ class GroupDiscordRail(QFrame):
         add_lay.addWidget(self.add_btn)
         add_lay.addStretch(1)
         add_spacer = QWidget(self._add_row)
-        add_spacer.setFixedSize(4, 24)
+        add_spacer.setFixedSize(3, 24)
         add_spacer.setStyleSheet("background: transparent;")
         add_lay.addWidget(add_spacer)
 
@@ -700,26 +700,24 @@ class GroupDiscordRail(QFrame):
 
     def _apply_graph_btn_style(self):
         p = self._palette
-        bd = p.get("card_border") or p.get("border") or ("#2A3342" if self._is_dark else "#D8DEE9")
         accent = p.get("accent") or DEFAULT_GROUP_COLOR
-        hover = p.get("nav_hover") or ("rgba(255,255,255,0.09)" if self._is_dark else "rgba(15,23,42,0.08)")
-        card_bg = p.get("card_bg") or ("#161B24" if self._is_dark else "#FFFFFF")
+        hover = p.get("nav_hover") or ("rgba(255,255,255,0.08)" if self._is_dark else "rgba(15,23,42,0.07)")
         sz = self._GRAPH_SIZE
         self.graph_btn.setIcon(
             get_icon("graph", theme_key=self._theme_key, role="accent" if self._graph_active else "subtitle", size=14)
         )
         if self._graph_active:
             self.graph_btn.setStyleSheet(
-                f"QPushButton#NKRailGraphBtn {{ background-color: {_hex_to_rgba(accent, 0.22)}; "
-                f"border: 1.5px solid {accent}; border-radius: 9px; "
+                f"QPushButton#NKRailGraphBtn {{ background-color: {_hex_to_rgba(accent, 0.20)}; "
+                f"border: 1px solid {_hex_to_rgba(accent, 0.65)}; border-radius: 8px; "
                 f"min-width: {sz}px; max-width: {sz}px; min-height: {sz}px; max-height: {sz}px; padding: 0px; }}"
             )
         else:
             self.graph_btn.setStyleSheet(
-                f"QPushButton#NKRailGraphBtn {{ background-color: {card_bg}; border: 1px solid {bd}; "
-                f"border-radius: 9px; min-width: {sz}px; max-width: {sz}px; "
+                f"QPushButton#NKRailGraphBtn {{ background-color: transparent; border: 1px solid transparent; "
+                f"border-radius: 8px; min-width: {sz}px; max-width: {sz}px; "
                 f"min-height: {sz}px; max-height: {sz}px; padding: 0px; }}"
-                f"QPushButton#NKRailGraphBtn:hover {{ background-color: {hover}; border-color: {accent}; }}"
+                f"QPushButton#NKRailGraphBtn:hover {{ background-color: {hover}; }}"
             )
 
     def set_theme(self, theme_key: str, palette: Dict[str, str], is_dark: Optional[bool] = None):
@@ -791,22 +789,22 @@ class GroupDiscordRail(QFrame):
         )
         if is_loc_active:
             loc_qss = (
-                f"QPushButton#NKRailLocalBtn {{ background-color: {_hex_to_rgba(accent, 0.24)}; "
-                f"border: 2px solid {accent}; border-radius: 14px; "
+                f"QPushButton#NKRailLocalBtn {{ background-color: {_hex_to_rgba(accent, 0.18)}; "
+                f"border: 1.5px solid {_hex_to_rgba(accent, 0.72)}; border-radius: 13px; "
                 f"min-width: {loc_sz}px; max-width: {loc_sz}px; min-height: {loc_sz}px; max-height: {loc_sz}px; padding: 0px; }}"
             )
-            self.local_pill.setFixedSize(4, 28)
-            self.local_pill.setStyleSheet(f"background-color: {accent}; border: none; border-radius: 2px;")
+            self.local_pill.setFixedSize(3, 24)
+            self.local_pill.setStyleSheet(f"background-color: {accent}; border: none; border-radius: 1px;")
             self.local_pill.show()
         else:
             loc_rad = loc_sz // 2
             loc_qss = (
                 f"QPushButton#NKRailLocalBtn {{ background-color: {card_bg}; "
-                f"border: 1px solid {bd}; border-radius: {loc_rad}px; "
+                f"border: 1px solid transparent; border-radius: {loc_rad}px; "
                 f"min-width: {loc_sz}px; max-width: {loc_sz}px; min-height: {loc_sz}px; max-height: {loc_sz}px; padding: 0px; }}"
-                f"QPushButton#NKRailLocalBtn:hover {{ border-color: {accent}; border-radius: 13px; }}"
+                f"QPushButton#NKRailLocalBtn:hover {{ border-color: {_hex_to_rgba(accent, 0.65)}; border-radius: 12px; }}"
             )
-            self.local_pill.setFixedSize(4, 8)
+            self.local_pill.setFixedSize(3, 6)
             self.local_pill.setStyleSheet("background-color: transparent; border: none;")
         self.local_btn.set_drop_styles(loc_qss, loc_drop_qss)
 
@@ -827,10 +825,10 @@ class GroupDiscordRail(QFrame):
             src_lbl = "Cartella Locale" if (g.get("local_fallback_path") or "").strip() else "Google Drive"
             is_active = (self._active_group_id is not None and int(self._active_group_id) == gid)
             btn_sz = self._ACTIVE_SIZE if is_active else self._INACTIVE_SIZE
-            btn_rad = 14 if is_active else (btn_sz // 2)
+            btn_rad = 13 if is_active else (btn_sz // 2)
 
             row = QWidget(self.groups_inner)
-            row.setFixedWidth(62)
+            row.setFixedWidth(56)
             row.setStyleSheet("background: transparent;")
             rl = QHBoxLayout(row)
             rl.setContentsMargins(2, 0, 2, 0)
@@ -848,22 +846,22 @@ class GroupDiscordRail(QFrame):
             )
             drop_qss = (
                 f"QPushButton#NKRailGroupBtn {{ background-color: {gcol}; color: #FFFFFF; "
-                f"border: 2px dashed {ring_col}; border-radius: 14px; "
+                f"border: 2px dashed {ring_col}; border-radius: 13px; "
                 f"font-size: 13.5px; font-weight: 800; min-width: {btn_sz}px; max-width: {btn_sz}px; "
                 f"min-height: {btn_sz}px; max-height: {btn_sz}px; padding: 0px; }}"
             )
             if is_active:
                 normal_qss = (
                     f"QPushButton#NKRailGroupBtn {{ background-color: {gcol}; color: #FFFFFF; "
-                    f"border: 2px solid {ring_col}; border-radius: {btn_rad}px; "
+                    f"border: 1.5px solid {ring_col}; border-radius: {btn_rad}px; "
                     f"font-size: 14px; font-weight: 800; min-width: {btn_sz}px; max-width: {btn_sz}px; "
                     f"min-height: {btn_sz}px; max-height: {btn_sz}px; padding: 0px; }}"
                 )
             else:
                 normal_qss = (
-                    f"QPushButton#NKRailGroupBtn {{ background-color: {_hex_to_rgba(gcol, 0.24)}; color: {fg}; "
-                    f"border: 2px solid {gcol}; border-radius: {btn_rad}px; "
-                    f"font-size: 11.5px; font-weight: 700; min-width: {btn_sz}px; max-width: {btn_sz}px; "
+                    f"QPushButton#NKRailGroupBtn {{ background-color: {_hex_to_rgba(gcol, 0.16)}; color: {fg}; "
+                    f"border: 1.5px solid {_hex_to_rgba(gcol, 0.65)}; border-radius: {btn_rad}px; "
+                    f"font-size: 11px; font-weight: 700; min-width: {btn_sz}px; max-width: {btn_sz}px; "
                     f"min-height: {btn_sz}px; max-height: {btn_sz}px; padding: 0px; }}"
                     f"QPushButton#NKRailGroupBtn:hover {{ background-color: {gcol}; color: #FFFFFF; "
                     "border-radius: 12px; }"
@@ -879,11 +877,11 @@ class GroupDiscordRail(QFrame):
             rl.addStretch(1)
 
             pill = QFrame(row)
-            pill.setFixedSize(4, 28 if is_active else 8)
+            pill.setFixedSize(3, 24 if is_active else 6)
             if is_active:
-                pill.setStyleSheet(f"background-color: {gcol}; border: none; border-radius: 2px;")
+                pill.setStyleSheet(f"background-color: {gcol}; border: none; border-radius: 1px;")
             else:
-                pill.setStyleSheet(f"background-color: {_hex_to_rgba(gcol, 0.45)}; border: none; border-radius: 1px;")
+                pill.setStyleSheet(f"background-color: {_hex_to_rgba(gcol, 0.40)}; border: none; border-radius: 1px;")
             rl.addWidget(pill)
 
             self.groups_vbox.addWidget(row)
@@ -992,19 +990,18 @@ class Win11TabBar(QWidget):
         self.new_tab_btn.setIcon(get_icon("plus", theme_key=theme_key, role="subtitle", size=14))
         p = self._palette
         strip_bg = (
-            p.get("sidebar_bg")
-            or p.get("nav_bg")
-            or ("#0D1117" if self._is_dark else "#ECEFF5")
+            p.get("nk_sidebar_bg")
+            or p.get("sidebar_bg")
+            or ("#0D1119" if self._is_dark else "#F7F8FA")
         )
-        sel_bg = p.get("editor_bg") or p.get("card_bg") or ("#161B24" if self._is_dark else "#FFFFFF")
-        bd = p.get("card_border") or p.get("border") or ("#2A3342" if self._is_dark else "#D8DEE9")
+        sel_bg = p.get("editor_bg") or p.get("card_bg") or ("#0B0E14" if self._is_dark else "#FFFFFF")
+        bd = p.get("divider") or p.get("card_border") or ("rgba(255,255,255,0.07)" if self._is_dark else "#E5E7EB")
         fg = p.get("subtitle") or ("#94A3B8" if self._is_dark else "#64748B")
         sel_fg = p.get("title") or ("#F8FAFC" if self._is_dark else "#0F172A")
-        tab_hv = "rgba(255, 255, 255, 0.06)" if self._is_dark else "rgba(15, 23, 42, 0.05)"
-        btn_hv = "rgba(255, 255, 255, 0.10)" if self._is_dark else "rgba(15, 23, 42, 0.07)"
+        tab_hv = "rgba(255, 255, 255, 0.05)" if self._is_dark else "rgba(15, 23, 42, 0.05)"
+        btn_hv = "rgba(255, 255, 255, 0.09)" if self._is_dark else "rgba(15, 23, 42, 0.07)"
         self.setStyleSheet(
-            f"QWidget#NKWin11TabStrip {{ background-color: {strip_bg}; "
-            f"border-top-left-radius: 10px; border-top-right-radius: 10px; }}"
+            f"QWidget#NKWin11TabStrip {{ background-color: {strip_bg}; border: none; }}"
         )
         self.tab_bar.setStyleSheet(
             f"QTabBar#NKWin11TabBar {{ background: transparent; border: none; }}"
@@ -1196,7 +1193,7 @@ class BreadcrumbBar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(12, 6, 10, 6)
+        lay.setContentsMargins(14, 4, 12, 4)
         lay.setSpacing(6)
         lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
@@ -1282,8 +1279,8 @@ class BreadcrumbBar(QWidget):
         self._palette = dict(palette or {})
         if is_dark is not None:
             self._is_dark = bool(is_dark)
-        surface_bg = self._palette.get("editor_bg") or self._palette.get("card_bg") or ("#161B24" if self._is_dark else "#FFFFFF")
-        soft_bd = self._palette.get("card_border") or self._palette.get("border") or ("#2A3342" if self._is_dark else "#E2E8F0")
+        surface_bg = self._palette.get("editor_bg") or self._palette.get("card_bg") or ("#0B0E14" if self._is_dark else "#FFFFFF")
+        soft_bd = self._palette.get("divider") or self._palette.get("card_border") or ("rgba(255,255,255,0.06)" if self._is_dark else "#ECEEF2")
         self.setStyleSheet(
             f"QWidget#NKBreadcrumbBar {{ background-color: {surface_bg}; border-bottom: 1px solid {soft_bd}; }}"
         )
@@ -2029,13 +2026,15 @@ class EditorPane(QWidget):
         self._dirty_for_snapshot: bool = False
         self._last_snapshot_ts: float = 0.0
         self._is_active_pane: bool = (pane_id == "left")
+        self._split_mode: bool = False
+        self._full_width_mode: bool = False
         self._autosave_thread = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Indicatore superiore sottile (colore accento quando il pannello ha il focus)
+        # Indicatore superiore discreto (visibile solo in Split-View o per note di FlowGroup)
         self.active_indicator = QFrame()
         self.active_indicator.setFixedHeight(2)
         root.addWidget(self.active_indicator)
@@ -2076,13 +2075,20 @@ class EditorPane(QWidget):
         self.stack = QStackedWidget()
         root.addWidget(self.stack, 1)
 
-        # Pagina 0: Editor
+        # Pagina 0: Editor (margini laterali gestiti dinamicamente per centrare la colonna di lettura)
         self.editor_page = QWidget()
         self.editor_page.setObjectName("NKEditorSurface")
         self.editor_page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         ed_lay = QVBoxLayout(self.editor_page)
-        ed_lay.setContentsMargins(12, 10, 12, 6)
-        ed_lay.setSpacing(6)
+        ed_lay.setContentsMargins(0, 0, 0, 0)
+        ed_lay.setSpacing(4)
+
+        self._header_container = QWidget(self.editor_page)
+        self._header_container.setStyleSheet("background: transparent; border: none;")
+        self._header_vbox = QVBoxLayout(self._header_container)
+        self._header_vbox.setContentsMargins(28, 12, 28, 0)
+        self._header_vbox.setSpacing(6)
+        ed_lay.addWidget(self._header_container)
 
         self.trash_banner = QFrame()
         self.trash_banner.setObjectName("NKTrashBanner")
@@ -2114,7 +2120,7 @@ class EditorPane(QWidget):
         self._trash_perm_del_btn.clicked.connect(self._on_trash_perm_delete_clicked)
         tb_lay.addWidget(self._trash_perm_del_btn)
         self.trash_banner.hide()
-        ed_lay.addWidget(self.trash_banner)
+        self._header_vbox.addWidget(self.trash_banner)
 
         self.maintenance_banner = QFrame()
         self.maintenance_banner.setObjectName("NKMaintenanceBanner")
@@ -2142,7 +2148,7 @@ class EditorPane(QWidget):
         )
         mb_lay.addWidget(self._maint_restore_btn)
         self.maintenance_banner.hide()
-        ed_lay.addWidget(self.maintenance_banner)
+        self._header_vbox.addWidget(self.maintenance_banner)
 
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -2162,7 +2168,7 @@ class EditorPane(QWidget):
         self.btn_auto_title.setToolTip("Genera titolo automatico in base al contenuto della nota")
         self.btn_auto_title.clicked.connect(lambda: self.trigger_auto_title(manual=True))
         title_row.addWidget(self.btn_auto_title)
-        ed_lay.addLayout(title_row)
+        self._header_vbox.addLayout(title_row)
 
         self.editor_author_lbl = QLabel("")
         self.editor_author_lbl.setObjectName("NKEditorAuthorMeta")
@@ -2171,62 +2177,62 @@ class EditorPane(QWidget):
         )
         self.editor_author_lbl.setWordWrap(True)
         self.editor_author_lbl.setVisible(False)
-        ed_lay.addWidget(self.editor_author_lbl)
+        self._header_vbox.addWidget(self.editor_author_lbl)
 
         meta_grid = QHBoxLayout()
-        meta_grid.setSpacing(6)
+        meta_grid.setSpacing(4)
 
         self.editor_subject = QLineEdit()
         self.editor_subject.setObjectName("NKEditorPill")
         self.editor_subject.setPlaceholderText("Cartella")
-        self.editor_subject.setFixedHeight(26)
+        self.editor_subject.setFixedHeight(24)
         self.editor_subject.setMaximumWidth(150)
         meta_grid.addWidget(self.editor_subject)
 
         self._meta_sep1 = QLabel("›")
-        self._meta_sep1.setStyleSheet("color: #94A3B8; font-size: 13px; background: transparent;")
+        self._meta_sep1.setStyleSheet("color: #64748B; font-size: 12px; background: transparent;")
         meta_grid.addWidget(self._meta_sep1)
 
         self.editor_topic = QLineEdit()
         self.editor_topic.setObjectName("NKEditorPill")
         self.editor_topic.setPlaceholderText("Argomento")
-        self.editor_topic.setFixedHeight(26)
+        self.editor_topic.setFixedHeight(24)
         self.editor_topic.setMaximumWidth(150)
         meta_grid.addWidget(self.editor_topic)
 
         sep2 = QLabel("·")
-        sep2.setStyleSheet("color: #94A3B8; font-size: 14px; font-weight: bold; background: transparent;")
+        sep2.setStyleSheet("color: #64748B; font-size: 13px; font-weight: bold; background: transparent;")
         meta_grid.addWidget(sep2)
 
         self.editor_type = QComboBox()
         self.editor_type.setObjectName("NKEditorPillCombo")
         self.editor_type.addItems(["appunto", "sbobina", "slide"])
-        self.editor_type.setFixedHeight(26)
+        self.editor_type.setFixedHeight(24)
         meta_grid.addWidget(self.editor_type)
 
         sep3 = QLabel("·")
-        sep3.setStyleSheet("color: #94A3B8; font-size: 14px; font-weight: bold; background: transparent;")
+        sep3.setStyleSheet("color: #64748B; font-size: 13px; font-weight: bold; background: transparent;")
         meta_grid.addWidget(sep3)
 
         self.editor_profile = QComboBox()
         self.editor_profile.setObjectName("NKEditorPillCombo")
         self.editor_profile.addItems(["Alessandro", "Giada"])
-        self.editor_profile.setFixedHeight(26)
+        self.editor_profile.setFixedHeight(24)
         meta_grid.addWidget(self.editor_profile)
 
         meta_grid.addStretch(1)
-        self.autosave_badge = QLabel("✓ Salvato automaticamente")
+        self.autosave_badge = QLabel("✓ Salvato")
         self.autosave_badge.setObjectName("NKAutoSaveBadge")
         self.autosave_badge.setStyleSheet(
-            "background: transparent; border: none; color: #787774; font-size: 11.5px; font-weight: 400;"
+            "background: transparent; border: none; color: #64748B; font-size: 11px; font-weight: 400;"
         )
         meta_grid.addWidget(self.autosave_badge)
-        ed_lay.addLayout(meta_grid)
+        self._header_vbox.addLayout(meta_grid)
 
         divider = QFrame()
         divider.setObjectName("NKEditorDivider")
         divider.setFixedHeight(1)
-        ed_lay.addWidget(divider)
+        self._header_vbox.addWidget(divider)
 
         self.editor_body = ScientificNoteEditor(dark_mode=is_dark, reading_mode=reading_mode)
         self.editor_body.setObjectName("NKEditorBody")
@@ -2320,6 +2326,7 @@ class EditorPane(QWidget):
 
         self.set_theme(theme_key, is_dark, reading_mode, self._palette)
         self.set_active_pane(self._is_active_pane)
+        self._sync_reading_column_margins()
 
     def eventFilter(self, watched, event):
         if event.type() in (QEvent.Type.FocusIn, QEvent.Type.MouseButtonPress):
@@ -2351,22 +2358,44 @@ class EditorPane(QWidget):
                 pass
         super().dropEvent(event)
 
-    def set_active_pane(self, active: bool):
+    def set_full_width_mode(self, full_width: bool):
+        self._full_width_mode = bool(full_width)
+        self._sync_reading_column_margins()
+
+    def _sync_reading_column_margins(self):
+        target_w = 760 if self._reading_mode else 840
+        avail_w = self.width()
+        if not self._full_width_mode and avail_w > target_w + 64:
+            pad_x = max(24, (avail_w - target_w) // 2)
+        else:
+            pad_x = 24
+        if hasattr(self, "_header_vbox"):
+            self._header_vbox.setContentsMargins(pad_x, 12, pad_x, 0)
+        if hasattr(self, "editor_body"):
+            self.editor_body.setViewportMargins(pad_x, 4, pad_x, 14)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._sync_reading_column_margins()
+
+    def set_active_pane(self, active: bool, split_mode: Optional[bool] = None):
         self._is_active_pane = bool(active)
+        if split_mode is not None:
+            self._split_mode = bool(split_mode)
         tab = self.active_tab()
         is_group = bool(tab and tab.workspace_type in ("group", "board"))
         if is_group:
             gcol = _group_color(tab.group_rec)
-            self.active_indicator.setFixedHeight(3)
-            bar_col = gcol if active else _hex_to_rgba(gcol, 0.35)
-            self.active_indicator.setStyleSheet(f"background-color: {bar_col}; border: none; border-radius: 1px;")
-        else:
             self.active_indicator.setFixedHeight(2)
-            accent = self._palette.get("accent") or self._palette.get("nav_checked_border") or "#6366F1"
-            if active:
-                self.active_indicator.setStyleSheet(f"background-color: {accent}; border: none; border-radius: 1px;")
-            else:
-                self.active_indicator.setStyleSheet("background-color: transparent; border: none;")
+            bar_col = gcol if active else _hex_to_rgba(gcol, 0.35)
+            self.active_indicator.setStyleSheet(f"background-color: {bar_col}; border: none;")
+        elif self._split_mode and active:
+            self.active_indicator.setFixedHeight(2)
+            accent = self._palette.get("accent") or self._palette.get("nav_checked_border") or "#38BDF8"
+            self.active_indicator.setStyleSheet(f"background-color: {accent}; border: none;")
+        else:
+            self.active_indicator.setFixedHeight(0)
+            self.active_indicator.setStyleSheet("background-color: transparent; border: none;")
 
     def refresh_group_metadata(self, group_id: int, color: Optional[str] = None, role: Optional[str] = None):
         """Aggiorna colore/ruolo nelle schede aperte di un gruppo e rinfresca indicatori/tab/breadcrumb."""
@@ -2385,6 +2414,7 @@ class EditorPane(QWidget):
             self.tab_bar_widget.sync_tabs(self.tabs, self.current_tab_index)
             self.breadcrumb.update_from_tab(self.active_tab())
             self.set_active_pane(self._is_active_pane)
+        self._sync_reading_column_margins()
 
     def _sync_topic_chip_visibility(self):
         subj = self.editor_subject.text().strip().lower()
@@ -2424,6 +2454,7 @@ class EditorPane(QWidget):
                 f"background: transparent; border: none; color: {col_mt}; font-size: 12px; font-weight: 600;"
             )
         self.set_active_pane(self._is_active_pane)
+        self._sync_reading_column_margins()
 
     def active_tab(self) -> Optional[TabContext]:
         if 0 <= self.current_tab_index < len(self.tabs):
@@ -2729,6 +2760,7 @@ class EditorPane(QWidget):
     def _render_tab(self, tab: TabContext):
         self.breadcrumb.update_from_tab(tab)
         self.set_active_pane(self._is_active_pane)
+        self._sync_reading_column_margins()
         if tab.workspace_type == "board":
             self.stack.setCurrentIndex(1)
             return
@@ -2852,7 +2884,7 @@ class EditorPane(QWidget):
 
     def set_autosave_badge(self, saved: bool, custom_text: Optional[str] = None):
         if saved:
-            self.autosave_badge.setText(custom_text or "✓ Salvato automaticamente")
+            self.autosave_badge.setText(custom_text or "✓ Salvato")
         else:
             self.autosave_badge.setText(custom_text or "Modifica in corso...")
 

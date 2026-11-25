@@ -1103,6 +1103,8 @@ class ThemeRevealOverlay(QWidget):
         self._old_pixmap = old_pixmap
         self._progress = 0.0
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.setAutoFillBackground(False)
         self.setGeometry(parent.rect())
         self.show()
         self.raise_()
@@ -1111,12 +1113,16 @@ class ThemeRevealOverlay(QWidget):
         self._timer.timeout.connect(self._step)
         self._timer.start(16)
 
+    def close_immediate(self):
+        if self._timer.isActive():
+            self._timer.stop()
+        self.hide()
+        self.deleteLater()
+
     def _step(self):
         self._progress += 0.045  # ~360ms a 60 FPS
         if self._progress >= 1.0:
-            self._timer.stop()
-            self.hide()
-            self.deleteLater()
+            self.close_immediate()
             return
         self.update()
 

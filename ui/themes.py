@@ -175,26 +175,26 @@ _THEME_PALETTES = {
         "subtitle": "#94A3B8",
         "muted": "#64748B",
         "sec_header": "#475569",
-        "root_bg": "#07090F",
-        "sidebar_bg": "#05070B",
+        "root_bg": "#080B10",
+        "sidebar_bg": "#0E121A",
         "sidebar_border": "rgba(255, 255, 255, 0.06)",
-        "nav_hover": "rgba(255, 255, 255, 0.04)",
+        "nav_hover": "rgba(255, 255, 255, 0.045)",
         "nav_hover_text": "#F1F5F9",
         "nav_checked_bg": (
             "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
-            "stop:0 rgba(56, 189, 248, 0.16), stop:0.6 rgba(168, 85, 247, 0.12), stop:1 rgba(16, 185, 129, 0.06))"
+            "stop:0 rgba(56, 189, 248, 0.14), stop:0.6 rgba(168, 85, 247, 0.10), stop:1 rgba(16, 185, 129, 0.05))"
         ),
         "nav_checked_border": "rgba(56, 189, 248, 0.28)",
         "nav_checked_text": "#F8FAFC",
         "surface_soft": "rgba(255, 255, 255, 0.025)",
         "card_bg": "rgba(255, 255, 255, 0.028)",
-        "card_hover_bg": "rgba(255, 255, 255, 0.042)",
-        "card_border": "rgba(255, 255, 255, 0.06)",
+        "card_hover_bg": "rgba(255, 255, 255, 0.045)",
+        "card_border": "rgba(255, 255, 255, 0.07)",
         "card_hover_border": "rgba(56, 189, 248, 0.22)",
         "card_body": "#CBD5E1",
-        "input_bg": "#0D111A",
-        "input_focus_bg": "#111724",
-        "input_border": "#1C2536",
+        "input_bg": "#111622",
+        "input_focus_bg": "#151C2B",
+        "input_border": "rgba(255, 255, 255, 0.08)",
         "input_text": "#F1F5F9",
         "btn_bg": "#131926",
         "btn_hover_bg": "#192233",
@@ -203,7 +203,7 @@ _THEME_PALETTES = {
         "btn_hover_border": "#2B3954",
         "btn_text": "#E2E8F0",
         "pill_bg": "#0F141F",
-        "pill_border": "#1C2536",
+        "pill_border": "rgba(255, 255, 255, 0.07)",
         "pill_hover_bg": "#161E2E",
         "pill_checked_bg": (
             "qlineargradient(x1:0, y1:0, x2:1, y2:0, "
@@ -223,15 +223,16 @@ _THEME_PALETTES = {
         "shortcut_key_border": "rgba(56, 189, 248, 0.28)",
         "shortcut_key_text": "#38BDF8",
         "scroll_handle": "#1E283B",
-        "dialog_bg": "#0B0E16",
-        "combo_popup_bg": "#0B0E16",
-        "divider": "#27272A",
-        "editor_bg": "#0D111A",
-        "nk_container_bg": "#0B0F17",
-        "nk_sidebar_bg": "rgba(255, 255, 255, 0.015)",
-        "nk_card_active_bg": "rgba(99, 102, 241, 0.16)",
-        "nk_pill_bg": "rgba(255, 255, 255, 0.06)",
-        "nk_pill_hover_bg": "rgba(255, 255, 255, 0.11)",
+        "dialog_bg": "#101521",
+        "combo_popup_bg": "#101521",
+        "ribbon_bg": "#121722",
+        "divider": "rgba(255, 255, 255, 0.07)",
+        "editor_bg": "#0B0E14",
+        "nk_container_bg": "#0B0E14",
+        "nk_sidebar_bg": "#0D1119",
+        "nk_card_active_bg": "rgba(56, 189, 248, 0.12)",
+        "nk_pill_bg": "rgba(255, 255, 255, 0.045)",
+        "nk_pill_hover_bg": "rgba(255, 255, 255, 0.09)",
         "chevron_color": "#94A3B8",
     },
     "light": {
@@ -240,9 +241,9 @@ _THEME_PALETTES = {
         "subtitle": "#475569",
         "muted": "#64748B",
         "sec_header": "#94A3B8",
-        "root_bg": "#F4F6FA",
-        "sidebar_bg": "#FFFFFF",
-        "sidebar_border": "#E2E8F0",
+        "root_bg": "#F5F7FA",
+        "sidebar_bg": "#F7F8FA",
+        "sidebar_border": "#E5E7EB",
         "nav_hover": "#F1F5F9",
         "nav_hover_text": "#0F172A",
         "nav_checked_bg": "#E0F2FE",
@@ -251,7 +252,7 @@ _THEME_PALETTES = {
         "surface_soft": "#F8FAFC",
         "card_bg": "#FFFFFF",
         "card_hover_bg": "#FFFFFF",
-        "card_border": "#E2E8F0",
+        "card_border": "#E5E7EB",
         "card_hover_border": "#94A3B8",
         "card_body": "#334155",
         "input_bg": "#FFFFFF",
@@ -284,10 +285,11 @@ _THEME_PALETTES = {
         "scroll_handle": "#CBD5E1",
         "dialog_bg": "#FFFFFF",
         "combo_popup_bg": "#FFFFFF",
-        "divider": "#E4E7EC",
+        "ribbon_bg": "#F8FAFC",
+        "divider": "#ECEEF2",
         "editor_bg": "#FFFFFF",
         "nk_container_bg": "#FFFFFF",
-        "nk_sidebar_bg": "#F8FAFC",
+        "nk_sidebar_bg": "#F7F8FA",
         "nk_card_active_bg": "#EEF2FF",
         "nk_pill_bg": "#F1F5F9",
         "nk_pill_hover_bg": "#E2E8F0",
@@ -2090,6 +2092,7 @@ def _resolve_palette(
     base.setdefault("accent", "#6366F1")
     base.setdefault("primary_text", "#FFFFFF")
     base.setdefault("danger_color", "#E11D48")
+    base.setdefault("ribbon_bg", base.get("dialog_bg") or base.get("surface_soft") or "#121722")
     base.setdefault(
         "primary_grad",
         "qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0284C7, stop:0.55 #6366F1, stop:1 #9333EA)",
@@ -2823,22 +2826,38 @@ QPushButton#NKRestorePill:checked {{
 }}
 QFrame#NotekeeperContainer {{
     background-color: {p['nk_container_bg']};
-    {p['card_border_qss']}
-    border-radius: {p['nk_radius']};
+    border: none;
+    border-radius: 0px;
 }}
 QWidget#NKCol1 {{
     background-color: {p['nk_sidebar_bg']};
     {p['sidebar_border_qss']}
-    border-top-left-radius: {p['nk_radius']};
-    border-bottom-left-radius: {p['nk_radius']};
+    border-radius: 0px;
 }}
 QWidget#NKCol2 {{
     background-color: transparent;
 }}
 QWidget#NKCol3 {{
     background-color: {p['editor_bg']};
-    border-top-right-radius: {p['nk_radius']};
-    border-bottom-right-radius: {p['nk_radius']};
+    border-radius: 0px;
+}}
+QPushButton#NKNewNoteCompactBtn {{
+    background-color: {p['nk_pill_bg']};
+    border: 1px solid {p['card_border']};
+    border-radius: {p['input_radius']};
+    color: {p['title']};
+    min-width: 36px;
+    max-width: 36px;
+    min-height: 36px;
+    max-height: 36px;
+    padding: 0px;
+}}
+QPushButton#NKNewNoteCompactBtn:hover {{
+    background-color: {p['nk_pill_hover_bg']};
+    border: 1px solid {p['nav_checked_border']};
+}}
+QPushButton#NKNewNoteCompactBtn:pressed {{
+    background-color: {p['btn_pressed_bg']};
 }}
 QTreeWidget {{
     background-color: transparent;
@@ -2929,42 +2948,42 @@ QLineEdit#NKEditorTitle:focus {{
     border: none;
 }}
 QLineEdit#NKEditorPill {{
-    background-color: {p['nk_pill_bg']};
-    {p['pill_border_qss']}
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: {p['small_radius']};
-    padding: 0 8px;
-    color: {p['subtitle']};
+    padding: 0 7px;
+    color: {p['muted']};
     font-size: 12px;
     font-weight: 500;
-    min-height: 26px;
-    max-height: 26px;
+    min-height: 24px;
+    max-height: 24px;
 }}
 QLineEdit#NKEditorPill:hover, QLineEdit#NKEditorPill:focus {{
     background-color: {p['nk_pill_hover_bg']};
-    {p['input_focus_border_qss']}
+    border: 1px solid {p['card_border']};
     color: {p['title']};
 }}
 QComboBox#NKEditorPillCombo {{
-    background-color: {p['nk_pill_bg']};
-    {p['pill_border_qss']}
+    background-color: transparent;
+    border: 1px solid transparent;
     border-radius: {p['small_radius']};
-    padding: 0 22px 0 8px;
-    color: {p['subtitle']};
+    padding: 0 18px 0 7px;
+    color: {p['muted']};
     font-size: 12px;
     font-weight: 500;
-    min-height: 26px;
-    max-height: 26px;
+    min-height: 24px;
+    max-height: 24px;
 }}
 QComboBox#NKEditorPillCombo:hover, QComboBox#NKEditorPillCombo:focus {{
     background-color: {p['nk_pill_hover_bg']};
-    {p['input_focus_border_qss']}
+    border: 1px solid {p['card_border']};
     color: {p['title']};
 }}
 QFrame#NKEditorDivider {{
     background-color: {p['divider']};
     border: none;
     max-height: 1px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }}
 QTextEdit#NKEditorBody {{
     background-color: transparent;

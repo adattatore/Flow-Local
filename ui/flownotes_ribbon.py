@@ -165,6 +165,7 @@ class FlowNotesRibbonWidget(QWidget):
     splitViewRequested = pyqtSignal()
     sendToSplitRequested = pyqtSignal()
     focusModeRequested = pyqtSignal()
+    proseWidthToggled = pyqtSignal(bool)
     favoriteToggled = pyqtSignal()
 
     # Tab Whis
@@ -187,7 +188,8 @@ class FlowNotesRibbonWidget(QWidget):
         self._theme_key = theme_key
         self._palette: Dict[str, str] = dict(palette or {})
         self._is_dark = bool(is_dark)
-        self._collapsed = False
+        self._collapsed = True
+        self._full_width_mode = False
         self._active_group_color: Optional[str] = None
         self._groups: List[Dict[str, Any]] = []
         self._current_tab_ctx: Any = None
@@ -198,7 +200,7 @@ class FlowNotesRibbonWidget(QWidget):
 
         self.setObjectName("FlowNotesRibbon")
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 2)
+        root.setContentsMargins(10, 2, 10, 2)
         root.setSpacing(4)
 
         # ---- 1. TAB STRIP SUPERIORE ----
@@ -206,7 +208,7 @@ class FlowNotesRibbonWidget(QWidget):
         tab_bar.setObjectName("RibbonTabBar")
         tab_bar.setFixedHeight(28)
         tab_lay = QHBoxLayout(tab_bar)
-        tab_lay.setContentsMargins(4, 0, 4, 0)
+        tab_lay.setContentsMargins(2, 0, 2, 0)
         tab_lay.setSpacing(2)
 
         self.tab_buttons: List[_RibbonTabButton] = []
@@ -217,7 +219,7 @@ class FlowNotesRibbonWidget(QWidget):
             btn.setObjectName("RibbonTabBtn")
             btn.setFixedHeight(26)
             btn.setChecked(idx == 0)
-            btn.clicked.connect(lambda _c=False, i=idx: self.set_active_tab(i))
+            btn.clicked.connect(lambda _c=False, i=idx: self._on_tab_button_clicked(i))
             btn.doubleClicked.connect(lambda i=idx: self._on_tab_double_clicked(i))
             self._tab_btn_group.addButton(btn, idx)
             self.tab_buttons.append(btn)
@@ -225,12 +227,22 @@ class FlowNotesRibbonWidget(QWidget):
 
         tab_lay.addStretch(1)
 
+        self.btn_width_quick = QToolButton(tab_bar)
+        self.btn_width_quick.setObjectName("RibbonQuickToggleBtn")
+        self.btn_width_quick.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_width_quick.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_width_quick.setCheckable(True)
+        self.btn_width_quick.setFixedSize(26, 24)
+        self.btn_width_quick.setToolTip("Alterna colonna di lettura centrata o larghezza piena")
+        self.btn_width_quick.clicked.connect(self._on_prose_width_toggled)
+        tab_lay.addWidget(self.btn_width_quick)
+
         self.btn_collapse = QToolButton(tab_bar)
         self.btn_collapse.setObjectName("RibbonCollapseBtn")
         self.btn_collapse.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.btn_collapse.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_collapse.setFixedSize(26, 24)
-        self.btn_collapse.setToolTip("Comprimi o espandi la barra multifunzione (doppio clic sul tab attivo)")
+        self.btn_collapse.setToolTip("Comprimi o espandi la barra multifunzione (clic sul tab attivo)")
         self.btn_collapse.clicked.connect(lambda: self.set_collapsed(not self._collapsed))
         tab_lay.addWidget(self.btn_collapse)
         root.addWidget(tab_bar)
@@ -253,7 +265,8 @@ class FlowNotesRibbonWidget(QWidget):
         self._build_studio_tab()
         self._build_whis_tab()
 
-        self.set_active_tab(0)
+        self.stack.setCurrentIndex(0)
+        self.ribbon_card.setVisible(False)
         self.set_theme(self._theme_key, self._palette, self._is_dark)
 
     # -----------------------------------------------------------------
@@ -694,6 +707,15 @@ class FlowNotesRibbonWidget(QWidget):
         )
         self.btn_focus.clicked.connect(self.focusModeRequested.emit)
 
+        self.btn_full_width = self._make_large_btn(
+            "Ampiezza",
+            "split_h",
+            "Alterna colonna centrata (760–840px) o larghezza piena",
+            checkable=True,
+        )
+        self.btn_full_width.setMinimumWidth(62)
+        self.btn_full_width.clicked.connect(self._on_prose_width_toggled)
+
         self.btn_favorite = self._make_large_btn(
             "Preferito",
             "star",
@@ -702,7 +724,7 @@ class FlowNotesRibbonWidget(QWidget):
         )
         self.btn_favorite.clicked.connect(self.favoriteToggled.emit)
 
-        for b in (self.btn_split_view, self.btn_send_split, self.btn_focus, self.btn_favorite):
+        for b in (self.btn_split_view, self.btn_send_split, self.btn_focus, self.btn_full_width, self.btn_favorite):
             grp_ws.body_layout.addWidget(b)
         page_lay.addWidget(grp_ws)
         page_lay.addStretch(1)
@@ -891,6 +913,13 @@ class FlowNotesRibbonWidget(QWidget):
     # -----------------------------------------------------------------
     # STATO PUBBLICO, TAB SWITCHING, COLLASSO E TEMA
     # -----------------------------------------------------------------
+    def _on_tab_button_clicked(self, index: int):
+        idx = max(0, min(len(self.TAB_NAMES) - 1, int(index)))
+        if not self._collapsed and self.active_tab_index() == idx:
+            self.set_collapsed(True)
+            return
+        self.set_active_tab(idx)
+
     def _on_tab_double_clicked(self, index: int):
         if self.active_tab_index() == index:
             self.set_collapsed(not self._collapsed)
@@ -898,6 +927,19 @@ class FlowNotesRibbonWidget(QWidget):
             self.set_active_tab(index)
             if self._collapsed:
                 self.set_collapsed(False)
+
+    def _on_prose_width_toggled(self, checked: bool):
+        self.set_full_width_checked(bool(checked))
+        self.proseWidthToggled.emit(bool(checked))
+
+    def set_full_width_checked(self, checked: bool):
+        self._full_width_mode = bool(checked)
+        for b in (getattr(self, "btn_full_width", None), getattr(self, "btn_width_quick", None)):
+            if b is not None:
+                b.blockSignals(True)
+                b.setChecked(self._full_width_mode)
+                b.blockSignals(False)
+        self._refresh_width_quick_icon()
 
     def active_tab_index(self) -> int:
         return self.stack.currentIndex()
@@ -1080,6 +1122,11 @@ class FlowNotesRibbonWidget(QWidget):
         ic_name = "caret_down" if self._collapsed else "caret_up"
         self.btn_collapse.setIcon(get_icon(ic_name, theme_key=self._theme_key, role="subtitle", size=12))
 
+    def _refresh_width_quick_icon(self):
+        if hasattr(self, "btn_width_quick"):
+            role = "accent" if self._full_width_mode else "subtitle"
+            self.btn_width_quick.setIcon(get_icon("expand", theme_key=self._theme_key, role=role, size=12))
+
     def _refresh_color_split_icons(self):
         fg = self._palette.get("text") or ("#E2E8F0" if self._is_dark else "#0F172A")
         self.btn_highlight.setIcon(_make_bar_letter_icon("ab", self._last_hl_hex, fg, size=16))
@@ -1140,19 +1187,19 @@ class FlowNotesRibbonWidget(QWidget):
         self._is_dark = bool(is_dark)
 
         p = self._palette
-        card_bg = p.get("nk_card_active_bg") or p.get("surface_soft") or ("#131924" if self._is_dark else "#F8FAFC")
-        card_bd = p.get("card_border") or ("rgba(255, 255, 255, 0.09)" if self._is_dark else "#CBD5E1")
+        card_bg = p.get("ribbon_bg") or p.get("dialog_bg") or ("#121722" if self._is_dark else "#F8FAFC")
+        card_bd = p.get("card_border") or ("rgba(255, 255, 255, 0.08)" if self._is_dark else "#CBD5E1")
         fg = p.get("text") or ("#E2E8F0" if self._is_dark else "#0F172A")
         title_fg = p.get("title") or ("#F8FAFC" if self._is_dark else "#0F172A")
         muted = p.get("muted") or ("#64748B" if self._is_dark else "#94A3B8")
         hv = p.get("btn_hover_bg") or ("rgba(255, 255, 255, 0.08)" if self._is_dark else "#E2E8F0")
         chk_bg = p.get("nav_checked_bg") or ("rgba(56, 189, 248, 0.16)" if self._is_dark else "#DBEAFE")
         chk_bd = p.get("nav_checked_border") or ("rgba(56, 189, 248, 0.48)" if self._is_dark else "#60A5FA")
-        tile_bg = p.get("editor_bg") or ("#0D111A" if self._is_dark else "#FFFFFF")
+        tile_bg = p.get("editor_bg") or ("#0B0E14" if self._is_dark else "#FFFFFF")
         div_col = p.get("divider") or ("rgba(148, 163, 184, 0.18)" if self._is_dark else "#CBD5E1")
 
         self.ribbon_card.setStyleSheet(
-            f"QFrame#FlowNotesRibbonCard {{ background-color: {card_bg}; border: 1px solid {card_bd}; border-radius: 10px; }}"
+            f"QFrame#FlowNotesRibbonCard {{ background-color: {card_bg}; border: 1px solid {card_bd}; border-radius: 8px; }}"
             f"QLabel#RibbonGroupCaption {{ color: {muted}; font-size: 9.5px; font-weight: 500; background: transparent; }}"
             f"QToolButton#RibbonLargeBtn {{ background: transparent; border: 1px solid transparent; border-radius: 6px; color: {fg}; font-size: 10px; font-weight: 500; padding: 4px 5px; }}"
             f"QToolButton#RibbonLargeBtn:hover {{ background-color: {hv}; }}"
@@ -1176,6 +1223,11 @@ class FlowNotesRibbonWidget(QWidget):
             f"QToolButton#RibbonCollapseBtn {{ background: transparent; border: none; border-radius: 5px; color: {muted}; }}"
             f"QToolButton#RibbonCollapseBtn:hover {{ background-color: {hv}; color: {title_fg}; }}"
         )
+        self.btn_width_quick.setStyleSheet(
+            f"QToolButton#RibbonQuickToggleBtn {{ background: transparent; border: none; border-radius: 5px; color: {muted}; }}"
+            f"QToolButton#RibbonQuickToggleBtn:hover {{ background-color: {hv}; color: {title_fg}; }}"
+            f"QToolButton#RibbonQuickToggleBtn:checked {{ background-color: {chk_bg}; border: 1px solid {chk_bd}; }}"
+        )
 
         for div in self._dividers:
             div.setStyleSheet(f"QFrame#RibbonGroupDivider {{ background-color: {div_col}; border: none; margin: 6px 2px; }}")
@@ -1187,6 +1239,7 @@ class FlowNotesRibbonWidget(QWidget):
 
         self._apply_tab_bar_qss()
         self._refresh_collapse_icon()
+        self._refresh_width_quick_icon()
         self._refresh_color_split_icons()
 
         save_mode = bool(self.btn_lock_action.property("saveMode"))

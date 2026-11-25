@@ -1217,8 +1217,8 @@ class SpotifyMiniBar(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("SpotifyMiniBar")
-        self.setFixedHeight(30)
-        self.setFixedWidth(242)
+        self.setFixedHeight(28)
+        self.setFixedWidth(88)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._spotify_hwnd: Optional[int] = None
         self._spotify_running = False
@@ -1234,7 +1234,7 @@ class SpotifyMiniBar(QFrame):
         self.track_btn.setObjectName("SpotifyTrackBtn")
         self.track_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.track_btn.setIconSize(QSize(13, 13))
-        self.track_btn.setFixedWidth(152)
+        self.track_btn.setFixedWidth(72)
         self.track_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.track_btn.setToolTip("Clicca per aprire o portare in primo piano Spotify")
         self.track_btn.clicked.connect(self._on_track_clicked)
@@ -1248,6 +1248,7 @@ class SpotifyMiniBar(QFrame):
         self.prev_btn.clicked.connect(
             lambda: self._send_media_key(self.VK_MEDIA_PREV_TRACK, self.APPCOMMAND_MEDIA_PREVIOUSTRACK)
         )
+        self.prev_btn.hide()
         layout.addWidget(self.prev_btn)
 
         self.play_btn = QPushButton("")
@@ -1258,6 +1259,7 @@ class SpotifyMiniBar(QFrame):
         self.play_btn.clicked.connect(
             lambda: self._send_media_key(self.VK_MEDIA_PLAY_PAUSE, self.APPCOMMAND_MEDIA_PLAY_PAUSE)
         )
+        self.play_btn.hide()
         layout.addWidget(self.play_btn)
 
         self.next_btn = QPushButton("")
@@ -1268,6 +1270,7 @@ class SpotifyMiniBar(QFrame):
         self.next_btn.clicked.connect(
             lambda: self._send_media_key(self.VK_MEDIA_NEXT_TRACK, self.APPCOMMAND_MEDIA_NEXTTRACK)
         )
+        self.next_btn.hide()
         layout.addWidget(self.next_btn)
 
         self._update_control_icons()
@@ -1407,6 +1410,17 @@ class SpotifyMiniBar(QFrame):
                 return True, hwnd, title
         return True, found_windows[0][0], found_windows[0][1]
 
+    def _apply_running_layout(self, running: bool):
+        show_ctrls = bool(running)
+        for btn in (self.prev_btn, self.play_btn, self.next_btn):
+            btn.setVisible(show_ctrls)
+        if show_ctrls:
+            self.setFixedWidth(242)
+            self.track_btn.setFixedWidth(152)
+        else:
+            self.setFixedWidth(88)
+            self.track_btn.setFixedWidth(72)
+
     def _poll_spotify(self):
         win = self.window()
         if win is not None and not win.isVisible():
@@ -1415,10 +1429,11 @@ class SpotifyMiniBar(QFrame):
         self._spotify_running = running
         self._spotify_hwnd = hwnd
         self._last_raw_title = raw_title
+        self._apply_running_layout(running)
 
         is_playing_now = False
         if not running:
-            raw_display = "Apri Spotify"
+            raw_display = "Spotify"
             tooltip = "Spotify non è aperto — clicca per avviarlo"
         elif raw_title.lower() in ("spotify", "spotify free", "spotify premium", ""):
             raw_display = "Spotify · Pausa"
@@ -1429,8 +1444,9 @@ class SpotifyMiniBar(QFrame):
             tooltip = f"In riproduzione su Spotify:\n{clean}"
             raw_display = clean
 
+        elide_w = 134 if running else 56
         display = self.track_btn.fontMetrics().elidedText(
-            raw_display, Qt.TextElideMode.ElideRight, 134
+            raw_display, Qt.TextElideMode.ElideRight, elide_w
         )
 
         if is_playing_now != self._is_playing:

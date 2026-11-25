@@ -1,26 +1,24 @@
 """
 ui/orb_radial_menu.py
 Unico vero Voice Orb al centro in alto (stesso disegno canonico di VoiceOrbOverlay)
-+ Ventaglio di Plasma compatto a 3 spicchi da 60° (semicerchio inferiore 180°):
-  - Note (FlowNotes)          -> Sinistra (120°–180°) · Ciano   #38BDF8 · page_idx = 1
-  - Calendario (FlowTime)     -> Centro   (60°–120°)  · Viola   #A855F7 · page_idx = 7
-  - Trascrizione (FlowType)   -> Destra   (0°–60°)    · Smeraldo #10B981 · page_idx = 0
++ Floating Glass Dock compatto ancorato subito sotto l'Orb per passare tra i 3 mondi:
+  - Note (FlowNotes)          -> Sinistra · Ciano    #38BDF8 · page_idx = 1
+  - Calendario (FlowTime)     -> Centro   · Viola    #A855F7 · page_idx = 7
+  - Trascrizione (FlowType)   -> Destra   · Smeraldo #10B981 · page_idx = 0
 """
 
 from __future__ import annotations
 
-import math
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from PyQt6.QtCore import QPoint, QPointF, QRectF, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (
-    QBrush,
     QColor,
+    QCursor,
     QFont,
     QFontMetrics,
-    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
@@ -30,7 +28,7 @@ from PyQt6.QtWidgets import QWidget
 
 from core.audio_analyzer import AudioAnalyzer
 from ui.icons import get_pixmap
-from ui.voice_orb import create_smooth_closed_path, paint_voice_orb_body
+from ui.voice_orb import paint_voice_orb_body
 
 
 RADIAL_WORLD_ITEMS: List[Dict[str, Any]] = [
@@ -81,7 +79,9 @@ class TopOrbAnchorWidget(QWidget):
         self.setFixedSize(size, size)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet("background: transparent; border: none;")
 
     def enterEvent(self, event):
         self.hoverEntered.emit()
@@ -122,7 +122,8 @@ class InAppVoiceOrbWidget(QWidget):
         self._palette: Dict[str, str] = {}
 
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.setAutoFillBackground(False)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         self.analyzer = AudioAnalyzer(num_half_bands=12, intensity=0.80, smoothing=0.50)
@@ -149,7 +150,7 @@ class InAppVoiceOrbWidget(QWidget):
         self.current_color: QColor = QColor("#38BDF8")
 
         self._orb_cx: float = 150.0
-        self._orb_cy: float = 28.0
+        self._orb_cy: float = 26.0
         self._target_w: float = 300.0
 
         self._timer = QTimer(self)
@@ -207,6 +208,9 @@ class InAppVoiceOrbWidget(QWidget):
         if palette is not None:
             self._palette = dict(palette)
         self._is_dark = bool(is_dark)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.setAutoFillBackground(False)
         self.update()
 
     def sync_geometry(self):
@@ -216,12 +220,12 @@ class InAppVoiceOrbWidget(QWidget):
         if self._anchor_widget is not None and self._anchor_widget.isVisible():
             center = self._anchor_widget.mapTo(parent, self._anchor_widget.rect().center())
         else:
-            center = QPoint(max(150, parent.width() // 2), 28)
+            center = QPoint(max(150, parent.width() // 2), 26)
         w = min(max(300, int(round(self._target_w))), max(300, parent.width()))
-        h = 116
+        h = 112
         x = max(0, min(parent.width() - w, int(round(center.x() - w / 2.0))))
         self._orb_cx = float(center.x() - x)
-        self._orb_cy = max(24.0, float(center.y()))
+        self._orb_cy = max(22.0, float(center.y()))
         self.setGeometry(x, 0, w, h)
 
     def global_orb_center(self) -> QPoint:
@@ -248,6 +252,7 @@ class InAppVoiceOrbWidget(QWidget):
             if self._radial_menu is not None and self._radial_menu.is_menu_open():
                 self._radial_menu.close_immediate()
         self._target_w = self._compute_target_width()
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.sync_geometry()
         if is_now_dictating:
             self.raise_()
@@ -361,16 +366,12 @@ class InAppVoiceOrbWidget(QWidget):
         elif self.state == "QWEN":
             target_col = QColor("#10B981")
         else:
-            # In stato IDLE l'Orb mostra i suoi 3 fuochi canonici (#38BDF8 / #A855F7 / #10B981)
             target_col = QColor("#38BDF8")
 
         self.current_color = self._lerp_color(self.current_color, target_col, 0.16)
         self.update()
 
     def paintEvent(self, event):
-        if self._delegated_to_menu and self.state == "IDLE":
-            return
-
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -379,7 +380,6 @@ class InAppVoiceOrbWidget(QWidget):
         levels = self.analyzer.update(active=is_listening)
         avg_energy = float(np.mean(levels)) if len(levels) > 0 else 0.0
 
-        # A riposo leggermente più compatto (14.5px), durante la dettatura raggiunge i 17.0px canonici
         idle_r = 14.5 + 1.0 * max(self._menu_open_factor, 0.5 if self._hovered else 0.0)
         active_mix = max(self.wave_envelope, self.spinner_opacity)
         core_radius = idle_r + (self.CORE_RADIUS - idle_r) * active_mix + (avg_energy * 2.0 if is_listening else 0.0)
@@ -447,26 +447,26 @@ InAppOrbActiveOverlay = InAppVoiceOrbWidget
 
 class OrbRadialMenuOverlay(QWidget):
     """
-    Menù radiale continuo: le stesse 3 curve fluide Catmull-Rom del Voice Orb
-    si allungano organicamente verso i 3 mondi (zero aloni separati, zero cuciture):
-      - Note (Sinistra 120°–180°)      -> Ciano    #38BDF8
-      - Calendario (Centro 60°–120°)  -> Viola    #A855F7
-      - Trascrizione (Destra 0°–60°)  -> Smeraldo #10B981
+    Floating Glass Dock compatto ancorato subito sotto il Voice Orb:
+      - Note (FlowNotes)        -> Sinistra · Ciano    #38BDF8
+      - Calendario (FlowTime)   -> Centro   · Viola    #A855F7
+      - Trascrizione (FlowType) -> Destra   · Smeraldo #10B981
+    Progettato senza WA_TranslucentBackground su widget figlio così rimane sempre cliccabile
+    anche dopo molteplici cambi di tema su Qt6 Windows.
     """
 
     worldSelected = pyqtSignal(int)
     openProgressChanged = pyqtSignal(float)
 
-    OVERLAY_W = 360
-    OVERLAY_H = 160
+    OVERLAY_W = 368
+    OVERLAY_H = 114
+    DOCK_W = 340.0
+    DOCK_H = 50.0
+    DOCK_Y = 52.0
+    DOCK_RADIUS = 16.0
     INNER_RADIUS = 20.0
     OUTER_RADIUS = 148.0
     LABEL_RADIUS = 84.0
-    ORB_BLOOM_OFFSETS: Tuple[Tuple[float, float], ...] = (
-        (-56.0, 32.0),  # Note (Ciano)
-        (0.0, 62.0),    # Calendario (Viola)
-        (56.0, 32.0),   # Trascrizione (Smeraldo)
-    )
 
     def __init__(
         self,
@@ -485,10 +485,12 @@ class OrbRadialMenuOverlay(QWidget):
         self._active_world: str = "notes"
 
         self.setMouseTracking(True)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setAutoFillBackground(False)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
-        self._origin = QPointF(180.0, 28.0)
+        self._origin = QPointF(184.0, 26.0)
         self._is_open: bool = False
         self._open_progress: float = 0.0
         self._phase: float = 0.0
@@ -501,7 +503,7 @@ class OrbRadialMenuOverlay(QWidget):
 
         self._open_delay_timer = QTimer(self)
         self._open_delay_timer.setSingleShot(True)
-        self._open_delay_timer.setInterval(120)
+        self._open_delay_timer.setInterval(110)
         self._open_delay_timer.timeout.connect(self.open_immediate)
 
         self._close_grace_timer = QTimer(self)
@@ -524,6 +526,11 @@ class OrbRadialMenuOverlay(QWidget):
         self._theme_key = theme_key
         self._palette = dict(palette or {})
         self._is_dark = bool(is_dark)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setAutoFillBackground(False)
+        self.setEnabled(True)
+        self.setMouseTracking(True)
         self.update()
 
     def sync_geometry(self):
@@ -533,11 +540,11 @@ class OrbRadialMenuOverlay(QWidget):
         if self._anchor_widget is not None and self._anchor_widget.isVisible():
             c = self._anchor_widget.mapTo(parent, self._anchor_widget.rect().center())
         else:
-            c = QPoint(max(180, parent.width() // 2), 28)
-        w = min(self.OVERLAY_W, max(300, parent.width()))
-        h = min(self.OVERLAY_H, max(180, parent.height()))
+            c = QPoint(max(184, parent.width() // 2), 26)
+        w = min(self.OVERLAY_W, max(320, parent.width()))
+        h = min(self.OVERLAY_H, max(114, parent.height()))
         x = max(0, min(parent.width() - w, int(round(c.x() - w / 2.0))))
-        self._origin = QPointF(float(c.x() - x), max(24.0, float(c.y())))
+        self._origin = QPointF(float(c.x() - x), max(22.0, float(c.y())))
         self.setGeometry(x, 0, w, h)
 
     def is_menu_open(self) -> bool:
@@ -551,6 +558,12 @@ class OrbRadialMenuOverlay(QWidget):
 
     def schedule_close(self):
         self._open_delay_timer.stop()
+        gpos = QCursor.pos()
+        if self.isVisible() and self.rect().contains(self.mapFromGlobal(gpos)):
+            return
+        if self._anchor_widget is not None and self._anchor_widget.isVisible():
+            if self._anchor_widget.rect().contains(self._anchor_widget.mapFromGlobal(gpos)):
+                return
         if self._is_open or self._open_progress > 0.01:
             self._close_grace_timer.start()
 
@@ -559,13 +572,13 @@ class OrbRadialMenuOverlay(QWidget):
         self._close_grace_timer.stop()
         self.sync_geometry()
         self._is_open = True
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.setEnabled(True)
+        self.setMouseTracking(True)
         if self._top_orb_widget is not None and hasattr(self._top_orb_widget, "plasma_phase"):
             self._phase = self._top_orb_widget.plasma_phase()
-            self._top_orb_widget.set_delegated_to_menu(True)
         self.show()
         self.raise_()
-        if self._top_orb_widget is not None:
-            self._top_orb_widget.raise_()
         if not self._anim_timer.isActive():
             self._anim_timer.start(16)
         self.update()
@@ -603,7 +616,7 @@ class OrbRadialMenuOverlay(QWidget):
         if self._top_orb_widget is not None and hasattr(self._top_orb_widget, "sync_plasma_phase"):
             self._top_orb_widget.sync_plasma_phase(self._phase)
         target_p = 1.0 if self._is_open else 0.0
-        self._open_progress += (target_p - self._open_progress) * 0.22
+        self._open_progress += (target_p - self._open_progress) * 0.26
         if abs(target_p - self._open_progress) < 0.006:
             self._open_progress = target_p
         self.openProgressChanged.emit(self._open_progress)
@@ -611,10 +624,10 @@ class OrbRadialMenuOverlay(QWidget):
         for idx, item in enumerate(RADIAL_WORLD_ITEMS):
             is_hov = (idx == self._hovered_idx)
             is_act = (item["key"] == self._active_world)
-            tgt_scale = 1.14 if is_hov else (1.04 if is_act else 1.0)
-            tgt_glow = 1.0 if is_hov else (0.40 if is_act else 0.14)
-            self._item_scales[idx] += (tgt_scale - self._item_scales[idx]) * 0.24
-            self._item_glow[idx] += (tgt_glow - self._item_glow[idx]) * 0.22
+            tgt_scale = 1.04 if is_hov else (1.01 if is_act else 1.0)
+            tgt_glow = 1.0 if is_hov else (0.50 if is_act else 0.10)
+            self._item_scales[idx] += (tgt_scale - self._item_scales[idx]) * 0.26
+            self._item_glow[idx] += (tgt_glow - self._item_glow[idx]) * 0.24
 
         if not self._is_open and self._open_progress <= 0.005:
             self._open_progress = 0.0
@@ -626,59 +639,41 @@ class OrbRadialMenuOverlay(QWidget):
 
         self.update()
 
-    def _item_rect_and_center(self, idx: int) -> Tuple[QRectF, QPointF]:
+    def _dock_rect(self) -> QRectF:
         p = self._open_progress
         ease = 1.0 - (1.0 - p) ** 3
+        w = min(self.DOCK_W, max(280.0, float(self.width()) - 28.0))
+        x = (float(self.width()) - w) / 2.0
+        y = self.DOCK_Y - 10.0 * (1.0 - ease)
+        return QRectF(x, y, w, self.DOCK_H)
 
-        off_x, off_y = self.ORB_BLOOM_OFFSETS[idx]
-        drift_x = math.sin(self._phase * 1.15 + idx * 2.094) * 1.8 * ease
-        drift_y = math.cos(self._phase * 0.90 + idx * 2.618) * 1.5 * ease
-
-        cx = self._origin.x() + off_x * ease + drift_x
-        cy = self._origin.y() + off_y * ease + drift_y
-        rect = QRectF(cx - 42.0, cy - 42.0, 84.0, 84.0)
-        return rect, QPointF(cx, cy)
+    def _item_rect_and_center(self, idx: int) -> Tuple[QRectF, QPointF]:
+        dock = self._dock_rect().adjusted(6.0, 5.0, -6.0, -5.0)
+        gap = 4.0
+        seg_w = (dock.width() - gap * 2.0) / 3.0
+        x = dock.left() + idx * (seg_w + gap)
+        rect = QRectF(x, dock.top(), seg_w, dock.height())
+        return rect, rect.center()
 
     def _hit_test_item(self, pos: QPointF) -> int:
-        if self._open_progress < 0.25:
+        if self._open_progress < 0.18:
             return -1
-        # Prima verifica distanza circolare dalle 3 sfere sbocciate (sceglie la più vicina)
-        best_idx = -1
-        best_dist = 44.0
         for idx in range(len(RADIAL_WORLD_ITEMS)):
-            _rect, center = self._item_rect_and_center(idx)
-            d = math.hypot(pos.x() - center.x(), pos.y() - center.y())
-            if d <= best_dist:
-                best_dist = d
-                best_idx = idx
-        if best_idx >= 0:
-            return best_idx
-
-        dx = pos.x() - self._origin.x()
-        dy = pos.y() - self._origin.y()
-        dist = math.hypot(dx, dy)
-        if dist < 20.0 or dist > self.OUTER_RADIUS + 12.0:
-            return -1
-        ang = math.degrees(math.atan2(dy, dx))
-        if -15.0 <= ang < 0.0:
-            ang = 0.0
-        elif -180.0 <= ang <= -165.0:
-            ang = 180.0
-        if 120.0 <= ang <= 180.0:
-            return 0  # Note
-        if 60.0 <= ang < 120.0:
-            return 1  # Calendario
-        if 0.0 <= ang < 60.0:
-            return 2  # Trascrizione
+            rect, _center = self._item_rect_and_center(idx)
+            if rect.adjusted(-2.0, -3.0, 2.0, 3.0).contains(pos):
+                return idx
         return -1
 
     def _is_in_radial_zone(self, pos: QPointF) -> bool:
-        dx = pos.x() - self._origin.x()
-        dy = pos.y() - self._origin.y()
-        dist = math.hypot(dx, dy)
-        if dist <= 26.0:
+        dock = self._dock_rect().adjusted(-12.0, -10.0, 12.0, 12.0)
+        if dock.contains(pos):
             return True
-        return (dy >= -16.0) and (dist <= self.OUTER_RADIUS + 14.0)
+        # Ponte invisibile tra l'Orb nella TopBar e il Dock sottostante
+        return abs(pos.x() - self._origin.x()) <= 36.0 and -4.0 <= pos.y() <= self.DOCK_Y + 8.0
+
+    def enterEvent(self, event):
+        self._close_grace_timer.stop()
+        super().enterEvent(event)
 
     def mouseMoveEvent(self, event):
         pos = event.position()
@@ -686,8 +681,8 @@ class OrbRadialMenuOverlay(QWidget):
         if hit != self._hovered_idx:
             self._hovered_idx = hit
             self.update()
-        dist = math.hypot(pos.x() - self._origin.x(), pos.y() - self._origin.y())
-        if hit >= 0 or dist <= 24.0:
+        on_orb = abs(pos.x() - self._origin.x()) <= 24.0 and 0.0 <= pos.y() <= 46.0
+        if hit >= 0 or on_orb:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
@@ -727,6 +722,14 @@ class OrbRadialMenuOverlay(QWidget):
             return
         super().keyPressEvent(event)
 
+    @staticmethod
+    def _parse_hex_color(val: Optional[str], fallback: str) -> QColor:
+        if val and str(val).strip().startswith("#"):
+            c = QColor(str(val).strip())
+            if c.isValid():
+                return c
+        return QColor(fallback)
+
     def paintEvent(self, event):
         p = self._open_progress
         if p <= 0.005:
@@ -736,127 +739,119 @@ class OrbRadialMenuOverlay(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
 
-        ox, oy = self._origin.x(), self._origin.y()
         ease = 1.0 - (1.0 - p) ** 3
-        item_geos = [self._item_rect_and_center(i) for i in range(len(RADIAL_WORLD_ITEMS))]
-        phase_offsets = (self._phase, self._phase * 1.35 + 2.1, -self._phase * 0.9 + 4.2)
-
-        # 1. Base scura morbida dietro le 3 sfere di plasma (maschera il Ribbon senza bordi)
-        painter.setPen(Qt.PenStyle.NoPen)
-        for idx, (_rect, center) in enumerate(item_geos):
-            glow = self._item_glow[idx]
-            r_orb = 13.5 + ease * (29.5 + 4.5 * glow)
-            bg_r = r_orb * 1.15
-            dark_grad = QRadialGradient(center.x(), center.y(), bg_r)
-            dark_grad.setColorAt(0.0, QColor(10, 14, 22, int(232 * p)))
-            dark_grad.setColorAt(0.68, QColor(10, 14, 22, int(210 * p)))
-            dark_grad.setColorAt(0.86, QColor(10, 14, 22, int(150 * p)))
-            dark_grad.setColorAt(1.0, QColor(10, 14, 22, 0))
-            painter.setBrush(dark_grad)
-            painter.drawEllipse(center, bg_r, bg_r)
-
-        # 2. Nucleo canonico dell'Orb ancorato al centro superiore (rimane vivo e connesso)
-        pull_vectors: List[Tuple[float, float]] = []
-        for idx, (_rect, center) in enumerate(item_geos):
-            dx = center.x() - ox
-            dy = center.y() - oy
-            dist = math.hypot(dx, dy)
-            if dist > 1e-3:
-                pull = ease * 4.0
-                pull_vectors.append(((dx / dist) * pull, (dy / dist) * pull))
-            else:
-                pull_vectors.append((0.0, 0.0))
+        dock = self._dock_rect()
 
         painter.save()
-        painter.setOpacity(0.78)
-        paint_voice_orb_body(
-            painter,
-            ox,
-            oy,
-            core_radius=13.5,
-            levels=np.zeros(24, dtype=np.float32),
-            plasma_phase=self._phase,
-            wave_envelope=0.0,
-            spinner_opacity=0.0,
-            spinner_angle=0.0,
-            current_color=QColor("#38BDF8"),
-            state="IDLE",
-            is_active=False,
-            orb_scale=1.0,
-            max_wave_height=16.5,
-            flame_pull_vectors=pull_vectors,
+        painter.setOpacity(min(1.0, p * 1.15))
+
+        # 1. Ombra morbida multi-livello (niente QGraphicsDropShadowEffect)
+        painter.setPen(Qt.PenStyle.NoPen)
+        for spread, y_off, alpha in ((8.0, 5.0, 18), (5.0, 3.0, 30), (2.5, 1.5, 44)):
+            sh_rect = dock.adjusted(-spread, -spread + y_off, spread, spread + y_off)
+            painter.setBrush(QColor(0, 0, 0, int(alpha * ease) if self._is_dark else int(alpha * 0.55 * ease)))
+            painter.drawRoundedRect(sh_rect, self.DOCK_RADIUS + spread * 0.5, self.DOCK_RADIUS + spread * 0.5)
+
+        # 2. Superficie glass ad alta opacità allineata al tema
+        dock_path = QPainterPath()
+        dock_path.addRoundedRect(dock, self.DOCK_RADIUS, self.DOCK_RADIUS)
+
+        bg_col = self._parse_hex_color(
+            self._palette.get("dialog_bg") or self._palette.get("ribbon_bg"),
+            "#101521" if self._is_dark else "#FFFFFF",
         )
-        painter.restore()
+        bg_col.setAlpha(244 if self._is_dark else 248)
+        painter.fillPath(dock_path, bg_col)
 
-        # 3. I 3 fuochi autentici che sbocciano in sfere di plasma Catmull-Rom (zero bordi)
+        # 3. Micro-bagliore aurora sul bordo superiore centrato sul mondo attivo/hovered
+        glow_idx = self._hovered_idx
+        if glow_idx < 0:
+            for idx, item in enumerate(RADIAL_WORLD_ITEMS):
+                if item["key"] == self._active_world:
+                    glow_idx = idx
+                    break
+        if glow_idx < 0:
+            glow_idx = 0
+
+        glow_item = RADIAL_WORLD_ITEMS[glow_idx]
+        glow_col = QColor(glow_item["color"])
+        _, glow_center = self._item_rect_and_center(glow_idx)
+
         painter.save()
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+        painter.setClipPath(dock_path)
+        top_aura = QRadialGradient(glow_center.x(), dock.top() + 2.0, dock.width() * 0.42)
+        c_aura_in = QColor(glow_col)
+        c_aura_in.setAlpha(48 if self._is_dark else 32)
+        c_aura_mid = QColor(glow_col)
+        c_aura_mid.setAlpha(14 if self._is_dark else 10)
+        c_aura_out = QColor(glow_col)
+        c_aura_out.setAlpha(0)
+        top_aura.setColorAt(0.0, c_aura_in)
+        top_aura.setColorAt(0.55, c_aura_mid)
+        top_aura.setColorAt(1.0, c_aura_out)
+        painter.setBrush(top_aura)
         painter.setPen(Qt.PenStyle.NoPen)
-        num_pts = 24
-        for idx, item in enumerate(RADIAL_WORLD_ITEMS):
-            _rect, center = item_geos[idx]
-            cx_i, cy_i = center.x(), center.y()
-            glow = self._item_glow[idx]
-            is_hov = (idx == self._hovered_idx)
-            dim_other = 0.78 if (self._hovered_idx >= 0 and not is_hov) else 1.0
-            eff_alpha = int(min(242.0, (190.0 + 45.0 * glow) * dim_other * min(1.0, p * 1.15)))
-            r_orb = 13.5 + ease * (29.5 + 4.5 * glow)
-            f_ang = phase_offsets[idx]
-
-            f_points: List[QPointF] = []
-            for i in range(num_pts):
-                theta = (2.0 * math.pi * i) / num_pts - (math.pi / 2.0)
-                wobble = 1.0 + 0.045 * math.sin(theta * 2.0 + f_ang)
-                r_pt = r_orb * wobble
-                f_points.append(QPointF(cx_i + r_pt * math.cos(theta), cy_i + r_pt * math.sin(theta)))
-
-            f_path = create_smooth_closed_path(f_points)
-            col = QColor(item["color"])
-            f_grad = QRadialGradient(cx_i, cy_i, r_orb * 1.18)
-            c_hot = QColor(col)
-            c_hot.setAlpha(eff_alpha)
-            c_mid = QColor(col)
-            c_mid.setAlpha(int(eff_alpha * 0.72))
-            c_tip = QColor(col)
-            c_tip.setAlpha(0)
-            f_grad.setColorAt(0.0, c_hot)
-            f_grad.setColorAt(0.64, c_mid)
-            f_grad.setColorAt(1.0, c_tip)
-            painter.setBrush(f_grad)
-            painter.drawPath(f_path)
+        painter.drawRect(dock)
         painter.restore()
 
-        # 4. Icona + Label nitida flottante dentro il cuore di ciascuna sfera di plasma
+        # 4. Bordo hairline 1px
+        border_col = QColor(255, 255, 255, 26) if self._is_dark else QColor(15, 23, 42, 24)
+        painter.setPen(QPen(border_col, 1.0))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(dock_path)
+
+        # 5. I 3 segmenti orizzontali
+        fg_idle = self._parse_hex_color(self._palette.get("subtitle"), "#94A3B8" if self._is_dark else "#475569")
+        fg_active = self._parse_hex_color(self._palette.get("title"), "#F8FAFC" if self._is_dark else "#0F172A")
+
         for idx, item in enumerate(RADIAL_WORLD_ITEMS):
-            _rect, center = item_geos[idx]
+            seg_rect, seg_center = self._item_rect_and_center(idx)
             col = QColor(item["color"])
             is_hov = (idx == self._hovered_idx)
             is_act = (item["key"] == self._active_world)
-            scale = (0.76 + 0.24 * ease) * self._item_scales[idx]
+            glow = self._item_glow[idx]
+
+            # Pillola di evidenziazione su hover / attivo
+            if is_hov or is_act or glow > 0.12:
+                pill_fill = QColor(col)
+                fill_alpha = int((38 if is_hov else 24) * glow) if self._is_dark else int((34 if is_hov else 20) * glow)
+                pill_fill.setAlpha(max(0, min(60, fill_alpha)))
+                pill_bdr = QColor(col)
+                bdr_alpha = int((125 if is_hov else 80) * glow)
+                pill_bdr.setAlpha(max(0, min(150, bdr_alpha)))
+                painter.setBrush(pill_fill)
+                painter.setPen(QPen(pill_bdr, 1.0))
+                painter.drawRoundedRect(seg_rect, 11.0, 11.0)
+
+            ic_color = item["color"] if (is_hov or is_act) else fg_idle.name()
+            ic_pm = get_pixmap(item["icon"], color=ic_color, size=14)
+            lbl_font = QFont("Segoe UI", 9, QFont.Weight.DemiBold if (is_hov or is_act) else QFont.Weight.Medium)
+            lbl_font.setPointSizeF(9.0)
+            fm = QFontMetrics(lbl_font)
+            txt_w = fm.horizontalAdvance(item["label"])
+            ic_w = 14.0 if not ic_pm.isNull() else 0.0
+            spacing = 5.0 if ic_w > 0 else 0.0
+            total_w = ic_w + spacing + txt_w
+            start_x = seg_center.x() - total_w / 2.0
 
             painter.save()
-            painter.setOpacity(min(1.0, p * 1.18))
-            painter.translate(center)
-            painter.scale(scale, scale)
-
-            ic_color = "#FFFFFF" if is_hov else item["color"]
-            ic_pm = get_pixmap(item["icon"], color=ic_color, size=17)
             if not ic_pm.isNull():
-                painter.drawPixmap(QPointF(-8.5, -16.0), ic_pm)
+                painter.drawPixmap(QPointF(start_x, seg_center.y() - 7.0), ic_pm)
 
-            lbl_font = QFont("Segoe UI", 9, QFont.Weight.Bold if (is_hov or is_act) else QFont.Weight.DemiBold)
-            lbl_font.setPointSizeF(9.2)
             painter.setFont(lbl_font)
-            txt_rect = QRectF(-44.0, 3.0, 88.0, 18.0)
-
-            painter.setPen(QColor(6, 9, 15, int(225 * p)))
-            painter.drawText(txt_rect.translated(0.0, 1.0), Qt.AlignmentFlag.AlignCenter, item["label"])
-            painter.setPen(QColor("#FFFFFF" if (is_hov or is_act) else "#F1F5F9"))
-            painter.drawText(txt_rect, Qt.AlignmentFlag.AlignCenter, item["label"])
+            painter.setPen(fg_active if (is_hov or is_act) else fg_idle)
+            txt_rect = QRectF(start_x + ic_w + spacing, seg_rect.top(), txt_w + 4.0, seg_rect.height() - (3.0 if is_act else 0.0))
+            painter.drawText(txt_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, item["label"])
 
             if is_act:
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(col)
-                painter.drawEllipse(QPointF(0.0, 23.0), 2.4, 2.4)
-
+                bar_w = 14.0
+                painter.drawRoundedRect(
+                    QRectF(seg_center.x() - bar_w / 2.0, seg_rect.bottom() - 4.0, bar_w, 2.2),
+                    1.1,
+                    1.1,
+                )
             painter.restore()
+
+        painter.restore()

@@ -281,6 +281,7 @@ class FlowLocalHub(QMainWindow):
         self._cloud_sync_running: bool = False
         self._startup_checks_done: bool = False
         self._toast_manager = ToastManager(self)
+        self._theme_reveal_overlay: Optional[ThemeRevealOverlay] = None
         self._aiRuntimeSignal.connect(self._on_ai_runtime_changed, Qt.ConnectionType.QueuedConnection)
         self._ollamaProbeSignal.connect(self._on_ollama_probe_finished, Qt.ConnectionType.QueuedConnection)
         self._cloudSyncDoneSignal.connect(self._on_cloud_sync_done, Qt.ConnectionType.QueuedConnection)
@@ -645,10 +646,10 @@ class FlowLocalHub(QMainWindow):
     def _build_top_bar(self) -> QFrame:
         top_bar = QFrame()
         top_bar.setObjectName("TopNavBar")
-        top_bar.setFixedHeight(56)
+        top_bar.setFixedHeight(52)
 
         layout = QHBoxLayout(top_bar)
-        layout.setContentsMargins(16, 6, 16, 6)
+        layout.setContentsMargins(16, 4, 16, 4)
         layout.setSpacing(10)
 
         # A sinistra (Ignored + stretch 1 per centrare matematicamente l'Orb): FlowLocal + badge stato
@@ -1028,6 +1029,10 @@ class FlowLocalHub(QMainWindow):
     def _apply_typography_change(self):
         p_sync = self._active_palette()
         is_dark = self._active_is_dark()
+        if hasattr(self, "orb_radial_menu"):
+            self.orb_radial_menu.close_immediate()
+        if hasattr(self, "pages") and hasattr(self.pages, "_abort_active_animation"):
+            self.pages._abort_active_animation()
         self.setUpdatesEnabled(False)
         self.setStyleSheet(
             get_hub_qss(
@@ -1050,17 +1055,36 @@ class FlowLocalHub(QMainWindow):
         if hasattr(self, "flowtype_subbar") and hasattr(self.flowtype_subbar, "sync_pill_geometry"):
             QTimer.singleShot(0, self.flowtype_subbar.sync_pill_geometry)
         self.setUpdatesEnabled(True)
+        if hasattr(self, "top_orb"):
+            self.top_orb.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            self.top_orb.sync_geometry()
+            QTimer.singleShot(0, self.top_orb.sync_geometry)
+        if hasattr(self, "orb_radial_menu"):
+            self.orb_radial_menu.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            self.orb_radial_menu.setEnabled(True)
+            self.orb_radial_menu.setMouseTracking(True)
+            self.orb_radial_menu.sync_geometry()
+            QTimer.singleShot(0, self.orb_radial_menu.sync_geometry)
 
     def _apply_theme_change(self):
+        if hasattr(self, "orb_radial_menu"):
+            self.orb_radial_menu.close_immediate()
+        if hasattr(self, "pages") and hasattr(self.pages, "_abort_active_animation"):
+            self.pages._abort_active_animation()
+        prev_overlay = getattr(self, "_theme_reveal_overlay", None)
+        if prev_overlay is not None:
+            try:
+                prev_overlay.close_immediate()
+            except Exception:
+                pass
+            self._theme_reveal_overlay = None
+
         old_pixmap = self.grab() if self.isVisible() else None
         ThemedPushButton.current_theme = self._current_theme
         ThemedPushButton.reading_mode = self._reading_mode
         is_dark = self._active_is_dark()
         if hasattr(self, "nk_col3_layout"):
-            if self._reading_mode:
-                self.nk_col3_layout.setContentsMargins(64, 18, 64, 16)
-            else:
-                self.nk_col3_layout.setContentsMargins(28, 12, 28, 12)
+            self.nk_col3_layout.setContentsMargins(0, 4, 0, 0)
         p_sync = self._active_palette()
         for pane_attr in ("nk_pane_left", "nk_pane_right"):
             pane = getattr(self, pane_attr, None)
@@ -1076,6 +1100,9 @@ class FlowLocalHub(QMainWindow):
             self.nk_send_to_split_btn.setIcon(get_icon("arrow_right", theme_key=self._current_theme, role="subtitle", size=14))
 
         overlay = ThemeRevealOverlay(self, old_pixmap) if old_pixmap is not None else None
+        if overlay is not None:
+            self._theme_reveal_overlay = overlay
+            overlay.destroyed.connect(lambda _o=None: setattr(self, "_theme_reveal_overlay", None))
         self.setUpdatesEnabled(False)
         self.setStyleSheet(
             get_hub_qss(
@@ -1124,6 +1151,16 @@ class FlowLocalHub(QMainWindow):
         if hasattr(self, "flowtype_subbar") and hasattr(self.flowtype_subbar, "sync_pill_geometry"):
             QTimer.singleShot(0, self.flowtype_subbar.sync_pill_geometry)
         self.setUpdatesEnabled(True)
+        if hasattr(self, "top_orb"):
+            self.top_orb.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            self.top_orb.sync_geometry()
+            QTimer.singleShot(0, self.top_orb.sync_geometry)
+        if hasattr(self, "orb_radial_menu"):
+            self.orb_radial_menu.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            self.orb_radial_menu.setEnabled(True)
+            self.orb_radial_menu.setMouseTracking(True)
+            self.orb_radial_menu.sync_geometry()
+            QTimer.singleShot(0, self.orb_radial_menu.sync_geometry)
         self.update()
         if overlay is not None:
             overlay.raise_()
@@ -1136,6 +1173,8 @@ class FlowLocalHub(QMainWindow):
             ("reading_mode_btn", "book", "subtitle", 13),
             ("whats_new_btn", "lightbulb", "subtitle", 15),
             ("settings_btn", "settings", "subtitle", 15),
+            ("nk_new_note_btn", "plus", "accent", 15),
+            ("nk_filter_menu_btn", "sliders", "subtitle", 14),
             ("import_slide_btn", "download", "text", 14),
             ("sbobina_btn", "mic", "text", 14),
             ("nk_more_btn", "more", "subtitle", 15),
@@ -2044,8 +2083,8 @@ class FlowLocalHub(QMainWindow):
     # -----------------------------------------------------------------
     # 2. PILASTRO: FLOWSTUDY (NOTEKEEPER A 3 COLONNE & SBOBINE)
     # -----------------------------------------------------------------
-    def _build_flownotes_view_bar(self, store_attr: str) -> QWidget:
-        """Barra compatta [ Quaderno ] [ Flashcard ] [ Grafo ] [ Focus ] per le viste di FlowNotes."""
+    def _build_flownotes_view_bar(self, store_attr: str, include_graph: bool = True) -> QWidget:
+        """Barra compatta per le viste di FlowNotes (Quaderno, Flashcard, Focus e opzionalmente Grafo)."""
         bar = AnimatedSegmentedBox(
             box_object_name="FlowNotesViewBar",
             pill_object_name="SubSlidingPill",
@@ -2058,17 +2097,19 @@ class FlowLocalHub(QMainWindow):
         btn_map: Dict[int, QPushButton] = {}
         grp = QButtonGroup(bar)
         grp.setExclusive(True)
-        for idx, (lbl, pid) in enumerate([
+        items = [
             ("Quaderno", 1),
             ("Flashcard", 2),
-            ("Grafo", 3),
-            ("Focus", 8),
-        ]):
+        ]
+        if include_graph:
+            items.append(("Grafo", 3))
+        items.append(("Focus", 8))
+        for idx, (lbl, pid) in enumerate(items):
             b = ThemedPushButton(lbl)
             b.setObjectName("SubNavBtn")
             b.setCheckable(True)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.setStyleSheet("padding: 5px 6px; font-size: 11.5px;")
+            b.setStyleSheet("padding: 5px 7px; font-size: 11.5px;")
             b.clicked.connect(lambda _c=False, p=pid: self._on_nav_clicked(p))
             grp.addButton(b, idx)
             btn_map[pid] = b
@@ -2082,8 +2123,8 @@ class FlowLocalHub(QMainWindow):
         page.setObjectName("Page")
         page.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         main_vbox = QVBoxLayout(page)
-        main_vbox.setContentsMargins(10, 8, 10, 10)
-        main_vbox.setSpacing(6)
+        main_vbox.setContentsMargins(0, 0, 0, 0)
+        main_vbox.setSpacing(0)
 
         # Barra di avanzamento compatta sbobina file
         self.sbobina_progress_box = QFrame()
@@ -2118,17 +2159,6 @@ class FlowLocalHub(QMainWindow):
         self.sbobina_progress_box.hide()
         main_vbox.addWidget(self.sbobina_progress_box)
 
-        # ---------------- WORD FLUENT RIBBON IN CIMA A FLOWNOTES ----------------
-        self._nk_ribbon_collapsed_before_focus: Optional[bool] = None
-        self.nk_ribbon = FlowNotesRibbonWidget(
-            theme_key=self._current_theme,
-            palette=self._active_palette(),
-            is_dark=self._active_is_dark(),
-            parent=page,
-        )
-        self._wire_nk_ribbon_signals()
-        main_vbox.addWidget(self.nk_ribbon, 0)
-
         # ---------------- LAYOUT FLOWNOTES A 2 COLONNE STILE NOTION + RAIL GRUPPI A DESTRA ----------------
         nk_container = QFrame()
         nk_container.setObjectName("NotekeeperContainer")
@@ -2137,25 +2167,25 @@ class FlowLocalHub(QMainWindow):
         nk_container_layout.setSpacing(0)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.setHandleWidth(4)
+        splitter.setHandleWidth(2)
         self.nk_splitter = splitter
 
-        # ===== COLONNA 1: SIDEBAR UNICA FLOWNOTES (280px, COLLASSABILE) =====
+        # ===== COLONNA 1: SIDEBAR UNICA FLOWNOTES (260px, COLLASSABILE) =====
         col1 = QWidget()
         col1.setObjectName("NKCol1")
         col1.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        col1.setMinimumWidth(280)
-        col1.setMaximumWidth(380)
+        col1.setMinimumWidth(248)
+        col1.setMaximumWidth(360)
         self.nk_col1 = col1
         col1_layout = QVBoxLayout(col1)
         col1_layout.setContentsMargins(10, 10, 10, 10)
-        col1_layout.setSpacing(7)
+        col1_layout.setSpacing(8)
 
         # Switch Viste Studio in cima alla Sidebar + pulsante collasso
         col1_top_row = QHBoxLayout()
         col1_top_row.setContentsMargins(0, 0, 0, 0)
         col1_top_row.setSpacing(4)
-        col1_top_row.addWidget(self._build_flownotes_view_bar("fn_sidebar_view_btns"), 1)
+        col1_top_row.addWidget(self._build_flownotes_view_bar("fn_sidebar_view_btns", include_graph=False), 1)
 
         self.nk_hide_col1_btn = _make_button("«")
         self.nk_hide_col1_btn.setObjectName("NKCollapseBtn")
@@ -2164,7 +2194,7 @@ class FlowLocalHub(QMainWindow):
         col1_top_row.addWidget(self.nk_hide_col1_btn)
         col1_layout.addLayout(col1_top_row)
 
-        # Workspace Switcher stile Notion (Quaderno Locale vs FlowGroups)
+        # Workspace Switcher borderless stile Notion (Quaderno Locale vs FlowGroups)
         self._nk_active_workspace_group_id: Optional[int] = None
         self.nk_workspace_switcher = WorkspaceSwitcherButton(theme_key=self._current_theme, parent=col1)
         self.nk_workspace_switcher.set_theme(self._current_theme, self._active_palette())
@@ -2173,38 +2203,48 @@ class FlowLocalHub(QMainWindow):
         self.nk_workspace_switcher.removeGroupRequested.connect(self._on_nk_remove_group)
         col1_layout.addWidget(self.nk_workspace_switcher)
 
-        # Barra di ricerca + Profilo compatto
+        # Riga unica: Ricerca (>=36px, fuori da QScrollArea) + Nuova Nota compatta + Filtro profilo/card
+        search_action_row = QHBoxLayout()
+        search_action_row.setContentsMargins(0, 0, 0, 0)
+        search_action_row.setSpacing(5)
+
         self.nk_search_input = QLineEdit()
-        self.nk_search_input.setPlaceholderText("Cerca note, materie...")
-        self.nk_search_input.setMinimumHeight(32)
+        self.nk_search_input.setPlaceholderText("Cerca note...")
+        self.nk_search_input.setMinimumHeight(36)
         self.nk_search_input.textChanged.connect(self._on_nk_search_changed)
-        col1_layout.addWidget(self.nk_search_input)
+        search_action_row.addWidget(self.nk_search_input, 1)
 
-        actions_row = QHBoxLayout()
-        actions_row.setSpacing(6)
-        self.nk_new_note_btn = _make_button("+ Nuova Nota", "primary")
-        self.nk_new_note_btn.setFixedHeight(32)
+        self.nk_new_note_btn = QPushButton("")
+        self.nk_new_note_btn.setObjectName("NKNewNoteCompactBtn")
+        self.nk_new_note_btn.setFixedSize(36, 36)
+        self.nk_new_note_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.nk_new_note_btn.setIcon(get_icon("plus", theme_key=self._current_theme, role="accent", size=15))
+        self.nk_new_note_btn.setIconSize(QSize(15, 15))
+        self.nk_new_note_btn.setToolTip("Nuova nota (Ctrl+N)")
         self.nk_new_note_btn.clicked.connect(self._on_nk_new_note_clicked)
-        actions_row.addWidget(self.nk_new_note_btn, 1)
-        col1_layout.addLayout(actions_row)
+        search_action_row.addWidget(self.nk_new_note_btn)
 
-        # Filtro Profilo compatto + Toggle Vista Card
-        profile_row = QHBoxLayout()
-        profile_row.setSpacing(6)
-        self.nk_profile_combo = QComboBox()
+        self.nk_filter_menu_btn = _make_button("", "ghost")
+        self.nk_filter_menu_btn.setObjectName("NKToolbarIconBtn")
+        self.nk_filter_menu_btn.setFixedSize(32, 36)
+        self.nk_filter_menu_btn.setIcon(get_icon("sliders", theme_key=self._current_theme, role="subtitle", size=14))
+        self.nk_filter_menu_btn.setIconSize(QSize(14, 14))
+        self.nk_filter_menu_btn.setToolTip("Filtra profilo e Vista Card")
+        self.nk_filter_menu_btn.clicked.connect(self._open_nk_sidebar_filter_menu)
+        search_action_row.addWidget(self.nk_filter_menu_btn)
+        col1_layout.addLayout(search_action_row)
+
+        # Backing controls nascosti per compatibilità con filtro profilo e toggle Vista Card
+        self.nk_profile_combo = QComboBox(col1)
         self.nk_profile_combo.addItems(["Tutti i profili", "Alessandro", "Giada"])
-        self.nk_profile_combo.setMinimumHeight(28)
         self.nk_profile_combo.currentIndexChanged.connect(self._on_nk_profile_changed)
-        profile_row.addWidget(self.nk_profile_combo, 1)
+        self.nk_profile_combo.hide()
 
         self.nk_card_view_btn = _make_button("☷")
         self.nk_card_view_btn.setObjectName("NKCollapseBtn")
         self.nk_card_view_btn.setCheckable(True)
-        self.nk_card_view_btn.setToolTip("Mostra/Nascondi colonna Vista Card")
-        self.nk_card_view_btn.setFixedSize(32, 28)
         self.nk_card_view_btn.clicked.connect(self._toggle_nk_card_view)
-        profile_row.addWidget(self.nk_card_view_btn)
-        col1_layout.addLayout(profile_row)
+        self.nk_card_view_btn.hide()
 
         # Albero Cartelle & Sottocartelle Stile Samsung Notes (FlowNotes)
         self.nk_tree = SamsungNotesTreeWidget()
@@ -2235,35 +2275,13 @@ class FlowLocalHub(QMainWindow):
         self.nk_tree.openInSplitRequested.connect(lambda data: self._open_nk_tree_node(data, in_split=True))
         col1_layout.addWidget(self.nk_tree, 1)
 
-        # Footer compatto della Sidebar
-        col1_btn_layout = QVBoxLayout()
-        col1_btn_layout.setSpacing(5)
-        self.nk_new_sub_btn = _make_button("+ Cartella")
+        # Footer minimale della Sidebar (Importa e Sbobina vivono in Ribbon -> Whis)
+        self.nk_new_sub_btn = _make_button("+ Cartella", "ghost")
         self.nk_new_sub_btn.setObjectName("NKCol1Btn")
         self.nk_new_sub_btn.setFixedHeight(30)
         self.nk_new_sub_btn.setToolTip("Crea una nuova cartella in FlowNotes")
         self.nk_new_sub_btn.clicked.connect(self._on_nk_new_subject_clicked)
-        col1_btn_layout.addWidget(self.nk_new_sub_btn)
-
-        footer_row2 = QHBoxLayout()
-        footer_row2.setSpacing(5)
-        self.import_slide_btn = _make_button(" Importa", "ghost")
-        self.import_slide_btn.setObjectName("NKCol1Btn")
-        self.import_slide_btn.setIcon(get_icon("download", theme_key=self._current_theme, role="text", size=14))
-        self.import_slide_btn.setToolTip("Importa PDF, Slide o Immagini")
-        self.import_slide_btn.setFixedHeight(30)
-        self.import_slide_btn.clicked.connect(self._on_import_slide_clicked)
-        footer_row2.addWidget(self.import_slide_btn, 1)
-
-        self.sbobina_btn = _make_button(" Sbobina", "ghost")
-        self.sbobina_btn.setObjectName("NKCol1Btn")
-        self.sbobina_btn.setIcon(get_icon("mic", theme_key=self._current_theme, role="text", size=14))
-        self.sbobina_btn.setToolTip("Sbobina Audio o Lezione")
-        self.sbobina_btn.setFixedHeight(30)
-        self.sbobina_btn.clicked.connect(self._on_sbobina_clicked)
-        footer_row2.addWidget(self.sbobina_btn, 1)
-        col1_btn_layout.addLayout(footer_row2)
-        col1_layout.addLayout(col1_btn_layout)
+        col1_layout.addWidget(self.nk_new_sub_btn)
 
         splitter.addWidget(col1)
 
@@ -2301,7 +2319,7 @@ class FlowLocalHub(QMainWindow):
         col2.setVisible(False)
         splitter.addWidget(col2)
 
-        # ===== AREA PRINCIPALE DESTRA: FOGLIO EDITOR NOTION (80% DELLO SCHERMO) =====
+        # ===== AREA PRINCIPALE DESTRA: WORD FLUENT RIBBON + FOGLIO EDITOR CENTRATO =====
         col3 = QWidget()
         col3.setObjectName("NKCol3")
         col3.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -2309,15 +2327,23 @@ class FlowLocalHub(QMainWindow):
         self.nk_col3 = col3
         col3_layout = QVBoxLayout(col3)
         self.nk_col3_layout = col3_layout
-        if getattr(self, "_reading_mode", False):
-            col3_layout.setContentsMargins(64, 18, 64, 16)
-        else:
-            col3_layout.setContentsMargins(28, 12, 28, 12)
-        col3_layout.setSpacing(6)
+        col3_layout.setContentsMargins(0, 4, 0, 0)
+        col3_layout.setSpacing(0)
+
+        # Word Fluent Ribbon confinato sopra l'Editor (collassato di default)
+        self._nk_ribbon_collapsed_before_focus: Optional[bool] = None
+        self.nk_ribbon = FlowNotesRibbonWidget(
+            theme_key=self._current_theme,
+            palette=self._active_palette(),
+            is_dark=self._active_is_dark(),
+            parent=col3,
+        )
+        self._wire_nk_ribbon_signals()
+        col3_layout.addWidget(self.nk_ribbon, 0)
 
         # Pillole di ripristino sidebar (visibili solo quando la sidebar è nascosta)
         restore_bar = QHBoxLayout()
-        restore_bar.setContentsMargins(0, 0, 0, 0)
+        restore_bar.setContentsMargins(12, 2, 12, 2)
         restore_bar.setSpacing(6)
 
         self.nk_show_col1_btn = _make_button(" Sidebar ▸")
@@ -2538,8 +2564,8 @@ class FlowLocalHub(QMainWindow):
                 handle.setCursor(Qt.CursorShape.SplitHCursor)
         splitter.splitterMoved.connect(lambda _pos, _idx: self._sync_nk_panel_toggles())
 
-        # Layout a 2 colonne di default: Sidebar Unica 280px + Editor Gigante ~80% + Rail Gruppi stile Discord a destra
-        splitter.setSizes([280, 0, 920])
+        # Layout a 2 colonne di default: Sidebar Unica 260px + Editor Centrato + Rail Gruppi a destra
+        splitter.setSizes([260, 0, 940])
         nk_container_layout.addWidget(splitter, 1)
 
         self.nk_group_rail = GroupDiscordRail(
@@ -2560,6 +2586,11 @@ class FlowLocalHub(QMainWindow):
         nk_container_layout.addWidget(self.nk_group_rail, 0)
 
         main_vbox.addWidget(nk_container, 1)
+
+        # Ripristina preferenza ampiezza colonna lettura
+        raw_fw = QSettings("FlowLocal", "Hub").value("editor_full_width", False)
+        full_w = str(raw_fw).lower() in ("true", "1", "yes") if not isinstance(raw_fw, bool) else raw_fw
+        self._apply_nk_prose_width(full_w, persist=False)
 
         self._nk_selected_note_id = None
         self._nk_current_filter_subject = None
@@ -2635,6 +2666,7 @@ class FlowLocalHub(QMainWindow):
         r.splitViewRequested.connect(self._on_nk_toggle_split_view)
         r.sendToSplitRequested.connect(self._on_nk_send_selection_to_other_pane)
         r.focusModeRequested.connect(self._toggle_nk_focus_mode)
+        r.proseWidthToggled.connect(self._on_nk_toggle_full_width)
         r.favoriteToggled.connect(self._on_nk_toggle_favorite_active)
 
         # Tab Whis
@@ -2716,12 +2748,55 @@ class FlowLocalHub(QMainWindow):
                 return p
         return "Alessandro"
 
+    def _apply_nk_prose_width(self, full_width: bool, persist: bool = True):
+        fw = bool(full_width)
+        if persist:
+            QSettings("FlowLocal", "Hub").setValue("editor_full_width", fw)
+        if hasattr(self, "nk_ribbon"):
+            self.nk_ribbon.set_full_width_checked(fw)
+        for pane_attr in ("nk_pane_left", "nk_pane_right"):
+            pane = getattr(self, pane_attr, None)
+            if pane is not None and hasattr(pane, "set_full_width_mode"):
+                pane.set_full_width_mode(fw)
+
+    def _on_nk_toggle_full_width(self, checked: bool):
+        self._apply_nk_prose_width(checked, persist=True)
+
+    def _open_nk_sidebar_filter_menu(self):
+        p = self._active_palette()
+        bg = p.get("combo_popup_bg") or p.get("dialog_bg") or "#101521"
+        fg = p.get("text") or "#E2E8F0"
+        bd = p.get("card_border") or "rgba(255,255,255,0.08)"
+        hv = p.get("nav_hover") or "rgba(255,255,255,0.07)"
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"QMenu {{ background-color: {bg}; color: {fg}; border: 1px solid {bd}; border-radius: 8px; padding: 5px; }}"
+            f"QMenu::item {{ padding: 6px 12px; border-radius: 5px; font-size: 12px; }}"
+            f"QMenu::item:selected {{ background-color: {hv}; }}"
+            f"QMenu::separator {{ height: 1px; background-color: {bd}; margin: 4px 8px; }}"
+        )
+        cur_prof = self.nk_profile_combo.currentText().strip() if hasattr(self, "nk_profile_combo") else "Tutti i profili"
+        for prof in ("Tutti i profili", "Alessandro", "Giada"):
+            act = menu.addAction(f"Profilo: {prof}" if prof != "Tutti i profili" else "Tutti i profili")
+            act.setCheckable(True)
+            act.setChecked(cur_prof == prof)
+            act.triggered.connect(lambda _c=False, pr=prof: self.nk_profile_combo.setCurrentText(pr))
+        menu.addSeparator()
+        is_card_vis = bool(hasattr(self, "nk_col2") and self.nk_col2.isVisible())
+        act_card = menu.addAction("Mostra Vista Card")
+        act_card.setCheckable(True)
+        act_card.setChecked(is_card_vis)
+        act_card.triggered.connect(lambda chk: self._toggle_nk_card_view(bool(chk)))
+        btn = getattr(self, "nk_filter_menu_btn", self.nk_search_input)
+        menu.exec(btn.mapToGlobal(QPoint(0, btn.height() + 4)))
+
     def _on_nk_pane_activated(self, pane: EditorPane):
         if getattr(self, "_nk_active_pane", None) is pane:
             return
         self._nk_active_pane = pane
-        self.nk_pane_left.set_active_pane(pane is self.nk_pane_left)
-        self.nk_pane_right.set_active_pane(pane is self.nk_pane_right)
+        split_on = bool(hasattr(self, "nk_pane_right") and not self.nk_pane_right.isHidden())
+        self.nk_pane_left.set_active_pane(pane is self.nk_pane_left, split_mode=split_on)
+        self.nk_pane_right.set_active_pane(pane is self.nk_pane_right, split_mode=split_on)
         if hasattr(self, "nk_actions_strip") and hasattr(pane, "breadcrumb"):
             if self.nk_actions_strip.parentWidget() is not pane.breadcrumb:
                 pane.breadcrumb.toolbar_slot.addWidget(self.nk_actions_strip)
@@ -2875,6 +2950,7 @@ class FlowLocalHub(QMainWindow):
     def _on_nk_pane_last_tab_closed(self, pane: EditorPane):
         if pane is self.nk_pane_right:
             self.nk_pane_right.hide()
+            self._nk_active_pane = None
             self._on_nk_pane_activated(self.nk_pane_left)
             self._sync_toolbar_from_active_pane()
         else:
@@ -3441,6 +3517,7 @@ class FlowLocalHub(QMainWindow):
             return
         if not self.nk_pane_right.isHidden():
             self.nk_pane_right.hide()
+            self._nk_active_pane = None
             self._on_nk_pane_activated(self.nk_pane_left)
             self._sync_toolbar_from_active_pane()
             return
@@ -3460,6 +3537,7 @@ class FlowLocalHub(QMainWindow):
                     topic=self._nk_current_filter_topic or "Generale",
                     profile=self._nk_author_name(),
                 )
+        self._nk_active_pane = None
         self._on_nk_pane_activated(self.nk_pane_right)
         self._sync_toolbar_from_active_pane()
 
@@ -3480,6 +3558,7 @@ class FlowLocalHub(QMainWindow):
             self._open_group_board_in_pane(target_pane, tab.group_id, in_new_tab=True)
         else:
             target_pane.open_new_empty_tab(profile=self._nk_author_name())
+        self._nk_active_pane = None
         self._on_nk_pane_activated(target_pane)
         self._sync_toolbar_from_active_pane()
 
@@ -3499,6 +3578,7 @@ class FlowLocalHub(QMainWindow):
         if tab is None:
             return
         target_pane.open_tab(tab, in_new_tab=True)
+        self._nk_active_pane = None
         self._on_nk_pane_activated(target_pane)
         self._sync_toolbar_from_active_pane()
 
@@ -3921,7 +4001,7 @@ class FlowLocalHub(QMainWindow):
             self.nk_card_view_btn.setChecked(show)
         if show:
             total = max(sum(self.nk_splitter.sizes()), 1020)
-            c1_w = 280 if self.nk_col1.isVisible() else 0
+            c1_w = 260 if self.nk_col1.isVisible() else 0
             self.nk_splitter.setSizes([c1_w, 280, max(420, total - c1_w - 280)])
         self._sync_nk_panel_toggles()
 
@@ -3952,7 +4032,7 @@ class FlowLocalHub(QMainWindow):
 
     def _show_nk_col(self, col_idx: int):
         col = self.nk_col1 if col_idx == 0 else self.nk_col2
-        target_w = 280 if col_idx == 0 else 280
+        target_w = 260 if col_idx == 0 else 280
         col.show()
         sizes = self.nk_splitter.sizes()
         if len(sizes) == 3:
@@ -3970,7 +4050,7 @@ class FlowLocalHub(QMainWindow):
             self.nk_col1.show()
             total = max(sum(self.nk_splitter.sizes()), 1020)
             c2_w = 280 if self.nk_col2.isVisible() else 0
-            self.nk_splitter.setSizes([280, c2_w, max(420, total - 280 - c2_w)])
+            self.nk_splitter.setSizes([260, c2_w, max(420, total - 260 - c2_w)])
             if hasattr(self, "nk_ribbon"):
                 prev_coll = getattr(self, "_nk_ribbon_collapsed_before_focus", None)
                 if prev_coll is not None:
@@ -6556,8 +6636,9 @@ class FlowLocalHub(QMainWindow):
         if not ok:
             subject_context = ""
 
-        self.sbobina_btn.setEnabled(False)
-        self.sbobina_btn.setText("⏳ In corso...")
+        if getattr(self, "sbobina_btn", None) is not None:
+            self.sbobina_btn.setEnabled(False)
+            self.sbobina_btn.setText("⏳ In corso...")
 
         # Mostra barra di avanzamento e resetta stato
         self.sbobina_status_label.setText("Inizializzazione job...")
@@ -6580,8 +6661,9 @@ class FlowLocalHub(QMainWindow):
         self.sbobina_status_label.setText(msg)
         if percent >= 0:
             self.sbobina_progress_bar.setValue(percent)
-            self.sbobina_btn.setText(f"⏳ {percent}%")
-        else:
+            if getattr(self, "sbobina_btn", None) is not None:
+                self.sbobina_btn.setText(f"⏳ {percent}%")
+        elif getattr(self, "sbobina_btn", None) is not None:
             self.sbobina_btn.setText("⏳ In corso...")
 
     def _on_cancel_sbobina_clicked(self):
@@ -6668,7 +6750,8 @@ class FlowLocalHub(QMainWindow):
         if hasattr(self, "cloud_process_btn"):
             self.cloud_process_btn.setEnabled(False)
             self.cloud_process_btn.setText("⏳ In elaborazione...")
-        self.sbobina_btn.setEnabled(False)
+        if getattr(self, "sbobina_btn", None) is not None:
+            self.sbobina_btn.setEnabled(False)
 
         self.sbobina_status_label.setText(f"Avvio Coda Cloud: 0/{total} completati...")
         self.sbobina_progress_bar.setValue(0)
@@ -6692,7 +6775,8 @@ class FlowLocalHub(QMainWindow):
         if hasattr(self, "cloud_process_btn"):
             self.cloud_process_btn.setEnabled(True)
             self.cloud_process_btn.setText("▶️ Elabora Coda")
-        self.sbobina_btn.setEnabled(True)
+        if getattr(self, "sbobina_btn", None) is not None:
+            self.sbobina_btn.setEnabled(True)
         self._poll_cloud_queue()
         self._refresh_notes()
 
@@ -6710,7 +6794,8 @@ class FlowLocalHub(QMainWindow):
         if hasattr(self, "cloud_process_btn"):
             self.cloud_process_btn.setEnabled(True)
             self.cloud_process_btn.setText("▶️ Elabora Coda")
-        self.sbobina_btn.setEnabled(True)
+        if getattr(self, "sbobina_btn", None) is not None:
+            self.sbobina_btn.setEnabled(True)
         self._poll_cloud_queue()
         QMessageBox.critical(
             self, "Errore Coda Cloud", f"Si è verificato un errore durante l'elaborazione:\n{err_msg}"
@@ -6721,7 +6806,8 @@ class FlowLocalHub(QMainWindow):
         if hasattr(self, "cloud_process_btn"):
             self.cloud_process_btn.setEnabled(True)
             self.cloud_process_btn.setText("▶️ Elabora Coda")
-        self.sbobina_btn.setEnabled(True)
+        if getattr(self, "sbobina_btn", None) is not None:
+            self.sbobina_btn.setEnabled(True)
         self._poll_cloud_queue()
         self._refresh_notes()
         QMessageBox.information(self, "Coda Annullata", "L'elaborazione della coda cloud è stata interrotta.")
@@ -6770,8 +6856,9 @@ class FlowLocalHub(QMainWindow):
 
     def _on_sbobina_cancelled(self):
         self.sbobina_progress_box.hide()
-        self.sbobina_btn.setEnabled(True)
-        self.sbobina_btn.setText("🎙️ Sbobina File Audio")
+        if getattr(self, "sbobina_btn", None) is not None:
+            self.sbobina_btn.setEnabled(True)
+            self.sbobina_btn.setText("🎙️ Sbobina File Audio")
         QMessageBox.information(
             self,
             "Sbobinatura Annullata",
@@ -6780,8 +6867,9 @@ class FlowLocalHub(QMainWindow):
 
     def _on_sbobina_finished(self, markdown: str, file_name: str, source_path: str = "", sync_data=None):
         self.sbobina_progress_box.hide()
-        self.sbobina_btn.setEnabled(True)
-        self.sbobina_btn.setText("🎙️ Sbobina")
+        if getattr(self, "sbobina_btn", None) is not None:
+            self.sbobina_btn.setEnabled(True)
+            self.sbobina_btn.setText("🎙️ Sbobina")
 
         # Salva la sbobina nella tabella study_notes del database
         title = f"Sbobina: {file_name}"
@@ -6817,8 +6905,9 @@ class FlowLocalHub(QMainWindow):
 
     def _on_sbobina_error(self, err_msg: str):
         self.sbobina_progress_box.hide()
-        self.sbobina_btn.setEnabled(True)
-        self.sbobina_btn.setText("🎙️ Sbobina File Audio")
+        if getattr(self, "sbobina_btn", None) is not None:
+            self.sbobina_btn.setEnabled(True)
+            self.sbobina_btn.setText("🎙️ Sbobina File Audio")
         QMessageBox.critical(
             self,
             "Errore Sbobinatura",

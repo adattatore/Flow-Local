@@ -175,3 +175,12 @@
 2026-11-25 13:20:28 [INFO] FlowLocal: FlowLocal v3.3.0 avviato su Windows (11, Python 3.12.13)
 2026-11-25 13:20:31 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
 2026-11-25 13:20:31 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"
+2026-11-25 13:21:57 [INFO] faster_whisper: Processing audio with duration 00:16.900
+2026-11-25 13:21:58 [INFO] faster_whisper: VAD filter removed 00:02.196 of audio
+2026-11-25 13:26:11 [INFO] faster_whisper: Processing audio with duration 00:07.950
+2026-11-25 13:26:11 [INFO] faster_whisper: VAD filter removed 00:02.158 of audio
+2026-11-25 13:26:31 [INFO] faster_whisper: Processing audio with duration 00:19.850
+2026-11-25 13:26:31 [INFO] faster_whisper: VAD filter removed 00:02.618 of audio
+2026-11-25 13:47:46 [INFO] FlowLocal: FlowLocal v3.3.0 avviato su Windows (11, Python 3.12.13)
+2026-11-25 13:47:49 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/mobiuslabsgmbh/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 307 Temporary Redirect"
+2026-11-25 13:47:49 [INFO] httpx2: HTTP Request: GET https://huggingface.co/api/models/dropbox-dash/faster-whisper-large-v3-turbo/revision/main "HTTP/1.1 200 OK"
